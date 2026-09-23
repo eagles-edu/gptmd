@@ -1,7 +1,7 @@
 {
   "name": "gptmd-memory",
-  "version": "0.1.0",
-  "description": "Local memory, durable persistence, and evidence-based self-improvement for Codex projects.",
+  "version": "0.2.0+codex.20260923115001",
+  "description": "CuratorMD: local-only project intelligence, reviewable persistence, and safe evidence-based curation for Codex projects.",
   "author": {
     "name": "gptmd project"
   },
@@ -15,16 +15,16 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Gptmd Memory",
-    "shortDescription": "Remember durable project knowledge.",
-    "longDescription": "A local-first Codex plugin that recalls project knowledge, records durable decisions and lessons, and turns verified failures into reusable guidance without committing or modifying application source.",
+    "displayName": "CuratorMD",
+    "shortDescription": "Curate safe project intelligence locally.",
+    "longDescription": "CuratorMD captures redacted project-scoped observations, records reviewable knowledge, and promotes only explicitly reviewed decisions and lessons into the four persistence documents. It never commits, pushes, deploys, migrates, or modifies application source.",
     "developerName": "gptmd project",
     "category": "Productivity",
     "capabilities": [],
     "defaultPrompt": [
-      "Recall the relevant project decisions before coding.",
-      "Record this decision as durable project knowledge.",
-      "Capture the verified lesson from this failure."
+      "Recall the relevant CuratorMD project knowledge before coding.",
+      "Record this reviewed decision as durable project knowledge.",
+      "Capture the verified lesson from this failure without storing secrets."
     ]
   },
   "mcpServers": "./.mcp.json"

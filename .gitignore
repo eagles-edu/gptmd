@@ -28,4 +28,4 @@ __pycache__/
 !.env.example
 
 # CuratorMD temporary, redacted native-projection records
-.curatormd/native-inbox/
+.curatormd/

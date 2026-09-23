@@ -1,0 +1,20 @@
+[Unit]
+Description=Hermes Agent Web Dashboard
+After=network.target
+
+[Service]
+Type=simple
+EnvironmentFile=-/etc/hermes-panel.env
+Environment="HOME=/home/eaglesvn"
+Environment="USER=eaglesvn"
+Environment="LOGNAME=eaglesvn"
+Environment="HERMES_HOME=/home/eaglesvn/.hermes"
+ExecStart=/usr/local/bin/hermes dashboard --host 127.0.0.1 --port 9119 --skip-build --no-open
+Restart=on-failure
+RestartSec=3
+User=eaglesvn
+Group=eaglesvn
+WorkingDirectory=/home/eaglesvn/.hermes
+
+[Install]
+WantedBy=multi-user.target

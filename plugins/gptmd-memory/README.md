@@ -1,38 +1,39 @@
-# Gptmd Memory
+# CuratorMD
 
-Gptmd Memory is a local-first Codex plugin for three gaps in long-running coding
-work:
+CuratorMD is the local-only project intelligence layer for Codex and Hermes.
+It keeps durable knowledge in four reviewable Markdown files under a project's
+`persistence/` directory and keeps unreviewed native observations in the
+ignored `.curatormd/native-inbox/` directory.
 
-1. **Memory** — search durable project knowledge before acting.
-2. **Persistence** — record decisions, procedures, active rules, and lessons in
-   reviewable Markdown under `persistence/`.
-3. **Self-improvement** — capture verified failures and fixes as reusable lessons.
-
-The plugin never commits, pushes, edits application source, or sends project
-knowledge to a remote service. It refuses obvious credentials and only writes
-inside the project's `persistence/` directory.
-
-## Stores
-
-| Store | Purpose |
-| --- | --- |
-| `AGENTS.md` | Current active rules |
-| `SOP.md` | Repeatable procedures |
-| `HISTORY.md` | Dated decisions and rationale |
-| `LESSONS-LEARNED.md` | Verified failures, fixes, and prevention |
+The observer is project-scoped and best-effort. It records bounded, redacted
+metadata from the configured Hermes profile; capture failure never blocks the
+agent. A curator run can promote only an explicitly reviewed candidate. It
+does not commit, push, deploy, run migrations, delete data, or modify
+application source.
 
 ## MCP tools
 
 - `memory_recall` — search the four persistence documents.
-- `persistence_status` — inspect document health and working-tree status.
-- `persistence_record` — append a durable decision, procedure, rule, or lesson.
+- `persistence_status` — inspect document health and CuratorMD state.
+- `environment_snapshot` — collect safe project metadata without reading env
+  values, credentials, private keys, or unrelated repository data.
+- `native_projection_record` — append a redacted, idempotent native projection.
+- `curation_run` — process the inbox and promote reviewed candidates only.
+- `persistence_record` — append a reviewed durable decision, procedure, rule,
+  or lesson.
 - `self_improvement_capture` — record a verified failure/fix lesson.
 
-The plugin discovers the project root from `GPTMD_PROJECT_ROOT` or by walking
-upward from the workspace and looking for `persistence/` and `package.json`.
+All tools require an explicit absolute `project_root` that resolves to the
+project's Git worktree root. The MCP server identifier is the machine-safe
+`curatormd`; the plugin package remains `gptmd-memory` for marketplace
+compatibility.
 
-## Safety boundary
+## Knowledge authority
 
-This is evidence-based self-improvement, not autonomous self-modifying code.
-The model may record a lesson after verification, but it must not silently
-rewrite the plugin, application source, or project rules.
+- `persistence/AGENTS.md` — current active rules.
+- `persistence/SOP.md` — repeatable procedures and verification steps.
+- `persistence/HISTORY.md` — dated decisions and rationale.
+- `persistence/LESSONS-LEARNED.md` — verified failures, fixes, and prevention.
+
+The plugin refuses common credential patterns, uses owner-readable state, and
+never sends project data to a remote service.

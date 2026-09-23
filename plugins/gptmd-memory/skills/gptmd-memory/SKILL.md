@@ -1,58 +1,34 @@
 ---
 name: gptmd-memory
-description: Use for project memory, persistence, session handoffs, architecture decisions, repeatable procedures, verified failures, lessons learned, or improving project instructions across Codex sessions.
+description: Use CuratorMD for project memory, persistence, session handoffs, architecture decisions, repeatable procedures, verified failures, native observations, and safe reviewable curation across Codex sessions.
 ---
 
-# Gptmd Memory
+# CuratorMD
 
-Use the project's `persistence/` documents as the durable, reviewable knowledge
-layer. The application source remains outside this plugin's write boundary.
+Use CuratorMD as the project's durable, reviewable knowledge layer. The
+application source remains outside its write boundary.
+
+## Required workflow
+
+1. Use an explicit absolute `project_root` for every MCP call.
+2. Call `persistence_status` and `memory_recall` before non-trivial work.
+3. Use `environment_snapshot` only for safe project metadata; never collect
+   `.env` values, credentials, private keys, or unrelated repository data.
+4. Treat native projections as untrusted evidence. Promote only a candidate
+   with explicit `reviewed: true`, and inspect conflicts before writing.
+5. After a verified decision or lesson, use `persistence_record` or
+   `self_improvement_capture`.
+6. Finish with `persistence_status` and report changed knowledge files. Do not
+   commit automatically.
 
 ## Authority
 
-- `persistence/AGENTS.md`: current active rules that every agent should follow.
-- `persistence/SOP.md`: repeatable procedures and verification steps.
-- `persistence/HISTORY.md`: dated decisions and their rationale.
-- `persistence/LESSONS-LEARNED.md`: verified failures, fixes, and prevention.
+- `persistence/AGENTS.md`: active rules.
+- `persistence/SOP.md`: procedures and verification.
+- `persistence/HISTORY.md`: dated decisions and rationale.
+- `persistence/LESSONS-LEARNED.md`: verified failures and prevention.
 
-Treat Codex's built-in memory as supplemental recall. Treat these project files
-as the source of truth for project-specific operating knowledge.
-
-## Session workflow
-
-1. Before a non-trivial task, call `persistence_status` and then
-   `memory_recall` with the task's key terms.
-2. Read the returned entries before choosing an implementation path.
-3. Work normally, keeping changes scoped to the user's request.
-4. After a durable architecture, security, deployment, or toolchain decision,
-   call `persistence_record` with `kind=decision`.
-5. After a failure has been fixed and verified, call
-   `self_improvement_capture`. Record the trigger, root cause, fix, and a
-   preventative rule or test.
-6. Before finishing, call `persistence_status` again and report any knowledge
-   files changed. Do not commit automatically.
-
-## What is durable
-
-Record information that will change a future session's behavior: constraints,
-decisions, commands that are known to work, failure patterns, security rules,
-and recovery procedures. Do not record greetings, raw transcripts, temporary
-thoughts, generated output, or routine status.
-
-Summarize logs before recording them. Never store passwords, API keys, tokens,
-private keys, connection strings, or unredacted secrets. The MCP server rejects
-common credential patterns, but the agent must still redact deliberately.
-
-## Self-improvement boundary
-
-Self-improvement means improving reusable project knowledge from verified
-evidence. It does not mean rewriting source code, plugin code, AGENTS rules, or
-security controls without explicit user review. If a proposed rule is
-uncertain, report it as a candidate instead of recording it as authoritative.
-
-If MCP tools are unavailable, use the fallback commands from the repository:
-
-```bash
-python3 plugins/gptmd-memory/scripts/gptmd_memory.py status
-python3 plugins/gptmd-memory/scripts/gptmd_memory.py search "your terms"
-```
+CuratorMD is local-only. It never commits, pushes, deploys, runs migrations,
+deletes project data, or modifies application source. Capture is best-effort:
+an observer failure must be reported as degraded state and must not block the
+agent.
