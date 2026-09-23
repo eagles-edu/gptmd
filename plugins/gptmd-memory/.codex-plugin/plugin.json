@@ -1,0 +1,31 @@
+{
+  "name": "gptmd-memory",
+  "version": "0.1.0",
+  "description": "Local memory, durable persistence, and evidence-based self-improvement for Codex projects.",
+  "author": {
+    "name": "gptmd project"
+  },
+  "license": "MIT",
+  "keywords": [
+    "memory",
+    "persistence",
+    "self-improvement",
+    "project-context",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Gptmd Memory",
+    "shortDescription": "Remember durable project knowledge.",
+    "longDescription": "A local-first Codex plugin that recalls project knowledge, records durable decisions and lessons, and turns verified failures into reusable guidance without committing or modifying application source.",
+    "developerName": "gptmd project",
+    "category": "Productivity",
+    "capabilities": [],
+    "defaultPrompt": [
+      "Recall the relevant project decisions before coding.",
+      "Record this decision as durable project knowledge.",
+      "Capture the verified lesson from this failure."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

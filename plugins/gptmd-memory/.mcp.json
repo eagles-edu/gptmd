@@ -1,0 +1,11 @@
+{
+  "mcpServers": {
+    "gptmd-memory": {
+      "cwd": ".",
+      "command": "python3",
+      "args": [
+        "./scripts/mcp_server.py"
+      ]
+    }
+  }
+}
