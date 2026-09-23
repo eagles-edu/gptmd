@@ -7,5 +7,6 @@
 - Keep `.curatormd/native-inbox/` temporary and redacted. It is not canonical knowledge and must not be committed.
 - Use an absolute project root when calling CuratorMD. It must resolve to this Git worktree root and contain `persistence/`.
 - Run `npm run build` after application changes. Report the existing Vuetify/Nuxt `useLayout` warning unless it is explicitly fixed.
+- Keep the Express API as a separate service under `services/api/`; do not merge its runtime into Nuxt without an explicit architecture decision.
 - Leave curation changes uncommitted for human review. CuratorMD must never add, commit, push, deploy, migrate, or delete project data.
 - Keep Hermes local-only: the dashboard binds to `127.0.0.1:9119`, and no public firewall rule is required.

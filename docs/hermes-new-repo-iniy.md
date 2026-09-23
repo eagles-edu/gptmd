@@ -51,7 +51,7 @@ claim that they are already enabled.
 | SCSS/CSS | Stylelint with SCSS and property-order rules | Repository dev dependency and CI |
 | HTML5 validation | `html-validate` for templates and generated markup where practical | Test script and CI |
 | WebSockets | Add only if the app needs realtime behavior; test reconnect, auth, and backpressure | Application code plus integration tests |
-| Express.js | Do not add by default; Nuxt/Nitro is the server boundary unless a separate Express service is required | Separate service only |
+| Express.js | Required as a separate service; keep its package, TypeScript build, port, and deployment boundary independent from Nuxt | `services/api/` |
 | Redis Stack 7.x | Keep the verified local Compose stack; use `redis-cli` health checks and a narrow, read-only inspection tool if needed | Local infrastructure, never broad agent access |
 | Python | Ruff, pytest, and pyright/mypy for Python utilities and services | Separate Python package/CI job |
 | Kubernetes | Add manifests only when deployment requires it; validate with `kubectl`, Helm, and schema checks | Deployment repository/CI, not general MCP write access |

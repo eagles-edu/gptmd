@@ -1,0 +1,12 @@
+{
+  "plugins": ["html-validate-vue"],
+  "extends": ["html-validate:recommended", "html-validate-vue:recommended"],
+  "transform": {
+    "^.*\\.vue$": "html-validate-vue"
+  },
+  "rules": {
+    "doctype-style": "off",
+    "element-case": "off",
+    "element-name": "off"
+  }
+}

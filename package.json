@@ -4,10 +4,19 @@
   "private": true,
   "scripts": {
     "build": "nuxt build",
+    "api:build": "npm --prefix services/api run build",
+    "api:dev": "npm --prefix services/api run dev",
+    "api:start": "npm --prefix services/api run start",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
+    "lint": "eslint .",
+    "lint:styles": "stylelint \"**/*.{css,scss,vue}\"",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "validate:html": "html-validate \"app/**/*.vue\""
   },
   "dependencies": {
     "nuxt": "^4.5.2",
@@ -15,6 +24,17 @@
     "vue-router": "^5.3.1"
   },
   "devDependencies": {
+    "@nuxt/eslint": "^1.17.0",
+    "@playwright/test": "^1.63.0",
+    "@vue/test-utils": "^2.5.1",
+    "eslint": "^10.11.0",
+    "happy-dom": "^20.0.10",
+    "html-validate": "^11.16.0",
+    "html-validate-vue": "^9.3.1",
+    "postcss-html": "^2.0.0",
+    "stylelint": "^17.15.0",
+    "stylelint-config-standard-scss": "^17.0.0",
+    "vitest": "^5.0.1",
     "vuetify": "^4.2.1",
     "vuetify-nuxt-module": "^1.0.0-rc.6"
   }
