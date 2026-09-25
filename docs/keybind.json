@@ -1,0 +1,170 @@
+// Place your key bindings in this file to override the defaults
+[
+    {
+        "key": "shift+alt+l",
+        "command": "blankLine.process"
+    },
+    {
+        "key": "ctrl+;",
+        "command": "-blankLine.process"
+    },
+    {
+        "key": "shift+alt+s",
+        "command": "trailing-spaces.deleteTrailingSpaces",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+\\",
+        "command": "markdown.extension.editing.toggleCodeSpan",
+        "when": "editorLangId =~ /^markdown$|^rmd$|^quarto$/"
+    },
+    {
+        "key": "shift+alt+d",
+        "command": "wrapSelection.wrap",
+        "args": "dquote",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+i",
+        "command": "wrapSelection.wrap",
+        "args": "squote",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+b",
+        "command": "wrapSelection.wrap",
+        "args": "bquote",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+w",
+        "command": "wrapSelection.wrap",
+        "args": "parens",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+[",
+        "command": "wrapSelection.wrap",
+        "args": "brackets",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+c",
+        "command": "wrapSelection.wrap",
+        "args": "braces",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+n",
+        "command": "wrapSelection.wrap",
+        "args": "angle",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+/",
+        "command": "wrapSelection.wrap",
+        "args": "js-comment",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+l",
+        "command": "wrapSelection.wrap",
+        "args": "log",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+f",
+        "command": "wrapSelection.wrap",
+        "args": "func",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+o",
+        "command": "wrapSelection.wrap",
+        "args": "arrow",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "shift+alt+p",
+        "command": "editor.action.insertSnippet",
+        "when": "!editorReadonly"
+    },
+    {
+        "key": "shift+alt+k",
+        "command": "workbench.action.openSnippets"
+    },
+    {
+        "key": "shift+alt+t",
+        "command": "commonSnippetsCmd.addSnippet"
+    },
+    {
+        "key": "shift+alt+v",
+        "command": "svgeditor.openSvgEditor"
+    },
+    {
+        "key": "shift+alt+2",
+        "command": "svgeditor.reopenRelatedTextEditor"
+    },
+    {
+        "key": "shift+alt+3",
+        "command": "svgeditor.newSvgEditor"
+    },
+    {
+        "key": "ctrl+b",
+        "command": "-workbench.action.toggleSidebarVisibility"
+    },
+    {
+        "key": "ctrl+b",
+        "command": "boldify.boldify",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "ctrl+b ctrl+b",
+        "command": "-boldify.boldify",
+        "when": "editorTextFocus"
+    },
+    {
+        "key": "ctrl+shift+alt+o",
+        "command": "workbench.action.tasks.openUserTasks"
+    },
+    {
+        "key": "ctrl+shift+alt+r",
+        "command": "workbench.action.terminal.chat.focusMostRecentChatTerminalOutput",
+        "when": "inChat"
+    },
+    {
+        "key": "ctrl+shift+alt+o",
+        "command": "-workbench.action.terminal.chat.focusMostRecentChatTerminalOutput",
+        "when": "inChat"
+    },
+    {
+        "key": "ctrl+alt+=",
+        "command": "npm.runScript"
+    },
+    {
+        "key": "ctrl+alt+;",
+        "command": "npm.runSelectedScript"
+    },
+    {
+        "key": "ctrl+shift+alt+p",
+        "command": "prismaDiagram.showDiagram"
+    },
+    {
+        "key": "shift+alt+4",
+        "command": "chatgpt.openSidebar"
+    },
+    {
+        "key": "ctrl+shift+alt",
+        "command": "chatgpt.openCommandMenu"
+    },
+    {
+        "key": "capslock ctrl+shift+c",
+        "command": "chatgpt.newChat",
+        "when": "chatgpt.supportsNewChatKeyShortcut"
+    },
+    {
+        "key": "ctrl+n",
+        "command": "-chatgpt.newChat",
+        "when": "chatgpt.supportsNewChatKeyShortcut"
+    }
+]

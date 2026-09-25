@@ -1,0 +1,287 @@
+{
+	"servers": {
+		"codacy/codacy-mcp-server": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"-y",
+				"@codacy/codacy-mcp@latest"
+			],
+			"env": {
+				"CODACY_ACCOUNT_TOKEN": "${input:CODACY_ACCOUNT_TOKEN}",
+				"CODACY_CLI_VERSION": "${input:CODACY_CLI_VERSION}"
+			},
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.0.0"
+		},
+		"eslint": {
+			"type": "stdio",
+			"command": "/home/eagles/node-v20.19.4-linux-x64/bin/npx",
+			"args": [
+				"-y",
+				"@eslint/mcp"
+			]
+		},
+		"fetch": {
+			"command": "uvx",
+			"args": [
+				"mcp-server-fetch"
+			],
+			"type": "stdio"
+		},
+		"filesystem": {
+			"type": "stdio",
+			"command": "/home/eagles/node-v20.19.4-linux-x64/bin/npx",
+			"args": [
+				"-y",
+				"@modelcontextprotocol/server-filesystem",
+				"/home/eagles/dockerz/sis"
+			]
+		},
+		"git": {
+			"type": "stdio",
+			"command": "/snap/bin/uvx",
+			"args": [
+				"mcp-server-git",
+				"--repository",
+				"/home/eagles/dockerz/sis"
+			]
+		},
+		"io.github.bytebase/dbhub": {
+			"type": "stdio",
+			"command": "/bin/bash",
+			"args": [
+				"-lc",
+				"DATABASE_URL=\"$(ENV_PATH=/home/eagles/dockerz/sis/.env KEY_NAME=DATABASE_URL node -e 'const fs=require(\"fs\"); const envPath=process.env.ENV_PATH; const keyName=process.env.KEY_NAME; const raw=fs.readFileSync(envPath,\"utf8\"); let value=\"\"; for (const rawLine of raw.split(/\\r?\\n/)) { const line=rawLine.trim(); if (!line || line.startsWith(\"#\")) continue; const idx=line.indexOf(\"=\"); if (idx < 0) continue; const key=line.slice(0, idx).trim(); if (key !== keyName) continue; value=line.slice(idx+1).trim(); if (value.startsWith(\"\\\"\") && value.endsWith(\"\\\"\")) value=value.slice(1, -1); break; } process.stdout.write(value);')\"; exec npx -y @bytebase/dbhub@0.21.1 --transport stdio --dsn \"$DATABASE_URL\""
+			],
+			"gallery": "https://api.mcp.github.com",
+			"version": "0.21.1"
+		},
+		"io.github.upstash/context7": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"@upstash/context7-mcp@1.0.31"
+			],
+			"env": {
+				"CONTEXT7_API_KEY": "${input:CONTEXT7_API_KEY}"
+			},
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.0.31"
+		},
+		"microsoft/markitdown": {
+			"type": "stdio",
+			"command": "uvx",
+			"args": [
+				"markitdown-mcp@0.0.1a4"
+			],
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.0.0"
+		},
+		"microsoft/playwright-mcp": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"@playwright/mcp@latest"
+			]
+		},
+		"prettier": {
+			"type": "stdio",
+			"command": "/home/eagles/node-v20.19.4-linux-x64/bin/npx",
+			"args": [
+				"-y",
+				"@prettier/mcp"
+			]
+		},
+		"stylelint": {
+			"type": "stdio",
+			"command": "/home/eagles/node-v20.19.4-linux-x64/bin/npx",
+			"args": [
+				"-y",
+				"stylelint-mcp@latest"
+			]
+		},
+		"io.github.ChromeDevTools/chrome-devtools-mcp": {
+			"type": "stdio",
+			"command": "npx",
+			"args": [
+				"--registry",
+				"https://registry.npmjs.org",
+				"chrome-devtools-mcp@1.10.1"
+			],
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.10.1"
+		},
+		"io.github.github/github-mcp-server": {
+			"type": "http",
+			"url": "https://api.githubcopilot.com/mcp/",
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.1.0"
+		},
+		"microsoftdocs/mcp": {
+			"type": "http",
+			"url": "https://learn.microsoft.com/api/mcp",
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.0.0"
+		},
+		"antfu/nuxt-mcp": {
+			"type": "http",
+			"url": "https://mcp.nuxt.com/sse",
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.0.0"
+		},
+		"com.postman/postman-mcp-server": {
+			"type": "http",
+			"url": "https://mcp.postman.com/mcp",
+			"headers": {
+				"Authorization": "${input:Authorization}"
+			},
+			"gallery": "https://api.mcp.github.com",
+			"version": "2.13.0"
+		},
+		"com.stackoverflow.mcp/mcp": {
+			"type": "http",
+			"url": "https://mcp.stackoverflow.com",
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.1.3"
+		},
+		"io.github.microsoft/awesome-copilot": {
+			"type": "stdio",
+			"command": "docker",
+			"args": [
+				"run",
+				"-i",
+				"--rm",
+				"ghcr.io/microsoft/mcp-dotnet-samples/awesome-copilot:1.0.2026052805"
+			],
+			"gallery": "https://api.mcp.github.com",
+			"version": "1.0.2026052805"
+		},
+		"ai.tinyfish.agent/web-agent": {
+			"type": "http",
+			"url": "https://agent.tinyfish.ai/mcp"
+		},
+		"tinyfish-guided-research-mcp": {
+			"type": "stdio",
+			"command": "uvx",
+			"args": [
+				"tinyfish-guided-research-mcp==1.0.0"
+			],
+			"env": {
+				"TINYFISH_API_KEY": "${input:TINYFISH_API_KEY}",
+				"DATABASE_URL": "${input:DATABASE_URL}",
+				"RESEARCH_DB_PATH": "${input:RESEARCH_DB_PATH}"
+			}
+		}
+	},
+	"inputs": [
+		{
+			"id": "Authorization",
+			"type": "promptString",
+			"description": "A Bearer token and a valid Postman API key for authentication.",
+			"password": true
+		},
+		{
+			"id": "CONTEXT7_API_KEY",
+			"type": "promptString",
+			"description": "API key for authentication",
+			"password": true
+		},
+		{
+			"id": "CODACY_ACCOUNT_TOKEN",
+			"type": "promptString",
+			"description": "Your Codacy Account API token (from app.codacy.com → Account). Required.",
+			"password": true
+		},
+		{
+			"id": "CODACY_CLI_VERSION",
+			"type": "promptString",
+			"description": "Optional: pin Codacy CLI version used by local analysis (e.g., 2.3.1).",
+			"password": false
+		},
+		{
+			"id": "NETDATA_CLOUD_API_TOKEN",
+			"type": "promptString",
+			"description": "Netdata Cloud API token (create at app.netdata.cloud > User Settings > API Tokens with scope:mcp)",
+			"password": true
+		},
+		{
+			"id": "api_key",
+			"type": "promptString",
+			"description": "your API key",
+			"password": true
+		},
+		{
+			"id": "API_TOKEN",
+			"type": "promptString",
+			"description": "Your API key for Bright Data",
+			"password": true
+		},
+		{
+			"id": "WEB_UNLOCKER_ZONE",
+			"type": "promptString",
+			"description": "Your unlocker zone name",
+			"password": false
+		},
+		{
+			"id": "BROWSER_ZONE",
+			"type": "promptString",
+			"description": "Your browser zone name",
+			"password": false
+		},
+		{
+			"id": "PRO_MODE",
+			"type": "promptString",
+			"description": "To enable PRO_MODE - set to true",
+			"password": false
+		},
+		{
+			"id": "GROUPS",
+			"type": "promptString",
+			"description": "Comma-separated tool group IDs (e.g., 'ecommerce,browser')",
+			"password": false
+		},
+		{
+			"id": "TOOLS",
+			"type": "promptString",
+			"description": "Comma-separated tool names to enable",
+			"password": false
+		},
+		{
+			"id": "POLLING_TIMEOUT",
+			"type": "promptString",
+			"description": "Polling timeout in seconds for web_data_* tools (default: 600)",
+			"password": false
+		},
+		{
+			"id": "BASE_TIMEOUT",
+			"type": "promptString",
+			"description": "Request timeout in seconds for base tools (search & scrape). No limit if unset",
+			"password": false
+		},
+		{
+			"id": "BASE_MAX_RETRIES",
+			"type": "promptString",
+			"description": "Max retries for base tools on transient errors (0-3, default: 0)",
+			"password": false
+		},
+		{
+			"type": "promptString",
+			"id": "TINYFISH_API_KEY",
+			"description": "TinyFish API key used by Search and Fetch.",
+			"password": true
+		},
+		{
+			"type": "promptString",
+			"id": "DATABASE_URL",
+			"description": "Shared PostgreSQL connection URL for durable production state. Recommended for remote/multi-replica hosting.",
+			"password": true
+		},
+		{
+			"type": "promptString",
+			"id": "RESEARCH_DB_PATH",
+			"description": "SQLite persistence path used when DATABASE_URL is unset. Intended for local/single-instance usage.",
+			"password": false
+		}
+	]
+}

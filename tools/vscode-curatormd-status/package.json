@@ -1,0 +1,47 @@
+{
+  "name": "curatormd-status",
+  "displayName": "CuratorMD Status LED",
+  "description": "Show Hermes, Codex, and CuratorMD health in the VS Code status bar.",
+  "version": "0.1.0",
+  "publisher": "gptmd",
+  "license": "UNLICENSED",
+  "engines": {
+    "vscode": ">=1.85.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "workspaceContains:persistence/AGENTS.md"
+  ],
+  "main": "./extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "curatormdStatus.refresh",
+        "title": "CuratorMD: Refresh Status"
+      },
+      {
+        "command": "curatormdStatus.showDetails",
+        "title": "CuratorMD: Show Status Details"
+      }
+    ],
+    "configuration": {
+      "title": "CuratorMD Status LED",
+      "properties": {
+        "curatormdStatus.profile": {
+          "type": "string",
+          "default": "gptmd-coding",
+          "description": "Hermes profile used for the project-bound CuratorMD integration."
+        },
+        "curatormdStatus.pollSeconds": {
+          "type": "number",
+          "default": 30,
+          "minimum": 5,
+          "description": "Seconds between local health checks."
+        }
+      }
+    }
+  }
+}
