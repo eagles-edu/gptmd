@@ -1,5 +1,7 @@
 {
     "recommendations": [
-        "dwqs.svg-gallery-viewer"
+        "dwqs.svg-gallery-viewer",
+        "rafaelpeter.python-codelens",
+        "demystifying-javascript.python-extensions-pack"
     ]
 }

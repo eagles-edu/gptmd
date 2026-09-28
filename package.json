@@ -9,6 +9,7 @@
     "api:start": "npm --prefix services/api run start",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
+    "git:update": "node scripts/git-update.js",
     "lint": "eslint .",
     "lint:styles": "stylelint \"**/*.{css,scss,vue}\"",
     "preview": "nuxt preview",

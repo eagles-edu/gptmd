@@ -147,7 +147,7 @@ curl -fsS http://127.0.0.1:9119/
 Each new repository receives its own Hermes profile and CuratorMD boundary:
 
 ```bash
-python3 plugins/gptmd-memory/scripts/enable_repo.py \
+python3 /home/eaglesvn/dockerz/curatormd/plugins/curatormd/scripts/enable_repo.py \
   --project-root /absolute/path/to/new-repo \
   --profile newrepo-coding \
   --time 06:15
