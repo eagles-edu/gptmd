@@ -1,0 +1,868 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1800 10728" role="img" aria-labelledby="atlasTitle atlasDesc">
+<title id="atlasTitle">GPTpatient system atlas: legacy programs, sessions, data and proposed target</title>
+<desc id="atlasDesc">Nine vertically stacked, internally navigable SVG pages map historical GPTpatient programs and ports, exact legacy code entry points, browser and API session lifecycle, setup and patient generation, conversation and audio turn processing, Redis and RedisJSON record semantics, proposed PostgreSQL and Responses persistence, clinical encounter state, and deployment and scale controls. Evidence labels distinguish observed legacy behavior, the current GPTMD scaffold, proposed target design and invariants.</desc>
+<defs>
+ <style>
+  text{font-family:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif;fill:#19324a}
+  .pageTitle{font-size:27px;font-weight:740;letter-spacing:-.3px;fill:#12263a}
+  .subtitle{font-size:14px;fill:#52677d}
+  .cardTitle{font-size:15px;font-weight:720;fill:#17324d}
+  .badge{font-size:9px;font-weight:760;letter-spacing:.55px}
+  .body{font-size:12.1px;fill:#334b62}
+  .footer{font-size:10px;fill:#60758a}
+  .navText{font-size:10.5px;font-weight:670}
+ </style>
+ <marker id="arrow" markerWidth="10" markerHeight="10" refX="8" refY="5" orient="auto"><path d="M0 0 10 5 0 10Z" fill="#52677d"/></marker>
+</defs>
+<rect width="1800" height="10728" fill="#eaf0f6"/>
+
+<g id="page-1" class="page" aria-label="Page 1: System scope, lineage, and evidence boundaries">
+<rect x="24" y="12" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="55" class="pageTitle">System scope, lineage, and evidence boundaries</text>
+<text x="72" y="81" class="subtitle">Read the repository history as successive systems, not one deployed application.</text>
+<text x="1726" y="53" text-anchor="end" class="footer">PAGE 01 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="102" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="155" y="120" text-anchor="middle" class="navText" fill="#ffffff">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="120" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="120" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="120" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="120" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="120" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="120" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="120" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="102" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="120" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Historical implementation lineage">
+<rect x="70" y="156" width="810" height="444" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 156h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="168" width="5" height="420" rx="2.5" fill="#b45309"/>
+<text x="90" y="181" class="cardTitle">Historical implementation lineage</text>
+<text x="863" y="180" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="212" class="body">nuxt008: first Nuxt/Vue browser prototype; generated five-field profile, browser SpeechRecognition, HTTP</text>
+<text x="92" y="229" class="body">conversation request, Socket.IO playback. Client and services are coupled to the older message-array</text>
+<text x="92" y="246" class="body">contract.</text>
+<text x="92" y="268" class="body">vuepy04: Flask setup endpoint evolves from Chat Completions to Assistants v2. Ordinary Redis supports rate</text>
+<text x="92" y="285" class="body">limiting and an assistant ID; no later sid/did RedisJSON session-document model.</text>
+<text x="92" y="307" class="body">vuepy05: Flask-Session over plain Redis; separate setup and TTS/STT services. Experimental streaming Chat</text>
+<text x="92" y="324" class="body">Completions → phrase queue → TTS → Socket.IO; hard-coded FAKE_SESSION_ID in one audio path.</text>
+<text x="92" y="346" class="body">ioexpress: separate Express cookie-session experiment: HTTP-only cookie, connect-redis / ordinary Redis</text>
+<text x="92" y="363" class="body">string session, request/session logs and CSP-report route. It is not the RedisJSON session manager.</text>
+<text x="92" y="385" class="body">2024-nuxgpt008 root stack: Nuxt + Express session manager + Python setup and conversation services + Redis</text>
+<text x="92" y="402" class="body">Stack/RedisJSON + RedisInsight. Root stack and nested gptpatient-fullstack are parallel copies, not shared</text>
+<text x="92" y="419" class="body">source.</text>
+<text x="92" y="441" class="body">gptpatient-fullstack: later integrated copy; Responses + Conversations replaces Assistants for</text>
+<text x="92" y="458" class="body">generation/turn context while legacy assistantId/threadId/chatId fields remain as compatibility mapping.</text>
+<text x="92" y="480" class="body">Current GPTMD workspace: greenfield Nuxt starter plus separate Express TypeScript health-check scaffold.</text>
+<text x="92" y="497" class="body">No patient routes, auth, provider, PostgreSQL, Redis, or runtime AI path is implemented.</text>
+</g>
+<g class="card" aria-label="Evidence legend and reading rules">
+<rect x="70" y="614" width="810" height="308" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 614h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#ecfdf5"/>
+<rect x="70" y="626" width="5" height="284" rx="2.5" fill="#047857"/>
+<text x="90" y="639" class="cardTitle">Evidence legend and reading rules</text>
+<text x="863" y="638" text-anchor="end" class="badge" fill="#047857">INVARIANT</text>
+<text x="92" y="670" class="body">LEGACY OBSERVED = behavior recorded from checked historical source/configuration. Snapshot, branch, port,</text>
+<text x="92" y="687" class="body">and request schema matter; do not combine versions silently.</text>
+<text x="92" y="709" class="body">CURRENT SCAFFOLD = code present in this GPTMD worktree now. This is the only current executable</text>
+<text x="92" y="726" class="body">implementation described here.</text>
+<text x="92" y="748" class="body">TARGET DESIGN = proposal in docs/plangpt-modernization.md. It is not shipped code. Purple labels and</text>
+<text x="92" y="765" class="body">“proposed” names describe responsibilities, not existing functions.</text>
+<text x="92" y="787" class="body">DOCUMENTED INTENT = historical behavior or UX described in notes but absent from the inspected active</text>
+<text x="92" y="804" class="body">source; examples include pain-image recognition/rotation.</text>
+<text x="92" y="826" class="body">Legacy project account: docs/plangpt.md. Modern target: docs/plangpt-modernization.md. This atlas expands</text>
+<text x="92" y="843" class="body">both at program, data, session, and persistence level.</text>
+</g>
+<g class="card" aria-label="Systems and deployment snapshots">
+<rect x="920" y="156" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 156h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="920" y="168" width="5" height="335" rx="2.5" fill="#b45309"/>
+<text x="940" y="181" class="cardTitle">Systems and deployment snapshots</text>
+<text x="1713" y="180" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="942" y="212" class="body">Browser: Nuxt 3/Vue 3/Vuetify in the historical client; five visible patient fields; speech input and</text>
+<text x="942" y="229" class="body">audio playback run in the browser.</text>
+<text x="942" y="251" class="body">Session manager: Node/Express in the later full-stack stack; cookie session plus app session IDs; Redis</text>
+<text x="942" y="268" class="body">Stack is private backend state.</text>
+<text x="942" y="290" class="body">Setup service: Python/FastAPI in later stacks; validates request envelope, creates patient profile, calls</text>
+<text x="942" y="307" class="body">provider bridge, writes setup result.</text>
+<text x="942" y="329" class="body">Conversation service: Python/FastAPI in later stacks; validates turn, retrieves session, obtains patient</text>
+<text x="942" y="346" class="body">reply, synthesizes phrases, emits Socket.IO audio.</text>
+<text x="942" y="368" class="body">Redis Stack: later application session/data JSON documents plus RedisInsight operator UI. Not used as</text>
+<text x="942" y="385" class="body">application RedisJSON by vuepy04 or vuepy05.</text>
+<text x="942" y="407" class="body">Standalone redis-stack-7.4.1: separate authenticated/health-gated Stack infrastructure experiment. Its</text>
+<text x="942" y="424" class="body">persistence settings do not prove patient records used it.</text>
+</g>
+<g class="card" aria-label="Ports and route contracts vary by snapshot">
+<rect x="920" y="529" width="810" height="291" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 529h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff1f2"/>
+<rect x="920" y="541" width="5" height="267" rx="2.5" fill="#b91c1c"/>
+<text x="940" y="554" class="cardTitle">Ports and route contracts vary by snapshot</text>
+<text x="1713" y="553" text-anchor="end" class="badge" fill="#b91c1c">BOUNDARY / CAVEAT</text>
+<text x="942" y="585" class="body">vuepy04 Compose: setup host 6960 → container 5000; speech 6961/6962 → 5001/5002; plain Redis host 6379.</text>
+<text x="942" y="607" class="body">vuepy05 snapshot: setup 6960; speech 6961/6962; plain Redis host 6380. Flask-Session, not RedisJSON</text>
+<text x="942" y="624" class="body">application records.</text>
+<text x="942" y="646" class="body">2024 full stack: Express 6970; setup 6960; turn HTTP 6961; Socket.IO 6962; Redis internal 6379;</text>
+<text x="942" y="663" class="body">RedisInsight host 8001.</text>
+<text x="942" y="685" class="body">Historical request routes: POST /app/api/openai; POST /app1/api/app1_endpoint_ttsstt; Socket.IO path /ws.</text>
+<text x="942" y="702" class="body">Reverse-proxy addresses are documented intent, not live deployment proof.</text>
+<text x="942" y="724" class="body">ioexpress is a different experiment (server.js defaults to 8910 in inspected source). An older setup note</text>
+<text x="942" y="741" class="body">mentions 8913. Do not merge these ports into one port map.</text>
+</g>
+<line x1="70" y1="1081" x2="1730" y2="1081" stroke="#d9e3ed"/>
+<text x="70" y="1102" class="footer">EVIDENCE / REFERENCES: docs/plangpt.md §§ Purpose, Browser, Session, End-to-end flow, Redis deployments · filesystem snapshots identified in that account</text>
+</g>
+<g id="page-2" class="page" aria-label="Page 2: Programs, modules, and code-level entry points">
+<rect x="24" y="1208" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="1251" class="pageTitle">Programs, modules, and code-level entry points</text>
+<text x="72" y="1277" class="subtitle">Function inventory follows the executable request path; framework internals are outside the application boundary.</text>
+<text x="1726" y="1249" text-anchor="end" class="footer">PAGE 02 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="1316" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="1298" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="340" y="1316" text-anchor="middle" class="navText" fill="#ffffff">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="1316" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="1316" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="1316" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="1316" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="1316" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="1316" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="1298" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="1316" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Historical browser program">
+<rect x="70" y="1352" width="810" height="376" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 1352h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="1364" width="5" height="352" rx="2.5" fill="#b45309"/>
+<text x="90" y="1377" class="cardTitle">Historical browser program</text>
+<text x="863" y="1376" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="1408" class="body">components/AppSection.vue: requestPermissions → initializeSetup / fetchPatientDetails → handleDataSuccess</text>
+<text x="92" y="1425" class="body">or handleDataFailure; getImagePath → mapAgeToBracket → calculateAge. UI state includes</text>
+<text x="92" y="1442" class="body">setup/loading/conversation/loop, patient fields, AudioContext and audio controller.</text>
+<text x="92" y="1464" class="body">composables/useSession.ts: initializeSession, retry/wait, fetchSession, transform snake_case → camelCase,</text>
+<text x="92" y="1481" class="body">persist IDs/theme, storeSessionData, clearSession; useSession exposes refs and actions.</text>
+<text x="92" y="1503" class="body">services/SpeechRecognition.ts: getSpeechRecognitionConstructor → listenOnce; browser SpeechRecognition /</text>
+<text x="92" y="1520" class="body">webkitSpeechRecognition in en-US; final transcript dispatch and LED changes.</text>
+<text x="92" y="1542" class="body">services/api.ts: setup HTTP client. services/api1.ts: turn HTTP client. services/expressServer.ts: session</text>
+<text x="92" y="1559" class="body">manager requests.</text>
+<text x="92" y="1581" class="body">services/PlayAudio.ts: toArrayBuffer → playAudioStream; connect / identify session / join room → decode</text>
+<text x="92" y="1598" class="body">AudioBuffer → ordered playback queue → idle callback.</text>
+<text x="92" y="1620" class="body">UI sequencing: permission gesture unlocks microphone/audio; setup response enables ENTER ROOM; room entry</text>
+<text x="92" y="1637" class="body">starts speech/socket loop; playback completion gates the next listen.</text>
+</g>
+<g class="card" aria-label="Session-manager program: later Express service">
+<rect x="70" y="1742" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 1742h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="1754" width="5" height="335" rx="2.5" fill="#b45309"/>
+<text x="90" y="1767" class="cardTitle">Session-manager program: later Express service</text>
+<text x="863" y="1766" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="1798" class="body">src/index.js wires Express, Helmet, CORS, JSON parser, Morgan, trust proxy, Redis client, IORedisStore,</text>
+<text x="92" y="1815" class="body">express-session, routes, health, and shutdown/listener.</text>
+<text x="92" y="1837" class="body">POST /session creates/reuses cookie identity, derives app sessionId, creates opaque dataId, ensures both</text>
+<text x="92" y="1854" class="body">RedisJSON documents, returns IDs.</text>
+<text x="92" y="1876" class="body">GET /session/:dataId → resolve data reference → return session. PATCH /session/:dataId → merge</text>
+<text x="92" y="1893" class="body">patch/update timestamps.</text>
+<text x="92" y="1915" class="body">POST /session/:dataId/bind-chat binds provider compatibility IDs. DELETE /session destroys session</text>
+<text x="92" y="1932" class="body">document + data-reference; express-session cookie store is separate.</text>
+<text x="92" y="1954" class="body">src/sessionService.js:</text>
+<text x="92" y="1971" class="body">buildSessionKey/buildDataKey/randomId/createSessionId/createDataId/baseRecord/ensureSessionRecords/getSessionByDataId/mergeSessionByDataId/destroySessionRecords.</text>
+<text x="92" y="1993" class="body">src/redisJson.js: jsonSet/jsonGet/jsonDelete/deepMerge/jsonMerge; JSON command wrapper and recursive</text>
+<text x="92" y="2010" class="body">JavaScript merge fallback.</text>
+</g>
+<g class="card" aria-label="Python setup and turn programs: named routines">
+<rect x="920" y="1352" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 1352h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="920" y="1364" width="5" height="335" rx="2.5" fill="#b45309"/>
+<text x="940" y="1377" class="cardTitle">Python setup and turn programs: named routines</text>
+<text x="1713" y="1376" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="942" y="1408" class="body">setup-backend/app.py: SetupRequest → _iso_now, _session_key, _data_key, _json_get/_json_set/_json_merge →</text>
+<text x="942" y="1425" class="body">setup_simulation POST /app/api/openai.</text>
+<text x="942" y="1447" class="body">Assistants-era setup/openai_bridge.py: _headers; _chat_generate_patient or _assistants_generate_patient;</text>
+<text x="942" y="1464" class="body">create_setup_payload selects provider/fallback path.</text>
+<text x="942" y="1486" class="body">Responses-era setup/openai_bridge.py: _headers → _extract_output_text → _create_conversation →</text>
+<text x="942" y="1503" class="body">_responses_generate_patient → create_setup_payload.</text>
+<text x="942" y="1525" class="body">patient_generator.py: PatientVariables; random_patient(seed); parse_patient_json(payload). Manual schema</text>
+<text x="942" y="1542" class="body">extraction is separate from Pydantic request validation.</text>
+<text x="942" y="1564" class="body">ttsstt-backend: ConversationTurn → conversation_turn → _resolve_assistant_text (legacy); newer path</text>
+<text x="942" y="1581" class="body">resolves stored ID → _responses_reply; then _split_sentences → _synthesize_tts_bytes.</text>
+<text x="942" y="1603" class="body">Socket handlers: connect → session room auth; join → room membership; disconnect. HTTP turn route returns</text>
+<text x="942" y="1620" class="body">text/metadata while audio bytes travel as audio_data events.</text>
+</g>
+<g class="card" aria-label="Current GPTMD executable scaffold">
+<rect x="920" y="1725" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 1725h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1f5f9"/>
+<rect x="920" y="1737" width="5" height="335" rx="2.5" fill="#475569"/>
+<text x="940" y="1750" class="cardTitle">Current GPTMD executable scaffold</text>
+<text x="1713" y="1749" text-anchor="end" class="badge" fill="#475569">CURRENT SCAFFOLD</text>
+<text x="942" y="1781" class="body">Nuxt app: app/app.vue and Nuxt 4 config. package.json defines build/dev/generate and separate API scripts;</text>
+<text x="942" y="1798" class="body">current package has no simulation/session application modules.</text>
+<text x="942" y="1820" class="body">services/api/src/server.ts: create Express app; loopback HOST guard; PORT default 4000; disable</text>
+<text x="942" y="1837" class="body">x-powered-by; trust proxy; JSON parser limit 1 MB.</text>
+<text x="942" y="1859" class="body">GET /healthz returns process health. GET /readyz returns a readiness placeholder. SIGINT/SIGTERM call</text>
+<text x="942" y="1876" class="body">server.close().</text>
+<text x="942" y="1898" class="body">services/api/package.json: api build is TypeScript compiler; dev is tsx watch; start executes</text>
+<text x="942" y="1915" class="body">dist/server.js. Express 5 is the only API runtime dependency.</text>
+<text x="942" y="1937" class="body">Verified boundary: services/api/README.md states there are no domain routes, authentication, Redis writes,</text>
+<text x="942" y="1954" class="body">public listener, or deployment automation yet.</text>
+<text x="942" y="1976" class="body">Do not draw proposed SessionService / ResponsesService functions as current source. Target modules appear</text>
+<text x="942" y="1993" class="body">on pages 7–9 and are explicitly marked proposed.</text>
+</g>
+<line x1="70" y1="2277" x2="1730" y2="2277" stroke="#d9e3ed"/>
+<text x="70" y="2298" class="footer">EVIDENCE / REFERENCES: Historical entry points: 2024-nuxgpt008/{components,composables,services,stack}; gptpatient-fullstack/{apps,services}; current services/api/src/server.ts</text>
+</g>
+<g id="page-3" class="page" aria-label="Page 3: Session lifecycle, browser state, and identity flow">
+<rect x="24" y="2404" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="2447" class="pageTitle">Session lifecycle, browser state, and identity flow</text>
+<text x="72" y="2473" class="subtitle">The browser controls when setup and encounter transitions happen; IDs correlate requests but do not start them.</text>
+<text x="1726" y="2445" text-anchor="end" class="footer">PAGE 03 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="2512" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="2512" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="2494" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="525" y="2512" text-anchor="middle" class="navText" fill="#ffffff">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="2512" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="2512" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="2512" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="2512" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="2512" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="2494" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="2512" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Browser encounter state machine · observed UX">
+<rect x="70" y="2548" width="810" height="444" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 2548h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="2560" width="5" height="420" rx="2.5" fill="#b45309"/>
+<text x="90" y="2573" class="cardTitle">Browser encounter state machine · observed UX</text>
+<text x="863" y="2572" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="2604" class="body">Initial: door.webp; patient card empty; ENTER ROOM disabled; LED red; permission modal shown.</text>
+<text x="92" y="2626" class="body">Permission gesture: requestPermissions calls getUserMedia({audio:true}); create/resume AudioContext;</text>
+<text x="92" y="2643" class="body">unlock browser audio; then allow setup progression.</text>
+<text x="92" y="2665" class="body">Setup pending: loading=true; LED yellow; POST setup only after session IDs exist; patient UI remains</text>
+<text x="92" y="2682" class="body">gated.</text>
+<text x="92" y="2704" class="body">Setup ready: validate/display patientName, DOB, bodytype, reason, hidden diagnosis field;</text>
+<text x="92" y="2721" class="body">sessionActive=true; LED green; enable ENTER ROOM.</text>
+<text x="92" y="2743" class="body">Room entry: resume AudioContext; swap door for patient portrait; open audio controller/socket; disable</text>
+<text x="92" y="2760" class="body">entry; start speech-recognition loop.</text>
+<text x="92" y="2782" class="body">Active turn: inConversation/loading; LED yellow while processing. Do not accept another spoken turn while</text>
+<text x="92" y="2799" class="body">prior audio is queued/playing.</text>
+<text x="92" y="2821" class="body">Playback idle: queue drained and playback callback resolves; LED green; next recognition allowed. Stop</text>
+<text x="92" y="2838" class="body">phrase “see you next time” exits the listen loop.</text>
+<text x="92" y="2860" class="body">The old “Exam over” phrase exits pain-image mode in design notes; it is not the actual session stop phrase</text>
+<text x="92" y="2877" class="body">or a verified clinical phase transition.</text>
+</g>
+<g class="card" aria-label="Client identifier and local state flow">
+<rect x="70" y="3006" width="810" height="308" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 3006h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="3018" width="5" height="284" rx="2.5" fill="#b45309"/>
+<text x="90" y="3031" class="cardTitle">Client identifier and local state flow</text>
+<text x="863" y="3030" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="3062" class="body">Mounted client → initializeSession() POSTs to Express; waits for both sessionId (sid) and dataId (did)</text>
+<text x="92" y="3079" class="body">before setup request can be formed.</text>
+<text x="92" y="3101" class="body">useSession stores sid/did and later compatibility threadId/assistantId/theme in reactive refs and</text>
+<text x="92" y="3118" class="body">localStorage; clearSession removes them.</text>
+<text x="92" y="3140" class="body">initializeSession retries up to three times with a one-second delay; GET by dataId returns a complete</text>
+<text x="92" y="3157" class="body">record; helper maps nested snake_case response keys to camelCase.</text>
+<text x="92" y="3179" class="body">Browser includes credentials on session-manager and backend requests. Cookie is HTTP-only; raw</text>
+<text x="92" y="3196" class="body">cookie-session ID appears in response data in the described implementation.</text>
+<text x="92" y="3218" class="body">The microphone permission prompt and ENTER ROOM are separate user gates. Session creation does not invoke</text>
+<text x="92" y="3235" class="body">AI, show the patient, or start listening by itself.</text>
+</g>
+<g class="card" aria-label="IDs, binding, and API actions · later legacy service">
+<rect x="920" y="2548" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 2548h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="920" y="2560" width="5" height="335" rx="2.5" fill="#b45309"/>
+<text x="940" y="2573" class="cardTitle">IDs, binding, and API actions · later legacy service</text>
+<text x="1713" y="2572" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="942" y="2604" class="body">Raw express-session SID stays in HTTP-only cookie. createSessionId(rawSID, secret) = sess: +</text>
+<text x="942" y="2621" class="body">HMAC-SHA256(secret, rawSID), base64url encoded.</text>
+<text x="942" y="2643" class="body">createDataId() uses 18 cryptographically random bytes, base64url, prefix data:. It is opaque and</text>
+<text x="942" y="2660" class="body">independent from sid.</text>
+<text x="942" y="2682" class="body">POST /session: create/reuse app session + data ref. GET /session/:dataId: data ref → session. PATCH: merge</text>
+<text x="942" y="2699" class="body">data. POST bind-chat: save compatibility IDs. DELETE: remove both JSON documents.</text>
+<text x="942" y="2721" class="body">Request envelope for setup: {sessionId, dataId, command:&quot;initiate_simulation&quot;}. Turn: {sessionId, dataId,</text>
+<text x="942" y="2738" class="body">assistantId?, threadId?, text}. Pydantic checks IDs length ≥6 and nonempty text.</text>
+<text x="942" y="2760" class="body">Conversation handler reads app:session:&lt;sid&gt; and rejects a request if supplied dataId differs from stored</text>
+<text x="942" y="2777" class="body">dataId. This guards accidental cross-session correlation, not customer authentication by itself.</text>
+<text x="942" y="2799" class="body">Current target replaces browser-controlled patient-state authority with authenticated tenant/session</text>
+<text x="942" y="2816" class="body">ownership on the API; provider IDs never become authorization tokens.</text>
+</g>
+<g class="card" aria-label="Target session binding invariant">
+<rect x="920" y="2921" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 2921h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="2933" width="5" height="335" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="2946" class="cardTitle">Target session binding invariant</text>
+<text x="1713" y="2945" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="2977" class="body">One authenticated customer session → one app encounter → one fixed PatientScenarioSeed → one provider</text>
+<text x="942" y="2994" class="body">context per selected modality.</text>
+<text x="942" y="3016" class="body">Persist tenant/account, session ID, state version, phase, model/audio policy, provider type and provider</text>
+<text x="942" y="3033" class="body">context ID; scope every read/write to tenant + session.</text>
+<text x="942" y="3055" class="body">A session lock permits one active turn per patient session. Separate sessions scale concurrently; one</text>
+<text x="942" y="3072" class="body">session remains serialized to preserve chronology and speech playback.</text>
+<text x="942" y="3094" class="body">Transcript → Responses conversationId + latest responseId. Full Audio → distinct Realtime sessionId. Never</text>
+<text x="942" y="3111" class="body">treat those provider contexts as interchangeable.</text>
+<text x="942" y="3133" class="body">Reconnect resumes app state from the application store and authorized provider projection; a new browser</text>
+<text x="942" y="3150" class="body">socket cannot attach another patient profile.</text>
+<text x="942" y="3172" class="body">Session completion records assessment/debrief and retention/deletion status; it does not erase scenario</text>
+<text x="942" y="3189" class="body">truth or previously accepted history facts before policy expiry.</text>
+</g>
+<line x1="70" y1="3473" x2="1730" y2="3473" stroke="#d9e3ed"/>
+<text x="70" y="3494" class="footer">EVIDENCE / REFERENCES: docs/plangpt.md § Session identity and end-to-end flow · 2024-nuxgpt008/gptpatient-fullstack/apps/frontend · services/session-manager/src/index.js</text>
+</g>
+<g id="page-4" class="page" aria-label="Page 4: Setup lane, patient generation, and profile expansion">
+<rect x="24" y="3600" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="3643" class="pageTitle">Setup lane, patient generation, and profile expansion</text>
+<text x="72" y="3669" class="subtitle">One-time case construction is separated from interactive patient turns and post-session scoring.</text>
+<text x="1726" y="3641" text-anchor="end" class="footer">PAGE 04 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="3708" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="3708" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="3708" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="3690" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="710" y="3708" text-anchor="middle" class="navText" fill="#ffffff">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="3708" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="3708" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="3708" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="3708" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="3690" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="3708" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Observed legacy setup call tree">
+<rect x="70" y="3744" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 3744h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="3756" width="5" height="335" rx="2.5" fill="#b45309"/>
+<text x="90" y="3769" class="cardTitle">Observed legacy setup call tree</text>
+<text x="863" y="3768" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="3800" class="body">POST /app/api/openai → Pydantic SetupRequest(sessionId, dataId, command) → setup_simulation(payload).</text>
+<text x="92" y="3822" class="body">setup_simulation builds app:session:&lt;sid&gt; and app:data:&lt;did&gt; keys; reads/creates JSON records; delegates</text>
+<text x="92" y="3839" class="body">to create_setup_payload; writes setup-ready state, profile, provider IDs, metrics/metadata, timestamps;</text>
+<text x="92" y="3856" class="body">returns setup response.</text>
+<text x="92" y="3878" class="body">Assistants toggle on: _assistants_generate_patient → create/reuse assistant → create thread → post</text>
+<text x="92" y="3895" class="body">instructions + user prompt → create run → poll → fetch message → parse profile.</text>
+<text x="92" y="3917" class="body">Assistants toggle off: _chat_generate_patient → Chat Completions JSON object mode → parse. Missing key:</text>
+<text x="92" y="3934" class="body">mock IDs + random_patient. Provider exception: generated fallback and fallback-mode metadata.</text>
+<text x="92" y="3956" class="body">Responses integrated copy: _create_conversation → _responses_generate_patient → extract output text +</text>
+<text x="92" y="3973" class="body">conversationId/responseId; stores conversationId while exposing legacy threadId/chatId fields.</text>
+<text x="92" y="3995" class="body">PatientVariables has patientName/patientDob/patientBodytype/patientReason/patientDiagnosis.</text>
+<text x="92" y="4012" class="body">parse_patient_json checks required keys and coerces values to strings; it is not a strict profile schema.</text>
+</g>
+<g class="card" aria-label="Legacy fallback random_patient(seed)">
+<rect x="70" y="4117" width="810" height="291" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 4117h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="4129" width="5" height="267" rx="2.5" fill="#b45309"/>
+<text x="90" y="4142" class="cardTitle">Legacy fallback random_patient(seed)</text>
+<text x="863" y="4141" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="4173" class="body">Finite first-name and last-name lists; random composition can repeat. A seed may make output reproducible</text>
+<text x="92" y="4190" class="body">in the helper.</text>
+<text x="92" y="4212" class="body">Age is selected from 20–57. DOB uses month 1–12 and day 1–28; browser later recalculates age from DOB.</text>
+<text x="92" y="4234" class="body">Body type enum is average | heavy. Profile contains five visible fields only; detailed histories were</text>
+<text x="92" y="4251" class="body">requested in prompt text but not persisted as typed sections by this generator.</text>
+<text x="92" y="4273" class="body">Complaint/diagnosis pairs include irregular bleeding/AUB; pelvic pain/endometriosis; missed period +</text>
+<text x="92" y="4290" class="body">nausea/early IUP; itching/discharge/vaginitis; dysuria/urgency/UTI.</text>
+<text x="92" y="4312" class="body">Fallback profile generation demonstrates development resilience, not clinical educator review or a</text>
+<text x="92" y="4329" class="body">validated differential-diagnosis engine.</text>
+</g>
+<g class="card" aria-label="Target one-time scenario seed contract">
+<rect x="920" y="3744" width="810" height="376" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 3744h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="3756" width="5" height="352" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="3769" class="cardTitle">Target one-time scenario seed contract</text>
+<text x="1713" y="3768" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="3800" class="body">Setup request → authenticate/authorize → idempotency key → bounded setup capacity → Responses Structured</text>
+<text x="942" y="3817" class="body">Outputs with versioned PatientScenarioSeed JSON Schema.</text>
+<text x="942" y="3839" class="body">Seed fields: identity/display slice; age/DOB/body type; present complaint + onset/course; patient-known</text>
+<text x="942" y="3856" class="body">facts; hidden answer key; diagnosis or explicitly unknown; supported fixed exam findings and test/result</text>
+<text x="942" y="3873" class="body">catalog.</text>
+<text x="942" y="3895" class="body">Also store history cues/allowed expansion boundaries, persona trait seed, setup model,</text>
+<text x="942" y="3912" class="body">prompt/schema/rubric versions, random seed, createdAt and reproducibility metadata.</text>
+<text x="942" y="3934" class="body">Validate schema shape AND semantic constraints in application code: age/DOB, pregnancy arithmetic,</text>
+<text x="942" y="3951" class="body">supported results, answer-key consistency, diagnosis and rubric references.</text>
+<text x="942" y="3973" class="body">Commit exactly one immutable versioned seed. Retry with same idempotency key returns the same seed;</text>
+<text x="942" y="3990" class="body">correction requires pre-activation version change or a new encounter.</text>
+<text x="942" y="4012" class="body">Structured Outputs validates JSON shape/refusal state; it does not prove a generated fact is clinically</text>
+<text x="942" y="4029" class="body">coherent or consistent with this patient.</text>
+</g>
+<g class="card" aria-label="During-turn profile fact expansion">
+<rect x="920" y="4134" width="810" height="410" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 4134h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="4146" width="5" height="386" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="4159" class="cardTitle">During-turn profile fact expansion</text>
+<text x="1713" y="4158" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="4190" class="body">Turn prompt includes only relevant seed facts + accepted prior expansions + current phase/coverage + prior</text>
+<text x="942" y="4207" class="body">transcript projection; never the full clinician-hidden answer key in browser instructions.</text>
+<text x="942" y="4229" class="body">Model returns natural patient utterance + zero or more proposed PatientFactExpansion records: section,</text>
+<text x="942" y="4246" class="body">normalized content, patient-reported source/certainty, related cue, timeline anchors, disclosure event</text>
+<text x="942" y="4263" class="body">candidate.</text>
+<text x="942" y="4285" class="body">API validates against seed, age, chronology, prior facts, fixed case truth/results, pregnancy outcome</text>
+<text x="942" y="4302" class="body">totals and existing child counts. Compatible omitted details can be elaborated; contradictory or</text>
+<text x="942" y="4319" class="body">impossible facts are rejected/repaired.</text>
+<text x="942" y="4341" class="body">Accepted facts append before answer delivery and persist for later turns. Example substance use: recovery</text>
+<text x="942" y="4358" class="body">clue → heroin 5y, methadone 1y, sober 3y, NA. Example G7: 1 stillbirth + 2 first-trimester miscarriages +</text>
+<text x="942" y="4375" class="body">4 normal births = 7; 4 healthy children; eclampsia history.</text>
+<text x="942" y="4397" class="body">Once an expansion is accepted, it becomes session-stable. Different sessions can elaborate open details</text>
+<text x="942" y="4414" class="body">differently: bounded unpredictability, not uncontrolled case drift.</text>
+<text x="942" y="4436" class="body">Patient-reported “I was told I have hepatitis B” may be an expansion. A confirmed lab value or exam</text>
+<text x="942" y="4453" class="body">finding must come from the supported scenario catalog.</text>
+</g>
+<line x1="70" y1="4669" x2="1730" y2="4669" stroke="#d9e3ed"/>
+<text x="70" y="4690" class="footer">EVIDENCE / REFERENCES: Legacy source paths under 2024-nuxgpt008/stack and gptpatient-fullstack/services · target contract docs/plangpt-modernization.md §§ 53–86</text>
+</g>
+<g id="page-5" class="page" aria-label="Page 5: Live turn program, transcript streaming, and audio pipeline">
+<rect x="24" y="4796" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="4839" class="pageTitle">Live turn program, transcript streaming, and audio pipeline</text>
+<text x="72" y="4865" class="subtitle">One clinician input, one validated patient response, durable turn commit, then ordered audio playback.</text>
+<text x="1726" y="4837" text-anchor="end" class="footer">PAGE 05 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="4904" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="4904" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="4904" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="4904" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="4886" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="895" y="4904" text-anchor="middle" class="navText" fill="#ffffff">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="4904" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="4904" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="4904" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="4886" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="4904" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Legacy turn handler and provider branches">
+<rect x="70" y="4940" width="810" height="376" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 4940h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="4952" width="5" height="352" rx="2.5" fill="#b45309"/>
+<text x="90" y="4965" class="cardTitle">Legacy turn handler and provider branches</text>
+<text x="863" y="4964" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="4996" class="body">Browser listenOnce() captures final en-US transcript → api1 POST /app1_endpoint_ttsstt with sid/did,</text>
+<text x="92" y="5013" class="body">assistantId/threadId compatibility fields and text.</text>
+<text x="92" y="5035" class="body">ConversationTurn Pydantic validates IDs/text → conversation_turn reads JSON session → checks did →</text>
+<text x="92" y="5052" class="body">_resolve_assistant_text(payload, session_record).</text>
+<text x="92" y="5074" class="body">Assistants path: append user message to thread → create run → poll run status → read assistant text. Chat</text>
+<text x="92" y="5091" class="body">path: Chat Completions. Responses path: stored conversationId → Responses create → extract output_text →</text>
+<text x="92" y="5108" class="body">capture responseId.</text>
+<text x="92" y="5130" class="body">No provider key: deterministic _mock_reply. API/provider failure may use fallback text. These branches are</text>
+<text x="92" y="5147" class="body">historical implementation behavior, not the desired target failure policy.</text>
+<text x="92" y="5169" class="body">_split_sentences splits final text on ., ?, ! followed by whitespace. Each sentence is synthesized</text>
+<text x="92" y="5186" class="body">serially by _synthesize_tts_bytes through audio-speech API.</text>
+<text x="92" y="5208" class="body">Each byte payload emitted as Socket.IO audio_data to sessionId room. JSON session is merged with active</text>
+<text x="92" y="5225" class="body">status, last user/assistant text, chunk count, provider IDs and timestamps.</text>
+</g>
+<g class="card" aria-label="Legacy browser audio queue and turn gate">
+<rect x="70" y="5330" width="810" height="376" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 5330h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="5342" width="5" height="352" rx="2.5" fill="#b45309"/>
+<text x="90" y="5355" class="cardTitle">Legacy browser audio queue and turn gate</text>
+<text x="863" y="5354" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="5386" class="body">playAudioStream(socketUrl, sessionId): connect to /ws, authenticate/join session room, listen for</text>
+<text x="92" y="5403" class="body">audio_data, normalize ArrayBuffer/views/bytes/base64 through toArrayBuffer.</text>
+<text x="92" y="5425" class="body">Decode each payload with Web Audio decodeAudioData; enqueue in arrival order; schedule playback</text>
+<text x="92" y="5442" class="body">sequentially; resolve idle only after final AudioBuffer ends.</text>
+<text x="92" y="5464" class="body">Speech-recognition loop waits for audio controller idle before starting next listenOnce(). This prevents</text>
+<text x="92" y="5481" class="body">overlapping clinician inputs while the previous patient reply is audible.</text>
+<text x="92" y="5503" class="body">In older vuepy05 worker experiment: streaming Chat Completions accumulates text until punctuation after</text>
+<text x="92" y="5520" class="body">≥200 chars; phrase queue hands clauses to TTS worker; TTS requests PCM, reads 1024-byte blocks, appends</text>
+<text x="92" y="5537" class="body">queue/buffer; PyAudio local playback at 24 kHz mono; Socket.IO emits audio.</text>
+<text x="92" y="5559" class="body">Old worker has multiple app/socket launch contexts and one FAKE_SESSION_ID audio room; preserve as</text>
+<text x="92" y="5576" class="body">experimental lineage, not the later validated session contract.</text>
+<text x="92" y="5598" class="body">Latency contributors: model first token/full completion; serial TTS request per sentence; byte delivery;</text>
+<text x="92" y="5615" class="body">browser decode; ordered playback; lock hold and queue/back-pressure.</text>
+</g>
+<g class="card" aria-label="Target transcript-mode turn transaction">
+<rect x="920" y="4940" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 4940h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="4952" width="5" height="335" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="4965" class="cardTitle">Target transcript-mode turn transaction</text>
+<text x="1713" y="4964" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="4996" class="body">1 Browser sends typed/transcribed text + stable turnId over HTTPS/SSE; API authenticates tenant/session</text>
+<text x="942" y="5013" class="body">and enforces size/rate limits.</text>
+<text x="942" y="5035" class="body">2 Per-session lock checks phase/turn idempotency. Persist user input event + pending turn marker; do not</text>
+<text x="942" y="5052" class="body">keep a SQL transaction open during model/network wait.</text>
+<text x="942" y="5074" class="body">3 Build minimal Responses input from seed + accepted expansions + transcript context. Stream typed</text>
+<text x="942" y="5091" class="body">Responses events; extract text and proposed expansions; handle refusal/incomplete/error states.</text>
+<text x="942" y="5113" class="body">4 Validate speech + expansions. In one DB transaction append accepted facts, disclosure events, assistant</text>
+<text x="942" y="5130" class="body">text/event, responseId, usage and turn completion; enforce unique(sessionId, turnId).</text>
+<text x="942" y="5152" class="body">5 Only after durable commit deliver patient text/SSE and optional speech. Release lock after reply/audio</text>
+<text x="942" y="5169" class="body">policy permits next turn; reconnect/retry cannot double-append facts.</text>
+<text x="942" y="5191" class="body">If provider finishes but DB commit fails, keep turn recoverable/pending; do not present uncommitted facts</text>
+<text x="942" y="5208" class="body">as established. Idempotent retry uses saved provider response or explicitly reruns by retry policy.</text>
+</g>
+<g class="card" aria-label="Transcript and Full Audio are separate lanes">
+<rect x="920" y="5313" width="810" height="342" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 5313h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="5325" width="5" height="318" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="5338" class="cardTitle">Transcript and Full Audio are separate lanes</text>
+<text x="1713" y="5337" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="5369" class="body">Transcript: browser STT or typed text → HTTPS; Responses text deltas via SSE; optional separate TTS</text>
+<text x="942" y="5386" class="body">stream. Default transcript path is auditable and easy to replay.</text>
+<text x="942" y="5408" class="body">Full Audio: API creates/bridges Realtime context; browser audio enters WebRTC or an authenticated server</text>
+<text x="942" y="5425" class="body">WebSocket bridge; model emits audio/transcript events; server authorizes tool/actions against encounter</text>
+<text x="942" y="5442" class="body">state.</text>
+<text x="942" y="5464" class="body">Server bridge keeps private seed and undisclosed facts off browser-visible instructions; measure relay</text>
+<text x="942" y="5481" class="body">cost/latency and reconcile final transcript/phase events to canonical app ledger.</text>
+<text x="942" y="5503" class="body">Realtime sessionId differs from Responses conversationId/responseId. Modality switch is an explicit</text>
+<text x="942" y="5520" class="body">checkpoint/rebuild transition; never assume provider state can be copied across lanes.</text>
+<text x="942" y="5542" class="body">Capture timings: browser capture; API queue/lock; Responses first token/completion; TTS first</text>
+<text x="942" y="5559" class="body">byte/completion; WebSocket delivery; Realtime first audio; playback completion; p50/p95 and cost per</text>
+<text x="942" y="5576" class="body">session.</text>
+</g>
+<line x1="70" y1="5865" x2="1730" y2="5865" stroke="#d9e3ed"/>
+<text x="70" y="5886" class="footer">EVIDENCE / REFERENCES: gptpatient-fullstack/services/ttsstt-backend/pyapp1_ttsstt.py · apps/frontend/services/{SpeechRecognition,PlayAudio}.ts · proposed path docs/plangpt-modernization.md § Speech</text>
+</g>
+<g id="page-6" class="page" aria-label="Page 6: Redis, RedisJSON, cookie sessions, and historical persistence">
+<rect x="24" y="5992" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="6035" class="pageTitle">Redis, RedisJSON, cookie sessions, and historical persistence</text>
+<text x="72" y="6061" class="subtitle">Three storage patterns appeared in the lineage; RedisJSON belongs to the later integrated session manager only.</text>
+<text x="1726" y="6033" text-anchor="end" class="footer">PAGE 06 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="6100" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="6100" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="6100" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="6100" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="6100" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="6082" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="1080" y="6100" text-anchor="middle" class="navText" fill="#ffffff">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="6100" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="6100" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="6082" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="6100" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Redis key spaces in full-stack session manager">
+<rect x="70" y="6136" width="810" height="325" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 6136h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="6148" width="5" height="301" rx="2.5" fill="#b45309"/>
+<text x="90" y="6161" class="cardTitle">Redis key spaces in full-stack session manager</text>
+<text x="863" y="6160" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="6192" class="body">Application encounter JSON: app:session:&lt;sessionId&gt;. Root document fields: sessionId, dataId, createdAt,</text>
+<text x="92" y="6209" class="body">updatedAt, status, openai{}, patient{}, metrics{}, metadata{}.</text>
+<text x="92" y="6231" class="body">openai initial object: assistantId/threadId/chatId=null plus provider and mode; patient initial object:</text>
+<text x="92" y="6248" class="body">patientName/patientDob/patientBodytype/patientReason/patientDiagnosis=null.</text>
+<text x="92" y="6270" class="body">Data reference JSON: app:data:&lt;dataId&gt; → sessionId, dataId, sessionKey, timestamps. did is a lookup token,</text>
+<text x="92" y="6287" class="body">not the session document key.</text>
+<text x="92" y="6309" class="body">Browser cookie session is a third representation: sess:&lt;raw express-session SID&gt; stores</text>
+<text x="92" y="6326" class="body">JSON.stringify(sess) with Redis SET ... EX. Cookie max-age supplies TTL; fallback store default is one</text>
+<text x="92" y="6343" class="body">day; configured browser cookie max-age is eight hours.</text>
+<text x="92" y="6365" class="body">Session doc and data ref do not get application TTL in the reviewed code; explicit DELETE destroys both</text>
+<text x="92" y="6382" class="body">JSON docs. Cookie TTL does not expire the app JSON records.</text>
+</g>
+<g class="card" aria-label="RedisJSON helper semantics and failure paths">
+<rect x="70" y="6475" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 6475h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="6487" width="5" height="335" rx="2.5" fill="#b45309"/>
+<text x="90" y="6500" class="cardTitle">RedisJSON helper semantics and failure paths</text>
+<text x="863" y="6499" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="6531" class="body">jsonSet → Redis JSON.SET key path serializedValue; jsonGet → JSON.GET then JSON.parse, unwrap first root</text>
+<text x="92" y="6548" class="body">result; jsonDelete → JSON.DEL.</text>
+<text x="92" y="6570" class="body">jsonMerge → JSON.MERGE. Fallback helper reads and rewrites the JSON document with recursive object merge;</text>
+<text x="92" y="6587" class="body">arrays replace rather than element-merge.</text>
+<text x="92" y="6609" class="body">ensureSessionRecords: get existing sid record; update dataId/time; refresh did reference; otherwise</text>
+<text x="92" y="6626" class="body">baseRecord then JSON.SET both documents.</text>
+<text x="92" y="6648" class="body">getSessionByDataId resolves data ref then loads sessionKey. mergeSessionByDataId writes patch + updatedAt</text>
+<text x="92" y="6665" class="body">and updates did timestamp. destroySessionRecords deletes sid and did docs.</text>
+<text x="92" y="6687" class="body">Python setup/conversation helpers use redis-py execute_command for JSON.GET/SET/MERGE; fallback shallow</text>
+<text x="92" y="6704" class="body">dict update then JSON.SET can replace nested objects. Merge behavior differs by language/fallback.</text>
+<text x="92" y="6726" class="body">RedisJSON record values must be JSON serializable. A successful shallow patch can overwrite nested</text>
+<text x="92" y="6743" class="body">patient/openai fields if fallback semantics are misunderstood.</text>
+</g>
+<g class="card" aria-label="Where Redis meant something different">
+<rect x="920" y="6136" width="810" height="376" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 6136h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff1f2"/>
+<rect x="920" y="6148" width="5" height="352" rx="2.5" fill="#b91c1c"/>
+<text x="940" y="6161" class="cardTitle">Where Redis meant something different</text>
+<text x="1713" y="6160" text-anchor="end" class="badge" fill="#b91c1c">BOUNDARY / CAVEAT</text>
+<text x="942" y="6192" class="body">vuepy04: redis:7.4.1, plain Redis. Rate limits/session storage and ordinary SET for reusable ASSISTANT_ID.</text>
+<text x="942" y="6209" class="body">No app:session/app:data JSON pair.</text>
+<text x="942" y="6231" class="body">vuepy05: plain redis:latest on port 6380; Flask-Session stores session state. Inspected paths contain no</text>
+<text x="942" y="6248" class="body">JSON.GET/SET/MERGE app data model.</text>
+<text x="942" y="6270" class="body">ioexpress: connect-redis ordinary express-session objects and one-hour TTL; /api/set-session stores</text>
+<text x="942" y="6287" class="body">req.session.data. It is not later RedisJSON service.</text>
+<text x="942" y="6309" class="body">2024 full-stack and nested copy: Redis Stack required for JSON.*; RedisInsight is operator UI, not</text>
+<text x="942" y="6326" class="body">request-path app dependency.</text>
+<text x="942" y="6348" class="body">Standalone redis-stack-7.4.1: separate infrastructure test; digest-pinned images, health-gated init,</text>
+<text x="942" y="6365" class="body">auth/ACL settings, AOF everysec, RDB, maxmemory policy, volumes and RedisInsight. Not evidence patient app</text>
+<text x="942" y="6382" class="body">used these settings.</text>
+<text x="942" y="6404" class="body">Later proposed architecture removes RedisJSON from system of record. RedisJSON is not needed for the new</text>
+<text x="942" y="6421" class="body">design.</text>
+</g>
+<g class="card" aria-label="Operational lessons carried into target">
+<rect x="920" y="6526" width="810" height="291" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 6526h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#ecfdf5"/>
+<rect x="920" y="6538" width="5" height="267" rx="2.5" fill="#047857"/>
+<text x="940" y="6551" class="cardTitle">Operational lessons carried into target</text>
+<text x="1713" y="6550" text-anchor="end" class="badge" fill="#047857">INVARIANT</text>
+<text x="942" y="6582" class="body">Do not call every Redis session “RedisJSON”. Distinguish browser cookie record, app session document, data</text>
+<text x="942" y="6599" class="body">reference, old Flask session, and plain key/value assistant cache.</text>
+<text x="942" y="6621" class="body">Do not treat Redis TTL as app retention unless the exact key receives EXPIRE/SET EX. Document-specific</text>
+<text x="942" y="6638" class="body">expiry must be verified.</text>
+<text x="942" y="6660" class="body">RedisInsight is admin tooling. Browser talks to authenticated API, never Redis directly.</text>
+<text x="942" y="6682" class="body">The full-stack demo Compose uses development ports/latest tags; standalone Redis Stack Compose is a</text>
+<text x="942" y="6699" class="body">different, stronger operations setup.</text>
+<text x="942" y="6721" class="body">Target Redis use: optional ephemeral cross-replica locks/pub-sub/rate limit/transient queue only, with TTL</text>
+<text x="942" y="6738" class="body">and failure behavior; durable encounter state remains PostgreSQL.</text>
+</g>
+<line x1="70" y1="7061" x2="1730" y2="7061" stroke="#d9e3ed"/>
+<text x="70" y="7082" class="footer">EVIDENCE / REFERENCES: gptpatient-fullstack/services/session-manager/src/{index,sessionService,redisJson}.js · docs/plangpt.md §§ Session identity and Redis deployments</text>
+</g>
+<g id="page-7" class="page" aria-label="Page 7: Target data model, Responses state, and durable turn writes">
+<rect x="24" y="7188" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="7231" class="pageTitle">Target data model, Responses state, and durable turn writes</text>
+<text x="72" y="7257" class="subtitle">PostgreSQL is the application authority; provider conversations are context projections, not the encounter database.</text>
+<text x="1726" y="7229" text-anchor="end" class="footer">PAGE 07 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="7296" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="7296" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="7296" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="7296" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="7296" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="7296" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="7278" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="1265" y="7296" text-anchor="middle" class="navText" fill="#ffffff">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="7296" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="7278" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="7296" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Proposed durable entities and ownership">
+<rect x="70" y="7332" width="810" height="444" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 7332h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="70" y="7344" width="5" height="420" rx="2.5" fill="#5b4bd8"/>
+<text x="90" y="7357" class="cardTitle">Proposed durable entities and ownership</text>
+<text x="863" y="7356" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="92" y="7388" class="body">Customer / Tenant: authenticated account boundary, membership/roles, entitlement/model/audio policy and</text>
+<text x="92" y="7405" class="body">retention settings. Every encounter row is tenant-scoped.</text>
+<text x="92" y="7427" class="body">PatientSession: sessionId, tenantId, patient/session binding, status/phase, active mode, model tier,</text>
+<text x="92" y="7444" class="body">stateVersion, startedAt/completedAt, retention/deletion status.</text>
+<text x="92" y="7466" class="body">ScenarioSeed: immutable versioned JSONB or normalized case tables; seedId/sessionId, case truth,</text>
+<text x="92" y="7483" class="body">patient-known facts, hidden rubric, fixed tests/exams, allowed expandable clues, persona/random seed and</text>
+<text x="92" y="7500" class="body">prompt/schema versions.</text>
+<text x="92" y="7522" class="body">FactExpansion: append-only factId/sessionId/section/normalized</text>
+<text x="92" y="7539" class="body">content/source/certainty/turnId/timeline/version; patient-reported facts separate from lab/exam</text>
+<text x="92" y="7556" class="body">observations.</text>
+<text x="92" y="7578" class="body">EncounterEvent: ordered eventId/sessionId/turnId/sequence/type/actor/payloadRef/timestamp; input, reply,</text>
+<text x="92" y="7595" class="body">disclosure, phase transition, order, result, consent, exam, assessment, modality and error events.</text>
+<text x="92" y="7617" class="body">EncounterSnapshot: mutable read projection for phase, coverage, orders, exam consent/findings, assessment</text>
+<text x="92" y="7634" class="body">state, transcript pointers, model/audio usage; rebuildable from seed + events.</text>
+<text x="92" y="7656" class="body">ProviderContext: provider, modality, conversationId, latest responseId or Realtime sessionId, model alias,</text>
+<text x="92" y="7673" class="body">retention choice, context/version metadata; store internally, never expose as authority.</text>
+</g>
+<g class="card" aria-label="Indexes, constraints, and transaction boundaries">
+<rect x="70" y="7790" width="810" height="376" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 7790h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="70" y="7802" width="5" height="352" rx="2.5" fill="#5b4bd8"/>
+<text x="90" y="7815" class="cardTitle">Indexes, constraints, and transaction boundaries</text>
+<text x="863" y="7814" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="92" y="7846" class="body">Typed indexed columns for tenantId, sessionId, status, turnId, event sequence and provider IDs; JSONB for</text>
+<text x="92" y="7863" class="body">versioned flexible case/fact payloads where appropriate.</text>
+<text x="92" y="7885" class="body">Unique tenant-scoped active patient session; unique(sessionId, turnId); unique(sessionId, eventSequence);</text>
+<text x="92" y="7902" class="body">FK expansion/event to owned session/seed.</text>
+<text x="92" y="7924" class="body">Immutability guard on active ScenarioSeed. Append-only expansion/event tables; constraints reject</text>
+<text x="92" y="7941" class="body">update/delete except explicit retention/anonymization policy path.</text>
+<text x="92" y="7963" class="body">Create session + seed + first setup events atomically. Write input event/pending marker, commit, call</text>
+<text x="92" y="7980" class="body">provider outside transaction, then atomically append accepted facts/disclosures/reply/provider IDs and</text>
+<text x="92" y="7997" class="body">mark turn complete.</text>
+<text x="92" y="8019" class="body">Write response data before delivery. If write fails, report/recover pending turn; do not speak an</text>
+<text x="92" y="8036" class="body">uncommitted expansion. Snapshot can be rebuilt and checked against ledger.</text>
+<text x="92" y="8058" class="body">Use row/advisory/Redis lock scoped per session only when multiple API replicas need it; do not lock</text>
+<text x="92" y="8075" class="body">unrelated patient sessions.</text>
+</g>
+<g class="card" aria-label="Responses API conversation linkage">
+<rect x="920" y="7332" width="810" height="376" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 7332h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="7344" width="5" height="352" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="7357" class="cardTitle">Responses API conversation linkage</text>
+<text x="1713" y="7356" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="7388" class="body">Setup creates exactly one provider context after immutable seed commit; attach app session ID internally</text>
+<text x="942" y="7405" class="body">to conversation metadata only if policy and API support it.</text>
+<text x="942" y="7427" class="body">For transcript turns: use one stored conversation identifier with Responses input; persist latest</text>
+<text x="942" y="7444" class="body">responseId for trace/recovery. Do not also send previous_response_id with conversation where docs define</text>
+<text x="942" y="7461" class="body">them as alternate state mechanisms.</text>
+<text x="942" y="7483" class="body">Provider history accelerates context continuity, but app ledger is authoritative. Rebuild a minimized</text>
+<text x="942" y="7500" class="body">authorized input projection from seed + accepted facts + transcript events after provider loss.</text>
+<text x="942" y="7522" class="body">Handle response.output_text.delta / completion stream events; do not assume every response has usable</text>
+<text x="942" y="7539" class="body">text. Inspect refusal, incomplete, cancelled, timeout and provider error states.</text>
+<text x="942" y="7561" class="body">Responses stored by default; store:false, deletion and account retention behavior are product-policy</text>
+<text x="942" y="7578" class="body">decisions. Synthetic data still needs lifecycle/retention rules.</text>
+<text x="942" y="7600" class="body">Full Audio persists a separate Realtime context ID and reconciled transcripts/actions. No silent</text>
+<text x="942" y="7617" class="body">provider-state transfer across modality.</text>
+</g>
+<g class="card" aria-label="Proposed service responsibilities (names are not implemented)">
+<rect x="920" y="7722" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 7722h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="7734" width="5" height="335" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="7747" class="cardTitle">Proposed service responsibilities (names are not implemented)</text>
+<text x="1713" y="7746" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="7778" class="body">SessionCoordinator.create/restore/authorize: tenant binding, idempotency, lifecycle and per-session</text>
+<text x="942" y="7795" class="body">serialization.</text>
+<text x="942" y="7817" class="body">ScenarioService.generate/validate/commit: structured seed, hidden answer key, test/exam catalog, persona,</text>
+<text x="942" y="7834" class="body">immutable version.</text>
+<text x="942" y="7856" class="body">TurnService.buildContext/requestStream/validateExpansion/commitTurn: prompt projection, provider response,</text>
+<text x="942" y="7873" class="body">consistency checks and atomic event write.</text>
+<text x="942" y="7895" class="body">EncounterService.transition/order/exam/submitAssessment: state machine and server-side authorization for</text>
+<text x="942" y="7912" class="body">clinical actions.</text>
+<text x="942" y="7934" class="body">Provider adapters: Responses text/setup, Realtime audio, optional TTS; normalize provider errors and usage</text>
+<text x="942" y="7951" class="body">into app events.</text>
+<text x="942" y="7973" class="body">DebriefService.score: educator-reviewed rubric against fixed case truth plus eligible patient-reported</text>
+<text x="942" y="7990" class="body">expansions; run after learner submission off interactive turn path.</text>
+</g>
+<line x1="70" y1="8257" x2="1730" y2="8257" stroke="#d9e3ed"/>
+<text x="70" y="8278" class="footer">EVIDENCE / REFERENCES: docs/plangpt-modernization.md §§ Scenario seed, Responses API and turn state, State and optional Redis · OpenAI Conversation state guide</text>
+</g>
+<g id="page-8" class="page" aria-label="Page 8: Clinical interview, exams, orders, and patient-history canon">
+<rect x="24" y="8384" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="8427" class="pageTitle">Clinical interview, exams, orders, and patient-history canon</text>
+<text x="72" y="8453" class="subtitle">The clinician elicits the story. The simulated patient answers naturally; the rubric values relevance and completeness.</text>
+<text x="1726" y="8425" text-anchor="end" class="footer">PAGE 08 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="8492" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="8492" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="8492" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="8492" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="8492" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="8492" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="8492" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="8474" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="1450" y="8492" text-anchor="middle" class="navText" fill="#ffffff">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="8474" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1635" y="8492" text-anchor="middle" class="navText" fill="#4c6278">09 · Operations</text></a>
+<g class="card" aria-label="Encounter phase machine and clinical actions">
+<rect x="70" y="8528" width="810" height="427" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 8528h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="70" y="8540" width="5" height="403" rx="2.5" fill="#5b4bd8"/>
+<text x="90" y="8553" class="cardTitle">Encounter phase machine and clinical actions</text>
+<text x="863" y="8552" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="92" y="8584" class="body">Proposed phase path: intake → history → exam/orders as indicated → assessment → debrief → complete. API</text>
+<text x="92" y="8601" class="body">validates each transition; user may take clinically reasonable paths.</text>
+<text x="92" y="8623" class="body">Coverage rubric tracks onset/course, symptom location/character/severity/timing, triggers/relief,</text>
+<text x="92" y="8640" class="body">associated symptoms/negatives, menstrual/reproductive context, medications/allergies, relevant</text>
+<text x="92" y="8657" class="body">PMH/family/social history, exam/tests, synthesis and plan.</text>
+<text x="92" y="8679" class="body">Not every topic is mandatory for every case. Scenario marks relevant, optional, sensitive and irrelevant</text>
+<text x="92" y="8696" class="body">items; score pertinent information gathering, not checkbox count.</text>
+<text x="92" y="8718" class="body">Order only tests in fixed scenario catalog; order status → deterministic scenario result. Model cannot</text>
+<text x="92" y="8735" class="body">create a result outside catalog.</text>
+<text x="92" y="8757" class="body">Abdominal/pelvic exam mode is explicit, scenario-indicated and consent-aware; store request,</text>
+<text x="92" y="8774" class="body">consent/decline, chaperone if required, phase, completed findings. No result before completed exam.</text>
+<text x="92" y="8796" class="body">Patient can decline or stop exam. ACOG guidance in modernization doc: internal pelvic exam is not routine</text>
+<text x="92" y="8813" class="body">for an initial visit absent indication; rubric rewards appropriate judgment.</text>
+<text x="92" y="8835" class="body">Assessment stores learner summary/differential/diagnosis/rationale/plan. On submit, score against</text>
+<text x="92" y="8852" class="body">educator-reviewed hidden rubric; feedback follows completion, not every patient turn.</text>
+</g>
+<g class="card" aria-label="Clinician prompt vs patient role prompt">
+<rect x="70" y="8969" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 8969h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#fff7ed"/>
+<rect x="70" y="8981" width="5" height="335" rx="2.5" fill="#b45309"/>
+<text x="90" y="8994" class="cardTitle">Clinician prompt vs patient role prompt</text>
+<text x="863" y="8993" text-anchor="end" class="badge" fill="#b45309">LEGACY OBSERVED</text>
+<text x="92" y="9025" class="body">Legacy patient role: create unique female OBGYN patient profile; stay in character; answer only what is</text>
+<text x="92" y="9042" class="body">asked; natural American/British lay vernacular; vary mood/personality/education/verbosity; strict</text>
+<text x="92" y="9059" class="body">confirmation JSON at setup.</text>
+<text x="92" y="9081" class="body">Legacy clinician turn prompt covers chief concern; PMH/comorbidities; lifestyle; family; drugs/alcohol;</text>
+<text x="92" y="9098" class="body">contraception; nutrition/sleep/mental health; home/safety/abuse; work/exercise/sex;</text>
+<text x="92" y="9115" class="body">pregnancies/stillbirths/live births/children; DNA; other useful details.</text>
+<text x="92" y="9137" class="body">That topic list defines available assessment territory, not an instruction to volunteer all facts in the</text>
+<text x="92" y="9154" class="body">first reply. Ask patient-centered, relevant questions; disclose progressively according to question,</text>
+<text x="92" y="9171" class="body">personality and comfort.</text>
+<text x="92" y="9193" class="body">Patient profile is fictional training data. Stable case truth and results are hidden from learner until</text>
+<text x="92" y="9210" class="body">allowed; patient-known history and generated expansions are separately tagged.</text>
+<text x="92" y="9232" class="body">Different sessions can fill open history details differently within the seed; once stated, preserve exact</text>
+<text x="92" y="9249" class="body">facts/timeline. Personality affects disclosure style, never case truth or test values.</text>
+</g>
+<g class="card" aria-label="Detailed obstetric example and consistency checks">
+<rect x="920" y="8528" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 8528h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="8540" width="5" height="335" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="8553" class="cardTitle">Detailed obstetric example and consistency checks</text>
+<text x="1713" y="8552" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="8584" class="body">Patient may say: “I’ve been pregnant seven times: one stillbirth, two miscarriages in the first trimester,</text>
+<text x="942" y="8601" class="body">and four normal births. I have four healthy children. I also had eclampsia during one pregnancy.”</text>
+<text x="942" y="8623" class="body">Arithmetic: pregnancy count 7 = 1 stillbirth + 2 first-trimester losses + 4 births. Living-child count is</text>
+<text x="942" y="8640" class="body">four. Eclampsia is retained as pregnancy complication.</text>
+<text x="942" y="8662" class="body">Open details can be elaborated: approximate age/order, gestational timing, which pregnancy had eclampsia,</text>
+<text x="942" y="8679" class="body">postpartum course, child ages, if asked/relevant. Must be plausible for patient age and complement, not</text>
+<text x="942" y="8696" class="body">contradict, seed or accepted timeline.</text>
+<text x="942" y="8718" class="body">When individual details are generated, model them as ordered pregnancy events and keep parity/GTPAL</text>
+<text x="942" y="8735" class="body">notation consistent with gestational-age convention; do not discard a coherent detail just because setup</text>
+<text x="942" y="8752" class="body">left it open.</text>
+<text x="942" y="8774" class="body">A richer account is allowed to emerge over multiple turns. The clinician should not receive an automatic</text>
+<text x="942" y="8791" class="body">“G7P…” dump unless asked; the session ledger may store normalized structured facts behind natural spoken</text>
+<text x="942" y="8808" class="body">replies.</text>
+</g>
+<g class="card" aria-label="Fact epistemology and sensitive disclosure">
+<rect x="920" y="8901" width="810" height="308" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 8901h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#ecfdf5"/>
+<rect x="920" y="8913" width="5" height="284" rx="2.5" fill="#047857"/>
+<text x="940" y="8926" class="cardTitle">Fact epistemology and sensitive disclosure</text>
+<text x="1713" y="8925" text-anchor="end" class="badge" fill="#047857">INVARIANT</text>
+<text x="942" y="8957" class="body">Every expansion has a source/certainty tag: patient-reported, scenario-seeded, model-elaborated patient</text>
+<text x="942" y="8974" class="body">report, supported lab result, completed exam finding, or learner-stated assessment.</text>
+<text x="942" y="8996" class="body">“I was told I have hepatitis B” remains reported history unless fixed scenario catalog supplies a</text>
+<text x="942" y="9013" class="body">confirmed positive test. A patient recollection is not a laboratory result.</text>
+<text x="942" y="9035" class="body">Recovery cue may develop into heroin use duration, methadone treatment, sober interval, NA attendance and</text>
+<text x="942" y="9052" class="body">a reported Hep-B history; preserve chronology and ask only clinically relevant follow-up.</text>
+<text x="942" y="9074" class="body">Sensitive abuse/sexual/psychological history uses non-assumptive, patient-centered language and respects</text>
+<text x="942" y="9091" class="body">comfort/decline. Avoid stigmatizing seed shorthand in patient speech.</text>
+<text x="942" y="9113" class="body">Debrief can score whether learner elicited and recorded generated details; distinguish fixed case truths</text>
+<text x="942" y="9130" class="body">from patient-reported details and facts never disclosed.</text>
+</g>
+<line x1="70" y1="9453" x2="1730" y2="9453" stroke="#d9e3ed"/>
+<text x="70" y="9474" class="footer">EVIDENCE / REFERENCES: docs/plangpt-modernization.md §§ profile expansion, educational objective, encounter state · docs/gpt-patient-obgyn.json is the legacy prompt example</text>
+</g>
+<g id="page-9" class="page" aria-label="Page 9: Deployment, security, scaling, and acceptance gates">
+<rect x="24" y="9580" width="1752" height="1160" rx="20" fill="#fbfdff" stroke="#cbd8e4" stroke-width="1.5"/>
+<text x="70" y="9623" class="pageTitle">Deployment, security, scaling, and acceptance gates</text>
+<text x="72" y="9649" class="subtitle">One modular TypeScript backend is the proposed application target; runtime performance claims remain to be measured.</text>
+<text x="1726" y="9621" text-anchor="end" class="footer">PAGE 09 / 09</text>
+<a href="#page-1" aria-label="Go to page 1: Scope"><rect x="70" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="155" y="9688" text-anchor="middle" class="navText" fill="#4c6278">01 · Scope</text></a>
+<a href="#page-2" aria-label="Go to page 2: Programs"><rect x="255" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="340" y="9688" text-anchor="middle" class="navText" fill="#4c6278">02 · Programs</text></a>
+<a href="#page-3" aria-label="Go to page 3: Session"><rect x="440" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="525" y="9688" text-anchor="middle" class="navText" fill="#4c6278">03 · Session</text></a>
+<a href="#page-4" aria-label="Go to page 4: Setup"><rect x="625" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="710" y="9688" text-anchor="middle" class="navText" fill="#4c6278">04 · Setup</text></a>
+<a href="#page-5" aria-label="Go to page 5: Turns + audio"><rect x="810" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="895" y="9688" text-anchor="middle" class="navText" fill="#4c6278">05 · Turns + audio</text></a>
+<a href="#page-6" aria-label="Go to page 6: RedisJSON"><rect x="995" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1080" y="9688" text-anchor="middle" class="navText" fill="#4c6278">06 · RedisJSON</text></a>
+<a href="#page-7" aria-label="Go to page 7: Target data"><rect x="1180" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1265" y="9688" text-anchor="middle" class="navText" fill="#4c6278">07 · Target data</text></a>
+<a href="#page-8" aria-label="Go to page 8: Clinical flow"><rect x="1365" y="9670" width="170" height="27" rx="8" fill="#edf3f8" stroke="#d5e0eb"/><text x="1450" y="9688" text-anchor="middle" class="navText" fill="#4c6278">08 · Clinical flow</text></a>
+<a href="#page-9" aria-label="Go to page 9: Operations"><rect x="1550" y="9670" width="170" height="27" rx="8" fill="#18344f" stroke="#d5e0eb"/><text x="1635" y="9688" text-anchor="middle" class="navText" fill="#ffffff">09 · Operations</text></a>
+<g class="card" aria-label="Target services and network boundaries">
+<rect x="70" y="9724" width="810" height="410" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 9724h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="70" y="9736" width="5" height="386" rx="2.5" fill="#5b4bd8"/>
+<text x="90" y="9749" class="cardTitle">Target services and network boundaries</text>
+<text x="863" y="9748" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="92" y="9780" class="body">Nuxt/Vue browser client → HTTPS JSON; optional SSE transcript stream; authenticated WebSocket for Full</text>
+<text x="92" y="9797" class="body">Audio; browser never reaches PostgreSQL, Redis, or provider secret.</text>
+<text x="92" y="9819" class="body">One modular Express 5 / TypeScript API as separate deployable from Nuxt. Proposed modules: auth/tenant,</text>
+<text x="92" y="9836" class="body">session coordinator, case/setup, turn orchestration, provider adapters, audio bridge, exam/order</text>
+<text x="92" y="9853" class="body">workflows, assessment/debrief, retention.</text>
+<text x="92" y="9875" class="body">PostgreSQL is durable system of record. Redis is not required for single replica; later used for</text>
+<text x="92" y="9892" class="body">distributed lock/pub-sub/rate limit/transient work only. Responses/Realtime provider endpoints are</text>
+<text x="92" y="9909" class="body">backend-only.</text>
+<text x="92" y="9931" class="body">Local Compose target: Nuxt + API + PostgreSQL; optional Redis only for scale-path exercise. Production:</text>
+<text x="92" y="9948" class="body">immutable client/API images, TLS ingress, private database, health/readiness, socket drain, redacted</text>
+<text x="92" y="9965" class="body">structured logs.</text>
+<text x="92" y="9987" class="body">Keep Express service under services/api/. Existing `HOST` loopback refusal, port 4000 and systemd/Nginx</text>
+<text x="92" y="10004" class="body">example are operational scaffold, not full production security.</text>
+<text x="92" y="10026" class="body">Current API README explicitly says auth, domain routes, Redis writes and public listener are absent. Do</text>
+<text x="92" y="10043" class="body">not interpret example Nginx/API unit as deployed customer service.</text>
+</g>
+<g class="card" aria-label="Authentication, privacy, and retention boundaries">
+<rect x="70" y="10148" width="810" height="308" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M84 10148h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#ecfdf5"/>
+<rect x="70" y="10160" width="5" height="284" rx="2.5" fill="#047857"/>
+<text x="90" y="10173" class="cardTitle">Authentication, privacy, and retention boundaries</text>
+<text x="863" y="10172" text-anchor="end" class="badge" fill="#047857">INVARIANT</text>
+<text x="92" y="10204" class="body">Customer authentication + tenant authorization precede session</text>
+<text x="92" y="10221" class="body">create/read/turn/order/exam/assessment/delete. Check ownership on every request and socket join.</text>
+<text x="92" y="10243" class="body">Entitlements govern Luna/Terra/Sol tier, transcript/full audio mode, quotas, transcript retention and</text>
+<text x="92" y="10260" class="body">optional raw-audio retention. Freeze choices for the encounter.</text>
+<text x="92" y="10282" class="body">API secrets and provider IDs remain server-side. HTTP-only Secure SameSite cookie or reviewed</text>
+<text x="92" y="10299" class="body">bearer/session design; CSRF/origin controls for cookie-auth routes; rate and body-size limits.</text>
+<text x="92" y="10321" class="body">Default: no raw audio persistence; retain text events required for debrief under documented customer</text>
+<text x="92" y="10338" class="body">policy. Never log patient text, API keys, cookies, or audio payloads by default.</text>
+<text x="92" y="10360" class="body">Responses storage and app storage have separate deletion/retention policies. Session deletion must</text>
+<text x="92" y="10377" class="body">remove/anonymize database and provider state where supported, plus backups per policy.</text>
+</g>
+<g class="card" aria-label="Capacity and latency controls">
+<rect x="920" y="9724" width="810" height="359" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 9724h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="9736" width="5" height="335" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="9749" class="cardTitle">Capacity and latency controls</text>
+<text x="1713" y="9748" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="9780" class="body">Setup happens once; bounded queue/longer timeout. Turns are interactive; separate concurrency, queue</text>
+<text x="942" y="9797" class="body">budget, timeout/retry, and metrics. Assessment scoring is asynchronous after completion.</text>
+<text x="942" y="9819" class="body">Do not add two Express services or two AI vendors merely to separate setup and turns. A worker</text>
+<text x="942" y="9836" class="body">pool/deployment is justified only by measured queue contention.</text>
+<text x="942" y="9858" class="body">Bottlenecks expected: model wait, serial sentence TTS round trips, setup queue, lock contention, socket</text>
+<text x="942" y="9875" class="body">delivery and browser playback. Async TypeScript does not make provider generation faster.</text>
+<text x="942" y="9897" class="body">Scale across independent sessions with stateless replicas and Redis lock only when needed. Preserve</text>
+<text x="942" y="9914" class="body">per-session single active turn; enforce back-pressure and cancellation/disconnect handling.</text>
+<text x="942" y="9936" class="body">Compare full-response TTS, streamed text/clause TTS, and Realtime under same cases. Measure p50/p95</text>
+<text x="942" y="9953" class="body">first-token, first-audio, full-turn, audio queue depth, reconnects, provider usage/cost and CPU/memory.</text>
+<text x="942" y="9975" class="body">Model tier aliases: Luna default; Terra/Sol optional only if educator eval demonstrates added value. Setup</text>
+<text x="942" y="9992" class="body">model is separately configured; freeze live-turn model for session.</text>
+</g>
+<g class="card" aria-label="Build order and completion gates">
+<rect x="920" y="10097" width="810" height="393" rx="14" fill="#fff" stroke="#d5e0eb"/>
+<path d="M934 10097h782a14 14 0 0 1 14 14v28h-810V14a14 14 0 0 1 14-14" fill="#f1efff"/>
+<rect x="920" y="10109" width="5" height="369" rx="2.5" fill="#5b4bd8"/>
+<text x="940" y="10122" class="cardTitle">Build order and completion gates</text>
+<text x="1713" y="10121" text-anchor="end" class="badge" fill="#5b4bd8">TARGET PROPOSAL</text>
+<text x="942" y="10153" class="body">1 Define versioned case/fact/event schemas, phase machine, result catalog, consent, coverage rubric and</text>
+<text x="942" y="10170" class="body">retention rules; educator-review cases first.</text>
+<text x="942" y="10192" class="body">2 Add authentication, tenant ownership, entitlements/quotas; verify cross-tenant isolation.</text>
+<text x="942" y="10214" class="body">3 Add PostgreSQL constraints, immutable seed, append-only expansions/events, idempotent setup and</text>
+<text x="942" y="10231" class="body">recovery. Verify same retry returns same seed.</text>
+<text x="942" y="10253" class="body">4 Add text turns, per-session serialization, dynamic profile expansion, progressive disclosure, durable</text>
+<text x="942" y="10270" class="body">transcript projection; verify consistency after reconnect.</text>
+<text x="942" y="10292" class="body">5 Add supported tests/exams/consent/assessment/debrief; prove unsupported results/findings cannot be</text>
+<text x="942" y="10309" class="body">fabricated.</text>
+<text x="942" y="10331" class="body">6 Ship transcript first; prototype server-controlled Realtime and transcript reconciliation before</text>
+<text x="942" y="10348" class="body">enabling full-audio customer tier.</text>
+<text x="942" y="10370" class="body">7 Load/evaluate clinical consistency, timeline, disclosure, personality, rubric, order/exam correctness,</text>
+<text x="942" y="10387" class="body">latency, cost and reconnect recovery. No performance claim without measurement.</text>
+</g>
+<line x1="70" y1="10649" x2="1730" y2="10649" stroke="#d9e3ed"/>
+<text x="70" y="10670" class="footer">EVIDENCE / REFERENCES: docs/plangpt-modernization.md §§ browser, API, scaling, TypeScript choice, deployment, acceptance gates · current services/api/README.md</text>
+</g>
+</svg>

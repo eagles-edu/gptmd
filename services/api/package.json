@@ -2,6 +2,9 @@
   "name": "gptmd-api",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=24 <25"
+  },
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "dev": "tsx watch src/server.ts",
@@ -12,8 +15,8 @@
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
-    "@types/node": "^26.6.2",
+    "@types/node": "^24.10.0",
     "tsx": "^4.23.15",
-    "typescript": "^7.0.2"
+    "typescript": "^6.0.3"
   }
 }

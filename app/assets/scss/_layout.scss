@@ -1,0 +1,79 @@
+@use '_mixins' as mixly;
+@use 'sass:map';
+
+/* Padding Values */
+$pad-values: (
+  small: 5px,
+  medium: 8px,
+  large: 10px,
+  xl: 12px,
+  xxl: 15px,
+  xxxl: 20px,
+);
+
+/* Padding Utilities */
+.pad-small, .pad5 {
+  padding: map.get($pad-values, small);
+}
+.pad-medium, .pad8 {
+  padding: map.get($pad-values, medium);
+}
+.pad-large, .pad10 {
+  padding: map.get($pad-values, large);
+}
+.pad-xl, .pad12 {
+  padding: map.get($pad-values, xl);
+}
+.pad-xxl, .pad15 {
+  padding: map.get($pad-values, xxl);
+}
+.pad-xxxl, .pad20 {
+  padding: map.get($pad-values, xxxl);
+}
+
+/* Alignment Utilities */
+.txt-center, .txtcen {
+  text-align: center;
+}
+
+.mar-center, .marcen {
+  margin: 0 auto;
+  display: block;
+}
+
+/* Responsive Padding */
+.pad-responsive, .autopad7-12 {
+  @include mixly.respond-to(sm) {
+    padding: 7px;
+  }
+  @include mixly.respond-to(md) {
+    padding: 12px;
+  }
+}
+
+.pad-responsive-lg, .autopad10-20 {
+  @include mixly.respond-to(sm) {
+    padding: 10px;
+  }
+  @include mixly.respond-to(md) {
+    padding: 20px;
+  }
+}
+
+.pad-responsive-xl, .autopad15-25 {
+  @include mixly.respond-to(sm) {
+    padding: 15px;
+  }
+  @include mixly.respond-to(md) {
+    padding: 25px;
+  }
+}
+
+.pad-responsive-xxl, .autopad, .autopad20-30 {
+  @include mixly.respond-to(sm) {
+    padding: 20px;
+  }
+  @include mixly.respond-to(md) {
+    padding: 30px;
+  }
+}

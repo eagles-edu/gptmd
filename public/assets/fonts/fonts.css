@@ -1,0 +1,245 @@
+/* Montserrat Variable Font (Normal) */
+/* ./public/assets/fonts/fonts.css  */
+
+@font-face
+{
+  font-family: 'Montserrat-normal';
+  src: url('/assets/fonts/Montserrat-VariableFont_wght.woff2') format('woff2'),
+    url('/assets/fonts/Montserrat-VariableFont_wght.ttf') format('truetype');
+  font-weight: 300 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* Montserrat Variable Font (Italic) */
+@font-face
+{
+  font-family: 'Montserrat-italic';
+  src: url('/assets/fonts/Montserrat-Italic-VariableFont_wght.woff2') format('woff2'),
+    url('/assets/fonts/Montserrat-Italic-VariableFont_wght.ttf') format('truetype');
+  font-weight: 300 900;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* OpenSans Variable Font (Normal) */
+@font-face
+{
+  font-family: 'OpenSans-normal';
+  src: url('/assets/fonts/OpenSans-VariableFont_wdth-wght.woff2') format('woff2'),
+    url('/assets/fonts/OpenSans-VariableFont_wdth-wght.ttf') format('truetype');
+  font-weight: 300 700;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* OpenSans Variable Font (Italic) */
+@font-face
+{
+  font-family: 'OpenSans-italic';
+  src: url('/assets/fonts/OpenSans-Italic-VariableFont_wdth-wght.woff2') format('woff2'),
+    url('/assets/fonts/OpenSans-Italic-VariableFont_wdth-wght.ttf') format('truetype');
+  font-weight: 300 700;
+  font-style: italic;
+  font-display: swap;
+}
+
+/* Montserrat-variable */
+.montserrat-regular,
+.montserrat-400
+{
+  font-family: "Montserrat-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: normal;
+}
+
+.montserrat-regulari,
+.montserrat-400i
+{
+  font-family: "Montserrat-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: italic;
+}
+
+.montserrat-500,
+.montserrat-medium
+{
+  font-family: "Montserrat-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-style: normal;
+}
+
+.montserrat-500i,
+.montserrat-mediumi
+{
+  font-family: "Montserrat-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-style: italic;
+}
+
+.montserrat-600,
+.montserrat-semibold
+{
+  font-family: "Montserrat-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 600;
+  font-style: normal;
+}
+
+.montserrat-600i,
+.montserrat-semiboldi
+{
+  font-family: "Montserrat-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 600;
+  font-style: italic;
+}
+
+.montserrat-700,
+.montserrat-bold
+{
+  font-family: "Montserrat-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 700;
+  font-style: normal;
+}
+
+.montserrat-700i,
+.montserrat-boldi
+{
+  font-family: "Montserrat-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 700;
+  font-style: italic;
+}
+
+.montserrat-800,
+.montserrat-extrabold
+{
+  font-family: "Montserrat-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 800;
+  font-style: normal;
+}
+
+.montserrat-800i,
+.montserrat-extraboldi
+{
+  font-family: "Montserrat-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 800;
+  font-style: italic;
+}
+
+.montserrat-900,
+.montserrat-black
+{
+  font-family: "Montserrat-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 900;
+  font-style: normal;
+}
+
+.montserrat-900i,
+.montserrat-blacki
+{
+  font-family: "Montserrat-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 900;
+  font-style: italic;
+}
+
+/* OpenSans-variable */
+.opensans-light,
+.opensans-300
+{
+  font-family: "OpenSans-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 300;
+  font-style: normal;
+}
+
+.opensans-lighti,
+.opensans-300i
+{
+  font-family: "OpenSans-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 300;
+  font-style: italic;
+}
+
+.opensans-regular,
+.opensans-400
+{
+  font-family: "OpenSans-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: normal;
+}
+
+.opensans-regulari,
+.opensans-400i
+{
+  font-family: "OpenSans-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 400;
+  font-style: italic;
+}
+
+.opensans-500,
+.opensans-medium
+{
+  font-family: "OpenSans-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-style: normal;
+}
+
+.opensans-500i,
+.opensans-mediumi
+{
+  font-family: "OpenSans-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 500;
+  font-style: italic;
+}
+
+.opensans-600,
+.opensans-semibold
+{
+  font-family: "OpenSans-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 600;
+  font-style: normal;
+}
+
+.opensans-600i,
+.opensans-semiboldi
+{
+  font-family: "OpenSans-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 600;
+  font-style: italic;
+}
+
+.opensans-700,
+.opensans-bold
+{
+  font-family: "OpenSans-normal", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 700;
+  font-style: normal;
+}
+
+.opensans-700i,
+.opensans-boldi
+{
+  font-family: "OpenSans-italic", sans-serif;
+  font-optical-sizing: auto;
+  font-weight: 700;
+  font-style: italic;
+}

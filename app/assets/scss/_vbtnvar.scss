@@ -1,0 +1,16 @@
+// assets/scss/_vbtnvar.scss
+@use 'sass:math';
+// Direct Vuetify button-specific overrides
+$button-height: 60px;
+$button-width-ratio: math.div(150px, 60px);
+$button-border-radius: 8px;
+
+// Other button-related customizations
+$button-padding: 10px 20px;
+
+// Override Vuetify's default button styles
+@use 'vuetify/settings' with (
+  $button-height: $button-height,
+  $button-width-ratio: $button-width-ratio,
+  $button-border-radius: $button-border-radius
+);

@@ -1,0 +1,31 @@
+@font-face {
+  font-display: swap;
+  font-family: OpenSans-normal;
+  font-style: normal;
+  font-weight: 300 700;
+  src: url('/assets/fonts/OpenSans-VariableFont_wdth-wght.woff2') format('woff2');
+}
+
+@font-face {
+  font-display: swap;
+  font-family: OpenSans-italic;
+  font-style: italic;
+  font-weight: 300 700;
+  src: url('/assets/fonts/OpenSans-Italic-VariableFont_wdth-wght.woff2') format('woff2');
+}
+
+@font-face {
+  font-display: swap;
+  font-family: Montserrat-normal;
+  font-style: normal;
+  font-weight: 300 900;
+  src: url('/assets/fonts/Montserrat-VariableFont_wght.woff2') format('woff2');
+}
+
+@font-face {
+  font-display: swap;
+  font-family: Montserrat-italic;
+  font-style: italic;
+  font-weight: 300 900;
+  src: url('/assets/fonts/Montserrat-Italic-VariableFont_wght.woff2') format('woff2');
+}

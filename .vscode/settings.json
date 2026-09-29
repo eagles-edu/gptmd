@@ -57,5 +57,6 @@
   "python.analysis.extraPaths": [
     "../curatormd/plugins/curatormd/scripts"
   ],
-  "python.defaultInterpreterPath": "/usr/bin/python3"
+  "python.defaultInterpreterPath": "/usr/bin/python3",
+  "svg.preview.background": "custom"
 }
