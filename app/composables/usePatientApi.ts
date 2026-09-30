@@ -1,31 +1,13 @@
-export interface PatientProfile {
-  patientName: string
-  patientDob: string
-  patientBodytype: 'average' | 'heavy'
-  patientReason: string
-}
+import {
+  CreateSessionResponseSchema,
+  SetupResponseSchema,
+  TurnResponseSchema,
+  type CreateSessionResult,
+  type PatientProfile,
+  type TurnResult
+} from '../schemas/patient-api'
 
-export interface CreateSessionResult {
-  sessionId: string
-}
-
-interface SetupResult {
-  profile: PatientProfile
-}
-
-interface TurnResult {
-  turnId: string
-  text: string
-}
-
-function isPatientProfile(value: unknown): value is PatientProfile {
-  if (typeof value !== 'object' || value === null) return false
-  const profile = value as Record<string, unknown>
-  return typeof profile.patientName === 'string'
-    && typeof profile.patientDob === 'string'
-    && (profile.patientBodytype === 'average' || profile.patientBodytype === 'heavy')
-    && typeof profile.patientReason === 'string'
-}
+export type { CreateSessionResult, PatientProfile, TurnResult } from '../schemas/patient-api'
 
 function getApiBase(): string {
   const config = useRuntimeConfig()
@@ -34,33 +16,35 @@ function getApiBase(): string {
 
 export function usePatientApi() {
   async function createSession(): Promise<CreateSessionResult> {
-    const result = await $fetch<{ sessionId?: unknown }>(`${getApiBase()}/api/sessions`, {
+    const result = await $fetch<unknown>(`${getApiBase()}/api/sessions`, {
       method: 'POST',
       credentials: 'include'
     })
+    const parsed = CreateSessionResponseSchema.safeParse(result)
 
-    if (typeof result.sessionId !== 'string' || result.sessionId.length === 0) {
+    if (!parsed.success) {
       throw new Error('The session service returned an invalid session response.')
     }
 
-    return { sessionId: result.sessionId }
+    return parsed.data
   }
 
   async function setupSession(sessionId: string): Promise<PatientProfile> {
-    const result = await $fetch<SetupResult>(
+    const result = await $fetch<unknown>(
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/setup`,
       { method: 'POST', credentials: 'include' }
     )
+    const parsed = SetupResponseSchema.safeParse(result)
 
-    if (!isPatientProfile(result.profile)) {
+    if (!parsed.success) {
       throw new Error('The setup service returned an invalid patient profile.')
     }
 
-    return result.profile
+    return parsed.data.profile
   }
 
   async function sendTurn(sessionId: string, turnId: string, text: string): Promise<TurnResult> {
-    const result = await $fetch<TurnResult>(
+    const result = await $fetch<unknown>(
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/turns`,
       {
         method: 'POST',
@@ -68,12 +52,13 @@ export function usePatientApi() {
         body: { turnId, text }
       }
     )
+    const parsed = TurnResponseSchema.safeParse(result)
 
-    if (typeof result.text !== 'string' || result.turnId !== turnId) {
+    if (!parsed.success || parsed.data.turnId !== turnId) {
       throw new Error('The conversation service returned an invalid turn response.')
     }
 
-    return result
+    return parsed.data
   }
 
   return { createSession, setupSession, sendTurn }

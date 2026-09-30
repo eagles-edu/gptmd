@@ -2,6 +2,14 @@
     "recommendations": [
         "dwqs.svg-gallery-viewer",
         "rafaelpeter.python-codelens",
-        "demystifying-javascript.python-extensions-pack"
+        "demystifying-javascript.python-extensions-pack",
+        "nipunsgeeth.mermaid-retina",
+        "abdelhakakermi.mermaid-live",
+        "mark-ku.super-mermaid",
+        "daymian.mermaid-studio",
+        "oskar1504.docker-compose-mermaid",
+        "theapiguy.mermaid-export-py",
+        "min87.ai-flow-chart",
+        "d8aware.vscode-mermaid-extension"
     ]
 }

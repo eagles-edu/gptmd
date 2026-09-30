@@ -1,12 +1,14 @@
 {
   "plugins": ["html-validate-vue"],
   "extends": ["html-validate:recommended", "html-validate-vue:recommended"],
+  "elements": ["html5"],
   "transform": {
     "^.*\\.vue$": "html-validate-vue"
   },
   "rules": {
-    "doctype-style": "off",
     "element-case": "off",
-    "element-name": "off"
+    "element-name": "off",
+    "void-style": "off",
+    "wcag/h32": "off"
   }
 }

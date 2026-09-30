@@ -1,0 +1,96 @@
+direction: down
+title: GPTpatient modernization · Identity Setup
+
+// Authentication and session creation.
+a01: Learner / instructor / customer administrator { shape: person; style.fill: "#E3EAF8"; style.stroke: "#243F70"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a02: Nuxt client requests OIDC sign-in { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a03: OIDC provider authenticates user { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a04: App auth adapter resolves local identity { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a05: Load organization · customer · user · role { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a06: After Begin Visit and preflight, create session · POST /api/sessions { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a07: Check tenant ownership and role { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a08: Deny cross-tenant request without state disclosure { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a09: Load model · audio · exam · order entitlements { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a10: Check per-user and per-session quota { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a11: Return bounded quota response { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a12: Create one opaque app sessionId { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a13: Bind session to customer · tenant · user { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a14: Rotate HTTP-only · Secure · SameSite cookie { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a15: On each request authenticate cookie or authorized socket ticket { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a16: Recheck session owner · tenant · role · entitlement { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a17: Browser never sends API key · model ID · provider context ID { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a01 -> a02 -> a03 -> a04 -> a05
+
+// Signed-in home destinations and encounter preflight.
+i01: Show the signed-in home page after authentication { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i02: Link Instructions and History-Taking Overview { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i03: Show Account Status: usage · metrics · downloads · payment gateway { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i04: Provide Contact Us entry point { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i05: Begin Visit opens the encounter screen with account context { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i06: Explain audio/text modes, microphone use, and local-data handling { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i07: Request microphone access after explicit audio-mode action; preserve allowed text path if denied { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i08: Keep private profile · diagnosis · transcript · provider IDs out of browser storage { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+a05 -> i01
+i01 -> i02
+i01 -> i03
+i01 -> i04
+i01 -> i05 -> i06 -> i07 -> i08 -> a06 -> a07
+a07 -> a08: denied
+a07 -> a09: allowed
+a09 -> a10
+a10 -> a11: quota exceeded
+a10 -> a12: capacity available
+a12 -> a13 -> a14
+a14 -> a15 -> a16
+a15 -> a17
+
+// Idempotent setup lane and immutable synthetic-patient seed creation.
+s01: POST /api/sessions/:sessionId/setup { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s02: Authenticate · authorize owner · check setup entitlement { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s03: Check setup idempotency key { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s04: Return previously committed seed and setup result { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s05: Enqueue within bounded setup capacity { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s06: Enforce setup concurrency · queue · timeout · retry budget { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s07: Return pending / overload response without partial activation { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s08: Load versioned prompt · schema · rubric · model config { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s09: Create random scenario seed once; reuse it on retry { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s10: Build strict PatientScenarioSeed structured-output request { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s11: Generate identity · symptoms · onset · relevant negatives { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s12: Generate history cues · medications · allergies · patient concerns { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s13: Generate clinician-hidden diagnosis or explicitly unknown status { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s14: Generate fixed exam findings · supported test/result catalog { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s15: Generate fixed bounded personality traits and persona seed { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s16: Attach educator-reviewed rubric and version references { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s17: Call Responses API for structured setup output inside the session Conversation { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s18: Validate strict versioned JSON Schema { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s19: Validate field and cross-field constraints in application code { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s20: Discard rejected Conversation; retry same setup identity in fresh context { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s21: Mark setup failed; keep session inactive { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s22: Save profile · internal five-value projection · Conversation binding to Redis JSON; enqueue PostgreSQL persistence { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s23: Create one OpenAI Conversation before full-profile generation { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s24: Return validated profile and Conversation ID together to setup coordinator after prompt { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s25: Mark server setup ready; pin model · mode · policy versions { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s26: Derive the five setup variables from the validated full profile in application code { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i09: Allocate opaque per-visit ppid; bind it to authenticated sid { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i10: Create Redis JSON session mapping and initializing patient-profile receptacle { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i11: Confirm client preflight and Redis reservation before setup-generation command { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i12: Resolve the same server-held Conversation ID from sid + ppid for every later turn { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i13: Return client-safe four-value profile sans diagnosis, if any, after Redis commit { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i14: Select portrait folder from derived age band/body type and preload selected assets { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i15: Show amber while required work is pending; show green and enable Enter Room only when ready { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+s01 -> s02 -> s03
+s03 -> s04: setup already committed
+s03 -> s05: new setup
+s05 -> s06
+s06 -> s07: saturated / timed out
+s06 -> s08: capacity available
+s08 -> i09 -> i10 -> i11 -> s23 -> s09 -> s10 -> s11 -> s12 -> s13 -> s14 -> s15 -> s16 -> s17 -> s18
+s19 -> s24: coherent case
+s24 -> s26 -> s22 -> s25 -> i13 -> i14 -> i15
+s24 -> i12
+s18 -> s19: valid shape
+s18 -> s20: invalid; retry allowed
+s18 -> s21: retries exhausted
+s19 -> s20: inconsistent; retry allowed
+s19 -> s21: retries exhausted
+s20 -> s23: discard invalid Conversation; create fresh retry context

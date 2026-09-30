@@ -1,75 +1,42 @@
-# Nuxt Minimal Starter
+# GPTMD
 
-Look at the [Nuxt documentation](https://nuxt.com/docs/getting-started/introduction) to learn more.
+GPTMD is a Nuxt encounter application with a separate, loopback-only Express
+API service.
 
-## Setup
+## Local setup
 
-Make sure to install dependencies:
+Install the repository dependencies and prepare the ignored local environment
+file:
 
-```bash
-# npm
+```sh
 npm install
-
-# pnpm
-pnpm install
-
-# yarn
-yarn install
-
-# bun
-bun install
+test -e .env || cp .env.example .env
+chmod 600 .env
 ```
 
-### Development Server
+Fill in local credentials in `.env`. The API process receives only the OpenAI,
+Redis, PostgreSQL, host, and port settings it needs. Keep `.env` out of Git.
 
-Start the development server on `http://localhost:3000`:
+Start local PostgreSQL and the API in separate terminals:
 
-```bash
-# npm
-npm run dev
-
-# pnpm
-pnpm dev
-
-# yarn
-yarn dev
-
-# bun
-bun run dev
+```sh
+npm run db:up
+npm run api:dev
 ```
 
-## Production
+The API expects the local Redis Stack service at the `REDIS_URL` endpoint. Start
+the Nuxt frontend in another terminal with `npm run dev`. The API listens only
+on `127.0.0.1:4000` by default.
 
-Build the application for production:
+The project-local MCP configuration is in `.codex/config.toml`. Its launcher
+reads the ignored `.env` file and passes only Redis credentials to Redis MCP
+and the dedicated read-only database connection to PostgreSQL MCP.
 
-```bash
-# npm
-npm run build
+Run the repository's complete validation suite with:
 
-# pnpm
-pnpm build
-
-# yarn
-yarn build
-
-# bun
-bun run build
+```sh
+npm run check
 ```
 
-Locally preview production build:
-
-```bash
-# npm
-npm run preview
-
-# pnpm
-pnpm preview
-
-# yarn
-yarn preview
-
-# bun
-bun run preview
-```
-
-Check out the [deployment documentation](https://nuxt.com/docs/getting-started/deployment) for more information.
+See [the API service README](services/api/README.md) and
+[npm scripts guide](docs/npm-scripts.md) for details.

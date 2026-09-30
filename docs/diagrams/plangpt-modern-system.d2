@@ -1,0 +1,49 @@
+direction: right
+title: GPTpatient · stateful patient encounter
+
+customer: Customer {
+  shape: person
+}
+
+browser: Browser client · Nuxt / Vue / TypeScript {
+  auth: Customer authentication and policy
+  interview: History-taking conversation
+  actions: Orders · exams · assessment
+  audio: Transcript and full-audio modes
+  privacy: No API key, database access, or hidden answer key
+}
+
+api: Application API · Express / TypeScript {
+  authz: Authentication and entitlement checks
+  setup: Setup lane\nCreate and validate immutable scenario seed
+  turns: Live turn lane\nValidate and append accepted history facts
+  state: Encounter state machine\nIntake → history → exam / orders → assessment → debrief
+  policy: Server-selected model and audio policy
+}
+
+database: PostgreSQL · durable session state {
+  seed: ScenarioSeed\nFixed case truth · profile clues · supported results
+  encounter: EncounterState\nPhase · disclosures · orders · exam · assessment
+  ledger: Append-only facts and event ledgers
+}
+
+redis: Redis · optional scale-out aid {
+  shape: cylinder
+  note: Locks · pub/sub · transient TTL queues\nOnly add for measured requirements
+}
+
+openai: OpenAI provider plane · server credentials {
+  responses: Responses + Conversations\nSetup and patient turns
+  realtime: Realtime\nOptional full-audio mode
+}
+
+customer -> browser: HTTPS
+browser -> api: Authenticated session requests
+browser -> api: Transcript or audio stream
+api -> database: Validated transaction and append-only facts
+api -> redis: Optional coordination {style.stroke-dash: 4}
+api -> openai: Server-side provider calls
+api -> openai.realtime: Audio bridge {style.stroke-dash: 4}
+
+invariant: Invariant\nThe API validates and records patient-history additions before delivery.
+invariant -> api.turns

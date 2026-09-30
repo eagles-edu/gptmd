@@ -4,10 +4,21 @@ This is the separate Express service boundary for the project. It is
 TypeScript-built and deliberately starts with only operational endpoints:
 
 - `GET /healthz` — process health
-- `GET /readyz` — readiness placeholder
+- `GET /readyz` — Redis, PostgreSQL, and OpenAI configuration readiness
+- `POST /api/openai/responses` — server-side OpenAI Responses API integration
+
+The private patient-scenario generator in `src/patient-profile.ts` creates a
+Responses Conversation, requests a strict structured profile, validates it,
+and retries once in a fresh Conversation when validation fails. Its canonical
+field catalog is checked against `docs/pp.md`; the exported JSON Schema is in
+`docs/schemas/patient-scenario-profile.schema.json`. This module is not an HTTP
+route and does not yet activate or persist sessions. Keep its full profile
+server-side; the learner-facing profile is a separate contract.
 
 The service defaults to `HOST=127.0.0.1` and `PORT=4000`. It refuses a
-non-loopback `HOST` so it cannot accidentally become a public listener.
+non-loopback `HOST` so it cannot accidentally become a public listener. The
+API launcher reads the ignored repository `.env` file and passes only the
+service's OpenAI, Redis, PostgreSQL, host, and port variables to the process.
 
 ## Local development
 
@@ -25,6 +36,25 @@ Probe it locally:
 curl http://127.0.0.1:4000/healthz
 curl http://127.0.0.1:4000/readyz
 ```
+
+The API uses pooled Redis and PostgreSQL clients. The OpenAI SDK key is only
+read by Express and is never sent to the browser. Send a JSON body containing
+`input` to `/api/openai/responses`; use fictional data only and never send
+patient identifiers or other protected health information.
+
+## Local PostgreSQL
+
+Set up the local PostgreSQL container with:
+
+```bash
+docker compose --env-file .env -f ops/postgres.compose.yml up -d
+docker compose --env-file .env -f ops/postgres.compose.yml ps
+```
+
+PostgreSQL binds to `127.0.0.1:5432` and stores data in a named Compose volume.
+The initialization script creates a separate
+read-only role for the PostgreSQL MCP server. `docker compose down` preserves
+the volume; do not use `-v` unless you intend to delete the database.
 
 ## Local production-style deployment
 

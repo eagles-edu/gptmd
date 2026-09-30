@@ -1,0 +1,25 @@
+# GPTMD project services. Secrets are loaded by the local launcher from the
+# ignored repository .env file and are not stored in this configuration.
+[mcp_servers.filesystem]
+enabled = true
+command = "/usr/bin/npx"
+args = ["-y", "@modelcontextprotocol/server-filesystem@2026.8.31", "/home/eaglesvn/dockerz/gptmd"]
+startup_timeout_sec = 20.0
+
+[mcp_servers.redis]
+enabled = true
+command = "/usr/bin/node"
+args = ["/home/eaglesvn/dockerz/gptmd/scripts/gptmd-mcp-launcher.mjs", "redis"]
+cwd = "/home/eaglesvn/dockerz/gptmd"
+env_vars = []
+startup_timeout_sec = 30.0
+tool_timeout_sec = 60.0
+
+[mcp_servers.postgres]
+enabled = true
+command = "/usr/bin/node"
+args = ["/home/eaglesvn/dockerz/gptmd/scripts/gptmd-mcp-launcher.mjs", "postgres"]
+cwd = "/home/eaglesvn/dockerz/gptmd"
+env_vars = []
+startup_timeout_sec = 30.0
+tool_timeout_sec = 60.0

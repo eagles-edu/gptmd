@@ -11,21 +11,16 @@
       <NuxtLink to="/help">Help</NuxtLink>
     </nav>
     <button
-      class="theme-toggle"
-      type="button"
-      :aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
-      :title="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
-      :aria-pressed="isDark"
-      @click="toggleTheme"
-    >
-      <span aria-hidden="true">{{ isDark ? '☀' : '☾' }}</span>
-      <span>{{ isDark ? 'Light' : 'Dark' }}</span>
+    class="theme-toggle" type="button" :aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
+      :title="isDark ? 'Switch to light theme' : 'Switch to dark theme'" :aria-pressed="isDark" @click="toggleTheme">
+      <span aria-hidden="true">{{ isDark ? "☀" : "☾" }}</span>
+      <span>{{ isDark ? "Light" : "Dark" }}</span>
     </button>
   </header>
 </template>
 
 <script setup lang="ts">
-const { isDark, toggleTheme } = useAppTheme()
+const { isDark, toggleTheme } = useAppTheme();
 </script>
 
 <style scoped>
@@ -67,7 +62,9 @@ nav a {
   text-decoration: none;
 }
 
-nav a:hover, nav a:focus-visible, nav a.router-link-active {
+nav a:hover,
+nav a:focus-visible,
+nav a.router-link-active {
   background: rgb(255 255 255 / 15%);
 }
 
@@ -91,7 +88,8 @@ nav a:hover, nav a:focus-visible, nav a.router-link-active {
   line-height: 1;
 }
 
-.theme-toggle:hover, .theme-toggle:focus-visible {
+.theme-toggle:hover,
+.theme-toggle:focus-visible {
   background: rgb(255 255 255 / 15%);
 }
 
@@ -100,7 +98,7 @@ nav a:hover, nav a:focus-visible, nav a.router-link-active {
   outline-offset: 3px;
 }
 
-@media (width <= 700px) {
+@media (width <=700px) {
   .site-header {
     align-items: center;
     gap: 0.6rem;

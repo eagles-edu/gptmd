@@ -1,0 +1,59 @@
+direction: down
+title: GPTpatient modernization · Delivery
+
+// Local and production deployment requests.
+u01: Local Compose starts Nuxt · API · PostgreSQL · Redis · background workers { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u02: Configure Redis event stream · background persistence · 20-minute expiry · 72-hour archive { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u03: Expose only web entry point to host { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u04: Bind PostgreSQL / Redis to private Compose network { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u05: Keep credentials in ignored env file or secret manager { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u06: Build immutable · pinned Nuxt and API images { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u07: Terminate HTTPS at ingress proxy { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u08: Route /api and SSE to Express API { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u09: Route authenticated audio WebSocket to API { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u10: Keep PostgreSQL / Redis private { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u11: Configure health · readiness · graceful socket drain { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u12: Enforce body size · origin / CSRF · rate limits { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u13: Redact logs; do not log patient turns · keys · cookies · audio { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u14: Add request and turn correlation IDs { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+u01 -> u02 -> u03 -> u04 -> u05
+u06 -> u07 -> u08 -> u09 -> u10 -> u11 -> u12 -> u13 -> u14
+
+// Greenfield implementation sequence and explicit acceptance gates.
+g01: 1 · Define seed · expansion · event · phase · action · retention schemas { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g02: Medical educators review sample cases and rubric { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g03: 2 · Implement OIDC · tenant ownership · roles · entitlements · quotas { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g04: Verify cross-tenant session access is denied { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g05: 3 · Add PostgreSQL constraints and idempotent structured setup { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g06: Verify setup retries preserve exactly the same seed { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g07: 4 · Build serialized Responses turns · expansions · disclosure · reconnect { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g08: Verify accepted facts survive reconnect and remain consistent { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g09: 5 · Build fixed results · consent-aware exams · assessment · debrief { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g10: Verify unsupported findings and results cannot be created { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g11: 6 · Ship Transcript; prototype private server-bridged Full Audio { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g12: Verify reconnect · barge-in · transcript reconciliation · privacy { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g13: 7 · Ship Nuxt / API with PostgreSQL · Redis JSON · archive lifecycle { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g14: 8 · Educator evaluation · load tests · latency and cost budgets { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g15: Do quality and performance evidence meet release criteria? { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g16: Release after clinical · security · reliability gates pass { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+g01 -> g02
+g02 -> g03: approved
+g02 -> g01: revise cases / rubric
+g03 -> g04
+g04 -> g05: pass
+g04 -> g03: repair authorization
+g05 -> g06
+g06 -> g07: pass
+g06 -> g05: repair idempotency
+g07 -> g08
+g08 -> g09: pass
+g08 -> g07: repair replay
+g09 -> g10
+g10 -> g11: pass
+g10 -> g09: repair API authority
+g11 -> g12
+g12 -> g13: pass or keep Full Audio disabled
+g12 -> g11: repair privacy / replay
+g13 -> g14 -> g15
+g15 -> g16: pass
+g15 -> g14: fail; fix and remeasure

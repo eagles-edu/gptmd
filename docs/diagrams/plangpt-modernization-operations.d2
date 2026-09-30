@@ -1,0 +1,78 @@
+direction: down
+title: GPTpatient modernization · Operations
+
+// Retention and deletion lifecycle.
+p01: Load customer text / audio retention policy { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p02: Is text retention allowed and within retention period? { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p03: Store transcript text events for restore and debrief { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p04: Expire or omit transcript projection under policy { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p05: DELETE /api/sessions/:sessionId { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p06: Authenticate owner or authorized customer administrator { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p07: Delete app-owned session · seed · facts · ledgers · transcript { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p08: Request provider-context deletion where supported by policy { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p09: Purge explicitly retained raw audio { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p10: Record minimal deletion status if policy requires it { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+p01 -> p02
+p02 -> p03: retain
+p02 -> p04: disabled / expired
+p05 -> p06 -> p07 -> p08 -> p09 -> p10
+
+// Scenario termination, archive handoff, temporary-state expiry, and durable records.
+b01: Scenario completes or is cancelled { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b02: Worker records terminal state and unique archive job in PostgreSQL { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b03: Idempotent worker builds archive from PostgreSQL and retained audio { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b04: Verify private archive contents and metadata before publishing { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b05: Authorize download until terminal time +72 hours; mint short-lived URL { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b06: Set RedisJSON absolute expiry at terminal time +20 minutes { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b07: Persist session · stats · provider usage · downloads · outcomes in PostgreSQL { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b08: Retry archive idempotently from PostgreSQL and retained audio source { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b09: Deny downloads initiated after 72 hours; asynchronously delete expired artifact { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+b01 -> b02 -> b03 -> b04
+b04 -> b05 -> b09
+b02 -> b06
+b02 -> b07
+b03 -> b08: worker fails
+b08 -> b03: retry
+
+// Scale-out and latency controls.
+q01: Begin with one API replica and PostgreSQL durable transactions { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q02: Require RedisJSON for live session state and Redis Streams for event handoff { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q03: Measure cross-replica coordination and websocket needs { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q04: Add extra Redis pub/sub and rate-limit state only when measured { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q05: Reconcile absolute terminal +20-minute expiry through PostgreSQL outbox { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q06: PostgreSQL stores durable clinical ledger · client records · metrics { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q07: Bound setup queue · concurrency · timeout · retries { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q08: Reserve capacity for interactive turns { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q09: Bound post-session scoring separately { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q10: Back-pressure requests and serialize each session { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q11: Scale stateless API across independent customer sessions { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q12: Add worker pool only if setup / scoring harms measured turn latency { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q13: Keep one modular API when no measured interference exists { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q14: Commit active state · reply · retry key · event in one Redis round trip { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q15: Dedicated workers persist events · metrics · archives asynchronously { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q16: Never await side work; keep nonblocking handoff under 5 milliseconds { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+q01 -> q02 -> q03
+q03 -> q04: measured cross-replica need
+q04 -> q05
+q03 -> q13: one API replica is sufficient
+q13 -> q05 -> q06
+q04 -> q06
+q07 -> q08 -> q09 -> q10 -> q11 -> q12
+q12 -> q04: measured isolation need
+q12 -> q13: no interference
+q02 -> q14 -> q15 -> q16
+
+// Operational observability and performance evidence.
+z01: Timestamp browser capture and transcript display { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z02: Timestamp API queue and per-session lock wait { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z03: Timestamp Responses first token and completion { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z04: Timestamp TTS first byte / completion and playback end { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z05: Timestamp WebSocket delivery and Realtime first audio { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z06: Measure p50 / p95 first token · first audio · full turn { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z07: Measure setup concurrency separately from active turns { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z08: Record provider usage · session cost · CPU · memory { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z09: Compare complete TTS · streamed clauses · Full Audio on same cases { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z10: Keep one active patient turn; never parallelize a session { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z11: Measure side-work wait (zero target) and handoff overhead (<5 ms) { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z12: Track stream age · backlog size · PostgreSQL worker lag { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+z01 -> z02 -> z03 -> z04 -> z05 -> z06 -> z07 -> z08 -> z09 -> z10 -> z11 -> z12

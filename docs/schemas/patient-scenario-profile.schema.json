@@ -1,0 +1,255 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "PatientScenarioProfile",
+  "type": "object",
+  "properties": {
+    "fullName": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
+    "dobUs": {
+      "type": "string",
+      "pattern": "^(0[1-9]|1[0-2])\\/(0[1-9]|[12]\\d|3[01])\\/\\d{4}$"
+    },
+    "bodyType": {
+      "type": "string",
+      "enum": [
+        "average",
+        "heavy"
+      ]
+    },
+    "reasonCc": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 1000
+    },
+    "diagnosesIf": {
+      "anyOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
+    "history": {
+      "maxItems": 47,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "lastMenstrualPeriod",
+              "typicalMenstrualPeriodDescription",
+              "dysmenorrheaHistory",
+              "anyPain",
+              "pqrstResult",
+              "medicalHistory",
+              "lastPelvicExam",
+              "lastPapSmear",
+              "lastBreastExam",
+              "lastMammogram",
+              "comorbidity",
+              "currentMedications",
+              "pastMedicatios",
+              "nutriceuticalUse",
+              "supplementVitaminUse",
+              "tradChineseMedicine",
+              "homeopathicTreatmentsMeds",
+              "accupunctureHistory",
+              "sugicalHistory",
+              "obstetricalHistory",
+              "numberChildren",
+              "numberPregnancies",
+              "numberStillbirths",
+              "numberLiveBirths",
+              "sexualActivityCurrent",
+              "contraceptionMethods",
+              "stdHistory",
+              "familyMedicalHistory",
+              "illictDrugUse",
+              "methadoneTreatment",
+              "cannabisUse",
+              "alcoholUse",
+              "nutritionHabits",
+              "sleepQualityQuantity",
+              "mentalHealthCurrent",
+              "mentalHealthPast",
+              "relationshipStatus",
+              "homeEnvironment",
+              "mentalAbuseHistory",
+              "physicalAbuseHistory",
+              "sexualAbuseHistory",
+              "lifeStyle",
+              "employmentHistory",
+              "educationalHistory",
+              "exerciseCurrent",
+              "dnaStudies",
+              "miscellaneousDetailsNos"
+            ]
+          },
+          "status": {
+            "type": "string",
+            "enum": [
+              "known",
+              "negative",
+              "unknown",
+              "not_applicable"
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 4000
+                  },
+                  {
+                    "type": "number"
+                  },
+                  {
+                    "maxItems": 50,
+                    "type": "array",
+                    "items": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 500
+                    }
+                  }
+                ]
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "required": [
+          "field",
+          "status",
+          "value"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "currentPregnancyStatus": {
+      "type": "string",
+      "enum": [
+        "pregnant",
+        "not_pregnant",
+        "unknown"
+      ]
+    },
+    "menopauseStatus": {
+      "type": "string",
+      "enum": [
+        "menopausal",
+        "not_menopausal",
+        "unknown"
+      ]
+    },
+    "patientBeliefs": {
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
+    },
+    "supportedExamFindings": {
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 1000
+      }
+    },
+    "supportedTestResults": {
+      "maxItems": 30,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "testName": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "result": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "required": [
+          "testName",
+          "result"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "persona": {
+      "type": "object",
+      "properties": {
+        "mood": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "maturity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "verbosity": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 80
+        },
+        "educationLevel": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "willingnessToDisclose": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        }
+      },
+      "required": [
+        "mood",
+        "maturity",
+        "verbosity",
+        "educationLevel",
+        "willingnessToDisclose"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "fullName",
+    "dobUs",
+    "bodyType",
+    "reasonCc",
+    "diagnosesIf",
+    "history",
+    "currentPregnancyStatus",
+    "menopauseStatus",
+    "patientBeliefs",
+    "supportedExamFindings",
+    "supportedTestResults",
+    "persona"
+  ],
+  "additionalProperties": false
+}

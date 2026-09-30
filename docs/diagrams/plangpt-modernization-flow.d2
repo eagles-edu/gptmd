@@ -1,0 +1,88 @@
+direction: down
+
+intro: "GPTpatient modernization · PROPOSED TARGET\nCurrent Express API is a health-check scaffold" {
+  shape: rectangle
+  width: 2480
+  height: 400
+  style.fill: "#FDEBED"
+  style.stroke: "#8A2730"
+  style.stroke-width: 12
+  style.font-size: 72
+  style.bold: true
+  style.font-color: "#6E1E27"
+}
+
+client: "1 · Learner and Nuxt client\nOIDC sign-in · accessible text and voice" {
+  shape: rectangle
+  width: 2480
+  height: 480
+  style.fill: "#E6EFFB"
+  style.stroke: "#214D7A"
+  style.stroke-width: 12
+  style.font-color: "#10243C"
+  style.font-size: 80
+  style.bold: true
+}
+api: "2 · TypeScript application API\nTenant access · quotas · serialized session turns" {
+  shape: rectangle
+  width: 2480
+  height: 520
+  style.fill: "#DCEAF8"
+  style.stroke: "#214D7A"
+  style.stroke-width: 12
+  style.font-color: "#10243C"
+  style.font-size: 80
+  style.bold: true
+}
+setup: "3 · Idempotent case setup\nValidate and pin the versioned patient seed" {
+  shape: rectangle
+  width: 2480
+  height: 520
+  style.fill: "#E4F1EB"
+  style.stroke: "#24614F"
+  style.stroke-width: 12
+  style.font-color: "#102D26"
+  style.font-size: 76
+  style.bold: true
+}
+encounter: "4 · Controlled encounter\nHistory · supported orders · consent-aware exams" {
+  shape: rectangle
+  width: 2480
+  height: 520
+  style.fill: "#FFF0CF"
+  style.stroke: "#805815"
+  style.stroke-width: 12
+  style.font-color: "#3B2B12"
+  style.font-size: 76
+  style.bold: true
+}
+state: "5 · Application-owned state\nPostgreSQL: seed · events · disclosure · retention" {
+  shape: cylinder
+  width: 2480
+  height: 520
+  style.fill: "#DDEFEA"
+  style.stroke: "#175A50"
+  style.stroke-width: 12
+  style.font-color: "#102D26"
+  style.font-size: 76
+  style.bold: true
+}
+model: "6 · Server-side model services\nResponses / Conversations · optional gated Full Audio" {
+  shape: rectangle
+  width: 2480
+  height: 520
+  style.fill: "#F0E7F6"
+  style.stroke: "#604076"
+  style.stroke-width: 12
+  style.font-color: "#2E1D3C"
+  style.font-size: 76
+  style.bold: true
+}
+
+intro -> client
+client -> api: authenticated request
+api -> setup: once · idempotent
+setup -> encounter: validated case
+encounter -> state: commit before delivery
+state -> model: authorized projection
+model -> api: validate · commit · respond

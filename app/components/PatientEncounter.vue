@@ -1,9 +1,9 @@
 <template>
   <section class="encounter-page" aria-labelledby="encounter-title">
     <div class="intro">
-      <p class="eyebrow">OBGYN clinical communication practice</p>
+      <p class="eyebrow">OBGYN clinical English communication</p>
       <h1 id="encounter-title">A patient history, one question at a time</h1>
-      <p>Practice a natural clinical interview with a fictional patient whose history stays consistent as details emerge.</p>
+      <p>Practice a natural clinical interview in English with a fictional patient whose history stays consistent as details emerge.</p>
     </div>
 
     <div class="encounter-grid">
@@ -63,7 +63,7 @@
             id="doctor-question"
             v-model="question"
             auto-grow
-            :disabled="!profile || pending || status === 'complete'"
+            :disabled="!profile || pending"
             hide-details
             maxlength="2000"
             placeholder="Ask one natural follow-up question…"
@@ -72,7 +72,7 @@
           />
           <div class="form-actions">
             <span class="mode-note">Voice capture and spoken replies follow after the API audio lane is connected.</span>
-            <v-btn color="primary" type="submit" :disabled="!profile || !question.trim() || pending || status === 'complete'" :loading="pending">
+            <v-btn color="primary" type="submit" :disabled="!profile || !question.trim() || pending" :loading="pending">
               Send question
             </v-btn>
           </div>

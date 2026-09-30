@@ -1,7 +1,11 @@
 // https://nuxt.com/docs/api/configuration/nuxt-config
+import { defineNuxtConfig } from 'nuxt/config'
+import { nuxtH3ReexportPlugin, removeLegacyEsbuildOptions } from './scripts/nuxt-build-compat'
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
-  devtools: { enabled: false },
+  devtools: { enabled: true },
+  debug: false,
   css: ['~/assets/css/fonts.css', '~/assets/scss/main.scss', '~/assets/css/main.css'],
   routeRules: {
     '/': { prerender: true },
@@ -18,13 +22,17 @@ export default defineNuxtConfig({
   vuetify: {
     moduleOptions: {
       prefixComposables: ['useLayout'],
+      styles: {
+        utilities: false,
+        colors: false
+      },
       ssrClientHints: {
         prefersColorScheme: true,
         prefersColorSchemeOptions: {
           darkThemeName: 'myCustomDarkTheme',
           lightThemeName: 'myCustomLightTheme',
           cookie: {
-            name: 'gptmd-theme',
+            name: 'gptmd-vuetify-theme',
             sameSite: 'lax'
           }
         }
@@ -35,5 +43,37 @@ export default defineNuxtConfig({
     'vuetify-nuxt-module',
     '@nuxt/eslint',
     'nuxt-security'
-  ]
+  ],
+  vite: {
+    build: {
+      rolldownOptions: {
+        checks: {
+          pluginTimings: false
+        },
+        output: {
+          minify: {
+            compress: {
+              dropConsole: true,
+              dropDebugger: true
+            }
+          }
+        }
+      }
+    }
+  },
+  hooks: {
+    'vite:extend': ({ config }) => {
+      // Nuxt still supplies this legacy option, which Vite 8 ignores in favor
+      // of Oxc. The equivalent Oxc options are configured above.
+      removeLegacyEsbuildOptions(config)
+    },
+    'nitro:config': async (config) => {
+      const rollupConfig = config.rollupConfig ??= {}
+      const plugins = await rollupConfig.plugins
+      rollupConfig.plugins = [
+        ...(Array.isArray(plugins) ? plugins : plugins ? [plugins] : []),
+        nuxtH3ReexportPlugin
+      ]
+    }
+  }
 })

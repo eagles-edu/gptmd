@@ -5,9 +5,11 @@
 .nitro
 .cache
 dist
-
+docs/nginx/**
 # Node dependencies
 node_modules
+playwright-report/
+test-results/
 
 # Logs
 logs

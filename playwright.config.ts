@@ -5,7 +5,7 @@ export default defineConfig({
   fullyParallel: true,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:3000',
+    baseURL: 'http://127.0.0.1:3001',
     trace: 'on-first-retry'
   },
   projects: [
@@ -15,8 +15,8 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: 'npm run dev -- --host 127.0.0.1 --port 3000',
-    reuseExistingServer: true,
-    url: 'http://127.0.0.1:3000'
+    command: 'env -u NO_COLOR PORT=3001 node .output/server/index.mjs',
+    reuseExistingServer: false,
+    url: 'http://127.0.0.1:3001'
   }
 })

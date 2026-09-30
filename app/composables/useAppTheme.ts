@@ -18,7 +18,7 @@ export function useAppTheme() {
 
   function setTheme(themeName: AppThemeName) {
     savedTheme.value = themeName
-    theme.global.name.value = themeName
+    void theme.change(themeName)
 
     if (import.meta.client) {
       document.documentElement.dataset.appTheme = themeName === DARK_THEME ? 'dark' : 'light'

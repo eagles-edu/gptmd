@@ -10,7 +10,7 @@ WorkingDirectory=/home/eaglesvn/dockerz/gptmd/services/api
 Environment=NODE_ENV=production
 Environment=HOST=127.0.0.1
 Environment=PORT=4000
-ExecStart=/usr/bin/node /home/eaglesvn/dockerz/gptmd/services/api/dist/server.js
+ExecStart=/usr/bin/node /home/eaglesvn/dockerz/gptmd/scripts/gptmd-api-env.mjs start
 Restart=on-failure
 RestartSec=3
 NoNewPrivileges=true

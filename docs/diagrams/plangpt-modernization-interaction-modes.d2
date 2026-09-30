@@ -1,0 +1,47 @@
+direction: down
+title: GPTpatient modernization · Interaction Modes
+
+// Model tier and modality are independent policy choices.
+m01: Customer admin enables tier aliases and account budget { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m02: Check learner entitlement and quota for requested tier { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m03: Resolve alias to server-side model configuration { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m04: Pin tier · model alias · policy version at session start { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m05: Resolve setup / canon-generation model independently { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m06: Default Luna; evaluate Terra / Sol on same cases { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m07: Promote optional tier only for measured educator quality gain { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m08: Select Transcript or Full Audio separately from model tier { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m09: Keep tier stable for entire patient encounter { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+m01 -> m02 -> m03 -> m04 -> m09
+m04 -> m05
+m06 -> m07
+m07 -> m03: benefit justifies cost
+m07 -> m06: retain current default
+m08 -> m09
+
+// Transcript mode: auditable typed / transcribed turns and optional TTS.
+v01: Fix Transcript mode at session start { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v02: User gesture requests browser microphone permission { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v03: Browser speech recognition produces text { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v04: Typed text remains an alternate input { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v05: Display recognized or typed transcript { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v06: Send text over authenticated HTTPS { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v07: Process via serialized Responses turn lane { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v08: Return text; optionally stream TTS separately { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v09: Do not retain raw microphone audio by default { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+v01 -> v02 -> v03 -> v05 -> v06 -> v07 -> v08
+v04 -> v05
+v03 -> v09
+
+// Optional modality switch: rebuild from canonical app state, not provider context IDs.
+x01: Learner / policy requests modality switch { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x02: Is switching allowed during this session? { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x03: Deny switch and continue current mode { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x04: Commit event-ledger checkpoint { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x05: Close old provider context { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x06: Start new Responses Conversation or Realtime session { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x07: Rebuild authorized transcript and state projection only { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x08: Record provider type · new ID · mode transition event { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+x01 -> x02
+x02 -> x03: no
+x02 -> x04: yes
+x04 -> x05 -> x06 -> x07 -> x08

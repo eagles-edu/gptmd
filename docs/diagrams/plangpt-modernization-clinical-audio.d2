@@ -1,0 +1,85 @@
+direction: down
+title: GPTpatient modernization · Clinical Audio
+
+// Fixed orders and results: model proposals cannot create application authority.
+o01: POST /api/sessions/:sessionId/orders { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o02: Recheck session owner · phase · order entitlement { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o03: Validate test against scenario-supported order catalog { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o04: Reject unsupported test; do not create model-invented order { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o05: Create app order ID and pending order record { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o06: Wait until configured scenario result-release condition { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o07: Return pending status through GET order resource { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o08: Resolve deterministic result reference from immutable seed { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o09: Release fixed result and append result event { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o10: GET /api/sessions/:sessionId/orders/:orderId { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o11: Model tool call may propose; only API authorizes order and result { shape: text; style.fill: "#FFFFFF"; style.stroke: "#172B45"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+o01 -> o02 -> o03
+o03 -> o04: unsupported
+o03 -> o05: supported
+o05 -> o06
+o06 -> o07: not ready
+o06 -> o08: release condition met
+o08 -> o09 -> o10
+o07 -> o10
+
+// Scenario-indicated, consent-aware abdominal and pelvic exam sequence.
+e01: POST /api/sessions/:sessionId/exams { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e02: Recheck owner · active phase · scenario exam entitlement { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e03: Is the requested exam indicated by this case? { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e04: Decline / deny exam; record choice without forced examination { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e05: Request and record explicit consent { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e06: Patient declines or stops exam; record consent state { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e07: Is chaperone state required by the scenario? { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e08: Record chaperone offer and choice { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e09: Enter separate abdominal or pelvic exam phase { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e10: Record exam actions and phase transitions { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e11: Was the authorized exam completed? { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e12: Incomplete exam: return no findings { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e13: Completed exam: resolve permitted findings from seed { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e14: Append exam completion and finding-reference events { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+e01 -> e02 -> e03
+e03 -> e04: not indicated
+e03 -> e05: indicated and requested
+e05 -> e06: consent declined / stopped
+e05 -> e07: consent granted
+e07 -> e08: required
+e07 -> e09: not required
+e08 -> e09 -> e10 -> e11
+e11 -> e12: incomplete
+e11 -> e13: completed
+e04 -> e14
+e06 -> e14
+e12 -> e14
+e13 -> e14
+
+// Full Audio: optional server-controlled Realtime bridge and ledger reconciliation.
+r01: Require prototype privacy / fidelity gate before enabling { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r02: Check customer audio entitlement and retention setting { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r03: Capture mic audio after explicit browser action { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r04: Open authenticated WebSocket bound to one app session { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r05: Relay media through server-controlled API bridge { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r06: Create provider Realtime session server-side { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r07: Store Realtime sessionId separately from Responses conversationId { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r08: Project only authorized case information; keep answer key private { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r09: Stream audio; support turn-taking and barge-in { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r10: Authorize requested action against encounter state machine { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r11: Reconcile final learner and patient transcripts { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r12: Reconcile phase cues and authorized action events { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r13: Commit transcript and action events to app event ledger { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r14: On disconnect, restore from app state and deduplicate turnId { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r15: Is raw audio retention explicitly entitled and enabled? { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r16: Discard raw audio { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r17: Retain audio under customer-controlled policy { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r18: If privacy gate fails, leave Full Audio unavailable { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+r01 -> r02: prototype passed
+r01 -> r18: prototype failed
+r02 -> r03: entitled
+r02 -> r18: not entitled
+r03 -> r04 -> r05 -> r06 -> r07 -> r08 -> r09 -> r10
+r10 -> r11: conversation
+r10 -> o02: proposed order
+r10 -> e02: proposed exam
+r11 -> r12 -> r13 -> r14
+r13 -> r15
+r15 -> r16: default / disabled
+r15 -> r17: explicitly enabled

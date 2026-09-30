@@ -58,5 +58,14 @@
     "../curatormd/plugins/curatormd/scripts"
   ],
   "python.defaultInterpreterPath": "/usr/bin/python3",
-  "svg.preview.background": "custom"
+  "svg.preview.background": "editor",
+  "[vue]": {
+    "editor.formatOnSave": false
+  },
+  "[typescript]": {
+    "editor.formatOnSave": false
+  },
+  "[typescriptreact]": {
+    "editor.formatOnSave": false
+  }
 }

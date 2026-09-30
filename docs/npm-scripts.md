@@ -8,11 +8,13 @@ are currently available in `package.json`.
 | Command | What it does |
 | --- | --- |
 | `npm run dev` | Starts the Nuxt frontend development server with hot reload. By default, Nuxt prints the local URL in the terminal (usually `http://localhost:3000`). Stop it with `Ctrl+C`. |
-| `npm run api:dev` | Starts the Express API from TypeScript using `tsx watch`; changes restart the API process. Run it in a separate terminal from the Nuxt frontend. |
+| `npm run api:dev` | Starts the Express API from TypeScript; the API launcher loads only service-specific values from the ignored `.env` file and restarts on source changes. Run it separately from Nuxt. |
 | `npm run build` | Builds the Nuxt frontend for production. |
 | `npm run api:build` | Compiles the Express API TypeScript project into `services/api/dist/`. |
 | `npm run preview` | Serves the most recent Nuxt production build locally. Run `npm run build` first. |
 | `npm run api:start` | Starts the compiled Express API from `services/api/dist/server.js`. Run `npm run api:build` first. |
+| `npm run db:up` | Starts the local PostgreSQL container and preserves its named volume across restarts. |
+| `npm run db:down` | Stops the local PostgreSQL container without deleting its volume. |
 | `npm run generate` | Runs Nuxt's static generation and writes prerendered output for static hosting. |
 
 For local full-stack development, open two terminals in the repository root:
@@ -56,3 +58,6 @@ exists, its initial suggestion is `gptMD-dev_0.0.0.01`.
 The API's `build`, `dev`, and `start` commands are also defined in
 [`services/api/package.json`](../services/api/package.json); the root scripts
 `api:build`, `api:dev`, and `api:start` delegate to those service commands.
+The local API reads Redis and PostgreSQL connection settings from `.env`;
+project MCP servers load only their own required credentials through
+`scripts/gptmd-mcp-launcher.mjs`.

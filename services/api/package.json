@@ -7,16 +7,24 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
-    "dev": "tsx watch src/server.ts",
-    "start": "node dist/server.js"
+    "dev": "node ../../scripts/gptmd-api-env.mjs dev",
+    "start": "node ../../scripts/gptmd-api-env.mjs start"
   },
   "dependencies": {
-    "express": "^5.2.1"
+    "express": "^5.2.1",
+    "openai": "^7.25.0",
+    "pg": "^8.23.0",
+    "redis": "^6.2.1",
+    "zod": "^4.6.5"
   },
   "devDependencies": {
     "@types/express": "^5.0.6",
     "@types/node": "^24.10.0",
+    "@types/pg": "^8.23.1",
     "tsx": "^4.23.15",
     "typescript": "^6.0.3"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
   }
 }
