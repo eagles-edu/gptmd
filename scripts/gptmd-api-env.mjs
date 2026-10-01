@@ -16,6 +16,9 @@ const allowed = [
   'OPENAI_MODEL',
   'REDIS_URL',
   'DATABASE_URL',
+  'API_AUTH_JWT_SECRET',
+  'API_AUTH_JWT_ISSUER',
+  'API_AUTH_JWT_AUDIENCE',
   'HOST',
   'PORT'
 ]

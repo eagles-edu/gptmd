@@ -8,9 +8,10 @@
       "minLength": 1,
       "maxLength": 120
     },
-    "dobUs": {
+    "dateOfBirth": {
       "type": "string",
-      "pattern": "^(0[1-9]|1[0-2])\\/(0[1-9]|[12]\\d|3[01])\\/\\d{4}$"
+      "format": "date",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
     },
     "bodyType": {
       "type": "string",
@@ -19,12 +20,12 @@
         "heavy"
       ]
     },
-    "reasonCc": {
+    "reasonForVisit": {
       "type": "string",
       "minLength": 1,
       "maxLength": 1000
     },
-    "diagnosesIf": {
+    "diagnosis": {
       "anyOf": [
         {
           "type": "string",
@@ -37,7 +38,7 @@
       ]
     },
     "history": {
-      "maxItems": 47,
+      "maxItems": 59,
       "type": "array",
       "items": {
         "type": "object",
@@ -57,23 +58,35 @@
               "lastMammogram",
               "comorbidity",
               "currentMedications",
-              "pastMedicatios",
-              "nutriceuticalUse",
+              "pastMedications",
+              "nutraceuticalUse",
               "supplementVitaminUse",
               "tradChineseMedicine",
               "homeopathicTreatmentsMeds",
-              "accupunctureHistory",
-              "sugicalHistory",
+              "acupunctureHistory",
+              "surgicalHistory",
               "obstetricalHistory",
-              "numberChildren",
               "numberPregnancies",
-              "numberStillbirths",
               "numberLiveBirths",
+              "numberChildren",
+              "numberMiscarriage",
+              "numberStillbirths",
+              "numberAbortions",
+              "numberEctopicPregnancies",
+              "tubalLigation",
+              "hysterectomyHistory",
+              "perimenopauseStatus",
+              "perimenopauseSymptoms",
+              "menopauseStatus",
+              "menopauseSymptoms",
+              "postmenopauseStatus",
+              "postmenopauseSymptoms",
+              "hormoneReplacementTherapy",
               "sexualActivityCurrent",
               "contraceptionMethods",
               "stdHistory",
               "familyMedicalHistory",
-              "illictDrugUse",
+              "illicitDrugUse",
               "methadoneTreatment",
               "cannabisUse",
               "alcoholUse",
@@ -148,7 +161,7 @@
         "unknown"
       ]
     },
-    "menopauseStatus": {
+    "currentMenopausalStatus": {
       "type": "string",
       "enum": [
         "menopausal",
@@ -239,13 +252,13 @@
   },
   "required": [
     "fullName",
-    "dobUs",
+    "dateOfBirth",
     "bodyType",
-    "reasonCc",
-    "diagnosesIf",
+    "reasonForVisit",
+    "diagnosis",
     "history",
     "currentPregnancyStatus",
-    "menopauseStatus",
+    "currentMenopausalStatus",
     "patientBeliefs",
     "supportedExamFindings",
     "supportedTestResults",

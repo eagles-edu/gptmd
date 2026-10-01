@@ -1,5 +1,17 @@
 import express, { type Express } from 'express'
-import type { GeneratedPatientScenario } from './patient-profile.js'
+import { isJwtConfigurationReady, verifyAccessToken, type JwtConfiguration } from './auth.ts'
+import {
+  PATIENT_SCENARIO_POLICY_VERSION,
+  PATIENT_SCENARIO_PROMPT_VERSION,
+  PATIENT_SCENARIO_SCHEMA_VERSION,
+  type GeneratedPatientScenario,
+  type PatientScenarioVersionPins
+} from './patient-profile.ts'
+import {
+  PatientScenarioSetupResponseSchema,
+  SessionCreatedResponseSchema
+} from './session-contracts.ts'
+import type { ScenarioSetupResult, SessionStore, StoreResult } from './session-store.ts'
 
 export interface RedisProbe {
   readonly isOpen: boolean
@@ -16,8 +28,13 @@ export interface ApiDependencies {
   postgres: PostgresProbe | null
   openaiConfigured: boolean
   generateResponse: ((input: string) => Promise<{ id: string; outputText: string }>) | null
-  generatePatientScenario: (() => Promise<GeneratedPatientScenario>) | null
+  generatePatientScenario: ((
+    versions: PatientScenarioVersionPins,
+    asOf: Date
+  ) => Promise<GeneratedPatientScenario>) | null
   model: string
+  jwt: JwtConfiguration
+  sessionStore: SessionStore | null
 }
 
 const validInput = (value: unknown): value is string =>
@@ -28,6 +45,30 @@ export function createApiApp(dependencies: ApiDependencies): Express {
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
   app.use(express.json({ limit: '1mb' }))
+
+  app.use('/api', async (request, response, next) => {
+    if (!dependencies.sessionStore || !isJwtConfigurationReady(dependencies.jwt)) {
+      response.status(503).json({ error: 'Authentication and session storage are not configured' })
+      return
+    }
+    const authorization = request.header('authorization')
+    const match = authorization?.match(/^Bearer ([A-Za-z0-9_.-]+)$/)
+    const principal = match ? verifyAccessToken(match[1] ?? '', dependencies.jwt) : null
+    if (!principal) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    try {
+      if (!await dependencies.sessionStore.hasActiveMembership(principal)) {
+        response.status(403).json({ error: 'Active tenant membership is required' })
+        return
+      }
+      request.principal = principal
+      next()
+    } catch {
+      response.status(503).json({ error: 'Authentication service is unavailable' })
+    }
+  })
 
   app.get('/healthz', (_request, response) => {
     response.json({ status: 'ok', service: 'gptmd-api' })
@@ -53,12 +94,13 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       ? 'ready'
       : dependencies.postgres ? 'unavailable' : 'missing'
     const openai = dependencies.openaiConfigured ? 'configured' : 'missing'
-    const ready = redis === 'ready' && postgres === 'ready' && openai === 'configured'
+    const auth = isJwtConfigurationReady(dependencies.jwt) ? 'configured' : 'missing'
+    const ready = redis === 'ready' && postgres === 'ready' && openai === 'configured' && auth === 'configured'
 
     response.status(ready ? 200 : 503).json({
       status: ready ? 'ready' : 'not_ready',
       service: 'gptmd-api',
-      dependencies: { redis, postgres, openai }
+      dependencies: { redis, postgres, openai, auth }
     })
   })
 
@@ -73,6 +115,21 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
 
+    const principal = request.principal
+    if (!principal || !dependencies.sessionStore) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+
+    try {
+      const quota = await dependencies.sessionStore.consumeQuota(principal, 'responses')
+      const denial = quotaResponse(quota, response)
+      if (denial) return
+    } catch {
+      response.status(503).json({ error: 'Usage authorization is unavailable' })
+      return
+    }
+
     try {
       const result = await dependencies.generateResponse(request.body.input)
       response.json({ id: result.id, outputText: result.outputText })
@@ -81,5 +138,110 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
   })
 
+  app.post('/api/sessions', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    try {
+      const versions: PatientScenarioVersionPins = {
+        promptVersion: PATIENT_SCENARIO_PROMPT_VERSION,
+        modelVersion: dependencies.model,
+        schemaVersion: PATIENT_SCENARIO_SCHEMA_VERSION,
+        policyVersion: PATIENT_SCENARIO_POLICY_VERSION
+      }
+      const result = await store.createSession(principal, versions)
+      if (typeof result === 'string') {
+        quotaResponse(result, response)
+        return
+      }
+      response.status(201).json(SessionCreatedResponseSchema.parse(result))
+    } catch {
+      response.status(503).json({ error: 'Session service is unavailable' })
+    }
+  })
+
+  app.post('/api/sessions/:sessionId/setup', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId
+    const idempotencyKey = request.header('idempotency-key')
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId ?? '')) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    if (!idempotencyKey || !/^[\x21-\x7e]{8,200}$/.test(idempotencyKey)) {
+      response.status(400).json({ error: 'A printable Idempotency-Key of 8 to 200 characters is required' })
+      return
+    }
+    if (!dependencies.generatePatientScenario) {
+      response.status(503).json({ error: 'Patient scenario generation is not configured' })
+      return
+    }
+
+    try {
+      const result: ScenarioSetupResult = await store.setupScenario(
+        principal,
+        sessionId,
+        idempotencyKey,
+        dependencies.generatePatientScenario
+      )
+      if (typeof result === 'string') {
+        if (result === 'not_found') response.status(404).json({ error: 'Session not found' })
+        else if (result === 'idempotency_conflict') {
+          response.status(409).json({ error: 'Session setup was already started with another Idempotency-Key' })
+        } else if (result === 'version_unavailable') {
+          response.status(503).json({ error: 'Pinned patient scenario versions are unavailable' })
+        } else response.status(409).json({ error: 'Session is not available for setup' })
+        return
+      }
+      response.json(PatientScenarioSetupResponseSchema.parse(result))
+    } catch {
+      response.status(503).json({ error: 'Patient scenario setup could not be completed' })
+    }
+  })
+
+  app.get('/api/sessions/:sessionId', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId ?? '')) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    try {
+      const session = await store.getOwnedSession(principal, sessionId ?? '')
+      if (!session) {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      response.json(session)
+    } catch {
+      response.status(503).json({ error: 'Session service is unavailable' })
+    }
+  })
+
   return app
+}
+
+function quotaResponse(result: StoreResult, response: import('express').Response): boolean {
+  if (result === 'allowed') return false
+  if (result === 'membership_missing') {
+    response.status(403).json({ error: 'Active tenant membership is required' })
+  } else if (result === 'entitlement_denied') {
+    response.status(403).json({ error: 'Tenant plan does not include this capability' })
+  } else {
+    response.status(429).json({ error: 'Tenant usage quota exceeded' })
+  }
+  return true
 }

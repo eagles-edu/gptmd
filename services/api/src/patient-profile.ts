@@ -2,8 +2,8 @@ import type OpenAI from 'openai'
 import { zodTextFormat } from 'openai/helpers/zod'
 import { z } from 'zod'
 
-// Keep this field catalog aligned with the canonical catalog in docs/pp.md.
-// `reasonCc` is represented as a required profile property; the remaining
+// Keep this field catalog aligned with the canonical catalog in ../catalog/patient-profile.json.
+// `reasonForVisit` is represented as a required profile property; the remaining
 // fields are selected per case in `history`.
 export const PATIENT_HISTORY_FIELDS = [
   'lastMenstrualPeriod',
@@ -18,23 +18,35 @@ export const PATIENT_HISTORY_FIELDS = [
   'lastMammogram',
   'comorbidity',
   'currentMedications',
-  'pastMedicatios',
-  'nutriceuticalUse',
+  'pastMedications',
+  'nutraceuticalUse',
   'supplementVitaminUse',
   'tradChineseMedicine',
   'homeopathicTreatmentsMeds',
-  'accupunctureHistory',
-  'sugicalHistory',
+  'acupunctureHistory',
+  'surgicalHistory',
   'obstetricalHistory',
-  'numberChildren',
   'numberPregnancies',
-  'numberStillbirths',
   'numberLiveBirths',
+  'numberChildren',
+  'numberMiscarriage',
+  'numberStillbirths',
+  'numberAbortions',
+  'numberEctopicPregnancies',
+  'tubalLigation',
+  'hysterectomyHistory',
+  'perimenopauseStatus',
+  'perimenopauseSymptoms',
+  'menopauseStatus',
+  'menopauseSymptoms',
+  'postmenopauseStatus',
+  'postmenopauseSymptoms',
+  'hormoneReplacementTherapy',
   'sexualActivityCurrent',
   'contraceptionMethods',
   'stdHistory',
   'familyMedicalHistory',
-  'illictDrugUse',
+  'illicitDrugUse',
   'methadoneTreatment',
   'cannabisUse',
   'alcoholUse',
@@ -54,7 +66,7 @@ export const PATIENT_HISTORY_FIELDS = [
   'dnaStudies',
   'miscellaneousDetailsNos'
 ] as const
-export const PATIENT_PROFILE_FIELDS = ['reasonCc', ...PATIENT_HISTORY_FIELDS] as const
+export const PATIENT_PROFILE_FIELDS = ['reasonForVisit', ...PATIENT_HISTORY_FIELDS] as const
 
 const HistoryValueSchema = z.union([
   z.string().trim().min(1).max(4_000),
@@ -70,13 +82,13 @@ const ProfileHistoryEntrySchema = z.object({
 
 export const PatientScenarioProfileSchema = z.object({
   fullName: z.string().trim().min(1).max(120),
-  dobUs: z.string().regex(/^(0[1-9]|1[0-2])\/(0[1-9]|[12]\d|3[01])\/\d{4}$/),
+  dateOfBirth: z.iso.date(),
   bodyType: z.enum(['average', 'heavy']),
-  reasonCc: z.string().trim().min(1).max(1_000),
-  diagnosesIf: z.string().trim().min(1).max(1_000).nullable(),
+  reasonForVisit: z.string().trim().min(1).max(1_000),
+  diagnosis: z.string().trim().min(1).max(1_000).nullable(),
   history: z.array(ProfileHistoryEntrySchema).max(PATIENT_HISTORY_FIELDS.length),
   currentPregnancyStatus: z.enum(['pregnant', 'not_pregnant', 'unknown']),
-  menopauseStatus: z.enum(['menopausal', 'not_menopausal', 'unknown']),
+  currentMenopausalStatus: z.enum(['menopausal', 'not_menopausal', 'unknown']),
   patientBeliefs: z.array(z.string().trim().min(1).max(1_000)).max(30),
   supportedExamFindings: z.array(z.string().trim().min(1).max(1_000)).max(30),
   supportedTestResults: z.array(z.object({
@@ -94,12 +106,25 @@ export const PatientScenarioProfileSchema = z.object({
 
 export type PatientScenarioProfile = z.infer<typeof PatientScenarioProfileSchema>
 
+// Bump the prompt or policy version when their corresponding behavior changes.
+export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v1'
+export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v1'
+export const PATIENT_SCENARIO_SCHEMA_VERSION = 1 as const
+
+export interface PatientScenarioVersionPins {
+  promptVersion: string
+  modelVersion: string
+  schemaVersion: number
+  policyVersion: string
+}
+
 const setupInstructions = [
   'Create one fictional OB-GYN training patient as a complete private scenario profile.',
   'Use the supplied structured schema. Include only profile history fields relevant to this case; do not fill every available field.',
   'For each included history entry, use known for a patient-reported or established detail, negative for an explicit negative, unknown when relevant but not known, and not_applicable only when the field does not apply. Unknown and not_applicable values must be null. Do not turn missing information into a negative.',
+  'Use currentMenopausalStatus for the scenario’s present-state truth. Keep the separate menopauseStatus history entry for the applicable patient-reported/history detail; do not use it as a substitute for currentMenopausalStatus.',
   'Make the current reason, history, diagnosis if any, patient beliefs, examination findings, and test results internally consistent. Invent no unsupported test result.',
-  'Use dobUs in MM/DD/YYYY format. A 16-year-old must not be menopausal. A 75-year-old must not currently be pregnant; a coherent history of past pregnancies is allowed.',
+  'Use dateOfBirth in YYYY-MM-DD format. A 16-year-old must not have currentMenopausalStatus menopausal. A 75-year-old must not currently be pregnant; a coherent history of past pregnancies is allowed.',
   'Keep diagnosis private in this profile. The later learner-facing profile is a separate projection.',
   'Vary the persona traits once for this scenario and keep them stable for the session.'
 ].join(' ')
@@ -136,13 +161,13 @@ export class PatientScenarioProviderError extends Error {
   }
 }
 
-function ageOnDate(dobUs: string, asOf: Date): number | null {
-  const match = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(dobUs)
+function ageOnDate(dateOfBirth: string, asOf: Date): number | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOfBirth)
   if (!match) return null
 
-  const month = Number(match[1])
-  const day = Number(match[2])
-  const year = Number(match[3])
+  const year = Number(match[1])
+  const month = Number(match[2])
+  const day = Number(match[3])
   const dob = new Date(Date.UTC(year, month - 1, day))
   if (
     dob.getUTCFullYear() !== year ||
@@ -162,9 +187,12 @@ function hasValidHistory(profile: PatientScenarioProfile): boolean {
   const seen = new Set<string>()
   const countFields = new Set([
     'numberChildren',
+    'numberMiscarriage',
     'numberPregnancies',
     'numberStillbirths',
-    'numberLiveBirths'
+    'numberLiveBirths',
+    'numberAbortions',
+    'numberEctopicPregnancies'
   ])
   for (const entry of profile.history) {
     if (seen.has(entry.field)) return false
@@ -194,15 +222,15 @@ function hasValidHistory(profile: PatientScenarioProfile): boolean {
   return true
 }
 
-function isConsistent(profile: PatientScenarioProfile, asOf: Date): boolean {
+export function isPatientScenarioConsistent(profile: PatientScenarioProfile, asOf: Date): boolean {
   if (!Number.isFinite(asOf.getTime())) return false
-  const age = ageOnDate(profile.dobUs, asOf)
+  const age = ageOnDate(profile.dateOfBirth, asOf)
   if (age === null || age < 0 || age > 120 || !hasValidHistory(profile)) return false
-  if (age === 16 && profile.menopauseStatus === 'menopausal') return false
+  if (age === 16 && profile.currentMenopausalStatus === 'menopausal') return false
   if (age === 75 && profile.currentPregnancyStatus === 'pregnant') return false
   if (
     profile.currentPregnancyStatus === 'pregnant' &&
-    profile.menopauseStatus === 'menopausal'
+    profile.currentMenopausalStatus === 'menopausal'
   ) return false
   return true
 }
@@ -214,8 +242,20 @@ function validationFailure(response: OpenAI.Responses.Response): boolean {
 export async function generatePatientScenario(
   client: OpenAI,
   model: string,
-  options: { asOf?: Date; maxAttempts?: number } = {}
+  options: {
+    asOf?: Date
+    maxAttempts?: number
+    promptVersion?: string
+    policyVersion?: string
+  } = {}
 ): Promise<GeneratedPatientScenario> {
+  const promptVersion = options.promptVersion ?? PATIENT_SCENARIO_PROMPT_VERSION
+  const policyVersion = options.policyVersion ?? PATIENT_SCENARIO_POLICY_VERSION
+  if (
+    promptVersion !== PATIENT_SCENARIO_PROMPT_VERSION ||
+    policyVersion !== PATIENT_SCENARIO_POLICY_VERSION
+  ) throw new Error('The pinned patient scenario prompt or policy version is unavailable.')
+
   const asOf = options.asOf ?? new Date()
   const requestedAttempts = options.maxAttempts ?? 2
   const maxAttempts = Number.isFinite(requestedAttempts)
@@ -250,7 +290,7 @@ export async function generatePatientScenario(
       try {
         const parsed: unknown = JSON.parse(response.output_text)
         const candidate = PatientScenarioProfileSchema.parse(parsed)
-        if (isConsistent(candidate, asOf)) profile = candidate
+        if (isPatientScenarioConsistent(candidate, asOf)) profile = candidate
       } catch {
         profile = null
       }

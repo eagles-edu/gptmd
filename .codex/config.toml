@@ -23,3 +23,7 @@ cwd = "/home/eaglesvn/dockerz/gptmd"
 env_vars = []
 startup_timeout_sec = 30.0
 tool_timeout_sec = 60.0
+
+[mcp_servers.icepanel]
+enabled = true
+url = "https://mcp.icepanel.io/mcp"

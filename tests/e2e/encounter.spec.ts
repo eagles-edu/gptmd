@@ -10,10 +10,10 @@ test('creates a patient session and completes a validated interview turn', async
     } else if (path === '/api/sessions/session-123/setup') {
       response = {
         profile: {
-          patientName: 'Ari Nguyen',
-          patientDob: '1990-01-01',
-          patientBodytype: 'average',
-          patientReason: 'Pelvic pain'
+          fullName: 'Ari Nguyen',
+          dateOfBirth: '1990-01-01',
+          bodyType: 'average',
+          reasonForVisit: 'Pelvic pain'
         }
       }
     } else if (path === '/api/sessions/session-123/turns') {
@@ -27,7 +27,7 @@ test('creates a patient session and completes a validated interview turn', async
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(response) })
   })
 
-  await page.goto('/')
+  await page.goto('/encounter')
   await expect(page.locator('html')).toHaveAttribute('data-app-theme', 'light')
   await page.getByRole('button', { name: 'Create patient session' }).click()
   await expect(page.getByText('Ari Nguyen')).toBeVisible()

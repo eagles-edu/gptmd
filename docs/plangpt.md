@@ -1,5 +1,7 @@
 ﻿# GPTpatient: OBGYN project history and system description
 
+Field names in the historical code-path descriptions below are preserved as historical evidence. The current GPTMD runtime contract uses `fullName`, `dateOfBirth`, `bodyType`, `reasonForVisit`, and private `diagnosis`; the learner response omits `diagnosis` and keeps the other four names unchanged.
+
 [View the system architecture diagram](plangpt-system.svg).
 [View the granular system atlas](plangpt-system-atlas.svg), with nine navigable pages for the historical programs, code paths, session/data models, persistence, and proposed target.
 

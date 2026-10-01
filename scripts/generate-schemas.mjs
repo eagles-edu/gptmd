@@ -11,11 +11,33 @@ import {
   PATIENT_PROFILE_FIELDS,
   PatientScenarioProfileSchema
 } from '../services/api/src/patient-profile.ts'
+import {
+  ArchiveStatusSchema,
+  ClinicalActionSchema,
+  ImmutablePatientScenarioSchema,
+  PatientScenarioSetupResponseSchema,
+  PatientReportedFactExpansionSchema,
+  SessionCreatedResponseSchema,
+  SessionStateSchema,
+  SessionVersionPinsSchema,
+  SessionTurnSchema,
+  TerminalEventSchema
+} from '../services/api/src/session-contracts.ts'
 
 const checkOnly = process.argv.includes('--check')
 const schemas = [
   ['patient-profile', 'PatientProfile', PatientProfileSchema],
   ['patient-scenario-profile', 'PatientScenarioProfile', PatientScenarioProfileSchema],
+  ['immutable-patient-scenario', 'ImmutablePatientScenario', ImmutablePatientScenarioSchema],
+  ['session-version-pins', 'SessionVersionPins', SessionVersionPinsSchema],
+  ['api-session-created-response', 'SessionCreatedResponse', SessionCreatedResponseSchema],
+  ['patient-scenario-setup-response', 'PatientScenarioSetupResponse', PatientScenarioSetupResponseSchema],
+  ['patient-reported-fact-expansion', 'PatientReportedFactExpansion', PatientReportedFactExpansionSchema],
+  ['session-state', 'SessionState', SessionStateSchema],
+  ['session-turn', 'SessionTurn', SessionTurnSchema],
+  ['clinical-action', 'ClinicalAction', ClinicalActionSchema],
+  ['terminal-event', 'TerminalEvent', TerminalEventSchema],
+  ['archive-status', 'ArchiveStatus', ArchiveStatusSchema],
   ['session-created-response', 'CreateSessionResponse', CreateSessionResponseSchema],
   ['setup-response', 'SetupResponse', SetupResponseSchema],
   ['turn-response', 'TurnResponse', TurnResponseSchema]
@@ -23,15 +45,31 @@ const schemas = [
 const outputDirectory = new URL('../docs/schemas/', import.meta.url)
 await mkdir(outputDirectory, { recursive: true })
 
-const patientProfilePath = new URL('../docs/pp.md', import.meta.url)
-const patientProfileSource = await readFile(patientProfilePath, 'utf8')
-const canonicalSection = patientProfileSource.split(/^5-variables\s*$/m, 1)[0]
-const documentedPatientFields = canonicalSection
-  .split(/\r?\n/)
-  .map((field) => field.trim())
-  .filter(Boolean)
-if (JSON.stringify(documentedPatientFields) !== JSON.stringify(PATIENT_PROFILE_FIELDS)) {
-  throw new Error('services/api/src/patient-profile.ts must match the field order in docs/pp.md.')
+const patientProfilePath = new URL('../services/api/catalog/patient-profile.json', import.meta.url)
+const patientProfileDocument = z.object({
+  patientProfileFields: z.array(z.string().min(1)),
+  setupProfileFields: z.array(z.string().min(1)).length(5),
+  setupProfileTemplate: z.object({
+    fullName: z.string().min(1),
+    dateOfBirth: z.string().min(1),
+    bodyType: z.string().min(1),
+    reasonForVisit: z.string().min(1),
+    diagnosis: z.string().min(1).nullable()
+  }).strict(),
+  templateNote: z.string().min(1)
+}).strict().parse(JSON.parse(await readFile(patientProfilePath, 'utf8')))
+
+if (
+  JSON.stringify(patientProfileDocument.patientProfileFields) !==
+  JSON.stringify(PATIENT_PROFILE_FIELDS)
+) {
+  throw new Error('services/api/src/patient-profile.ts must match services/api/catalog/patient-profile.json.')
+}
+if (
+  JSON.stringify(Object.keys(patientProfileDocument.setupProfileTemplate)) !==
+  JSON.stringify(patientProfileDocument.setupProfileFields)
+) {
+  throw new Error('setupProfileFields must match the key order in setupProfileTemplate.')
 }
 
 let stale = false

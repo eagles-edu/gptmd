@@ -1,0 +1,6 @@
+{
+  "patientName": "Example Patient",
+  "patientDob": "1990-04-15",
+  "patientBodytype": "average",
+  "patientReason": "Irregular menstrual cycles"
+}

@@ -5,10 +5,10 @@ export const CreateSessionResponseSchema = z.object({
 }).strict()
 
 export const PatientProfileSchema = z.object({
-  patientName: z.string().min(1),
-  patientDob: z.iso.date(),
-  patientBodytype: z.enum(['average', 'heavy']),
-  patientReason: z.string().min(1)
+  fullName: z.string().min(1),
+  dateOfBirth: z.iso.date(),
+  bodyType: z.enum(['average', 'heavy']),
+  reasonForVisit: z.string().min(1)
 }).strict()
 
 export const SetupResponseSchema = z.object({

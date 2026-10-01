@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ImmutablePatientScenario",
+  "type": "object",
+  "properties": {
+    "scenarioId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "createdAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "profileDigest": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{64}$"
+    },
+    "profile": {
+      "type": "object",
+      "properties": {
+        "fullName": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120
+        },
+        "dateOfBirth": {
+          "type": "string",
+          "format": "date",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+        },
+        "bodyType": {
+          "type": "string",
+          "enum": [
+            "average",
+            "heavy"
+          ]
+        },
+        "reasonForVisit": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1000
+        },
+        "diagnosis": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 1000
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "history": {
+          "maxItems": 59,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "field": {
+                "type": "string",
+                "enum": [
+                  "lastMenstrualPeriod",
+                  "typicalMenstrualPeriodDescription",
+                  "dysmenorrheaHistory",
+                  "anyPain",
+                  "pqrstResult",
+                  "medicalHistory",
+                  "lastPelvicExam",
+                  "lastPapSmear",
+                  "lastBreastExam",
+                  "lastMammogram",
+                  "comorbidity",
+                  "currentMedications",
+                  "pastMedications",
+                  "nutraceuticalUse",
+                  "supplementVitaminUse",
+                  "tradChineseMedicine",
+                  "homeopathicTreatmentsMeds",
+                  "acupunctureHistory",
+                  "surgicalHistory",
+                  "obstetricalHistory",
+                  "numberPregnancies",
+                  "numberLiveBirths",
+                  "numberChildren",
+                  "numberMiscarriage",
+                  "numberStillbirths",
+                  "numberAbortions",
+                  "numberEctopicPregnancies",
+                  "tubalLigation",
+                  "hysterectomyHistory",
+                  "perimenopauseStatus",
+                  "perimenopauseSymptoms",
+                  "menopauseStatus",
+                  "menopauseSymptoms",
+                  "postmenopauseStatus",
+                  "postmenopauseSymptoms",
+                  "hormoneReplacementTherapy",
+                  "sexualActivityCurrent",
+                  "contraceptionMethods",
+                  "stdHistory",
+                  "familyMedicalHistory",
+                  "illicitDrugUse",
+                  "methadoneTreatment",
+                  "cannabisUse",
+                  "alcoholUse",
+                  "nutritionHabits",
+                  "sleepQualityQuantity",
+                  "mentalHealthCurrent",
+                  "mentalHealthPast",
+                  "relationshipStatus",
+                  "homeEnvironment",
+                  "mentalAbuseHistory",
+                  "physicalAbuseHistory",
+                  "sexualAbuseHistory",
+                  "lifeStyle",
+                  "employmentHistory",
+                  "educationalHistory",
+                  "exerciseCurrent",
+                  "dnaStudies",
+                  "miscellaneousDetailsNos"
+                ]
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "known",
+                  "negative",
+                  "unknown",
+                  "not_applicable"
+                ]
+              },
+              "value": {
+                "anyOf": [
+                  {
+                    "anyOf": [
+                      {
+                        "type": "string",
+                        "minLength": 1,
+                        "maxLength": 4000
+                      },
+                      {
+                        "type": "number"
+                      },
+                      {
+                        "maxItems": 50,
+                        "type": "array",
+                        "items": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 500
+                        }
+                      }
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "field",
+              "status",
+              "value"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "currentPregnancyStatus": {
+          "type": "string",
+          "enum": [
+            "pregnant",
+            "not_pregnant",
+            "unknown"
+          ]
+        },
+        "currentMenopausalStatus": {
+          "type": "string",
+          "enum": [
+            "menopausal",
+            "not_menopausal",
+            "unknown"
+          ]
+        },
+        "patientBeliefs": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "supportedExamFindings": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 1000
+          }
+        },
+        "supportedTestResults": {
+          "maxItems": 30,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "testName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "result": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 1000
+              }
+            },
+            "required": [
+              "testName",
+              "result"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "persona": {
+          "type": "object",
+          "properties": {
+            "mood": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "maturity": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "verbosity": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 80
+            },
+            "educationLevel": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            },
+            "willingnessToDisclose": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 120
+            }
+          },
+          "required": [
+            "mood",
+            "maturity",
+            "verbosity",
+            "educationLevel",
+            "willingnessToDisclose"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "fullName",
+        "dateOfBirth",
+        "bodyType",
+        "reasonForVisit",
+        "diagnosis",
+        "history",
+        "currentPregnancyStatus",
+        "currentMenopausalStatus",
+        "patientBeliefs",
+        "supportedExamFindings",
+        "supportedTestResults",
+        "persona"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "scenarioId",
+    "schemaVersion",
+    "createdAt",
+    "profileDigest",
+    "profile"
+  ],
+  "additionalProperties": false
+}

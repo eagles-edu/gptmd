@@ -1,4 +1,6 @@
 
+> Historical prompt and code archive. Its wire names (`patientName`, `patientDob`, `patientBodytype`, `patientReason`, and `patientDiagnosis`) are preserved for reference and are not current GPTMD contract fields. Current contracts use `fullName`, `dateOfBirth`, `bodyType`, `reasonForVisit`, and private `diagnosis`.
+
         # Step 3: Add Messages to the Thread
         assistant_message = {
             "role": "assistant",
@@ -393,7 +395,6 @@ response = {
         },
     }
 }
-
 
 
 

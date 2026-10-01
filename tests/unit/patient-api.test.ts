@@ -33,9 +33,9 @@ describe('patient API response contracts', () => {
   })
 
   it.each([
-    { patientName: 4, patientDob: '1990-01-01', patientBodytype: 'average', patientReason: 'Pain' },
-    { patientName: 'Ari', patientDob: '1990-01-01', patientBodytype: 'slim', patientReason: 'Pain' },
-    { patientName: 'Ari', patientDob: null, patientBodytype: 'heavy', patientReason: 'Pain' },
+    { fullName: 4, dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pain' },
+    { fullName: 'Ari', dateOfBirth: '1990-01-01', bodyType: 'slim', reasonForVisit: 'Pain' },
+    { fullName: 'Ari', dateOfBirth: null, bodyType: 'heavy', reasonForVisit: 'Pain' },
     null
   ])('rejects a malformed patient profile', async (profile) => {
     fetchMock.mockResolvedValue({ profile })
@@ -47,10 +47,10 @@ describe('patient API response contracts', () => {
 
   it('accepts a valid profile and encodes the session identifier', async () => {
     const profile = {
-      patientName: 'Ari Nguyen',
-      patientDob: '1990-01-01',
-      patientBodytype: 'average',
-      patientReason: 'Pelvic pain'
+      fullName: 'Ari Nguyen',
+      dateOfBirth: '1990-01-01',
+      bodyType: 'average',
+      reasonForVisit: 'Pelvic pain'
     }
     fetchMock.mockResolvedValue({ profile })
 

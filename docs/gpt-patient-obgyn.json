@@ -1,6 +1,7 @@
 {
-  "patientName": "Example Patient",
-  "patientDob": "1990-04-15",
-  "patientBodytype": "average",
-  "patientReason": "Irregular menstrual cycles"
+  "fullName": "Example Patient",
+  "dateOfBirth": "1990-04-15",
+  "bodyType": "average",
+  "reasonForVisit": "Irregular menstrual cycles",
+  "diagnosis": "dysmenorrhea"
 }

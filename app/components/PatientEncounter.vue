@@ -9,7 +9,7 @@
     <div class="encounter-grid">
       <v-card class="profile-card" rounded="xl" variant="flat">
         <div class="profile-image-wrap">
-          <v-img height="100%" :src="patientImage" :alt="profile ? `Portrait representing ${profile.patientName}` : 'Closed examination-room door'" cover />
+          <v-img height="100%" :src="patientImage" :alt="profile ? `Portrait representing ${profile.fullName}` : 'Closed examination-room door'" cover />
         </div>
         <v-card-text>
           <div class="status-row">
@@ -19,10 +19,10 @@
           <h2>Patient profile</h2>
           <template v-if="profile">
             <dl class="profile-fields">
-              <div><dt>Name</dt><dd>{{ profile.patientName }}</dd></div>
-              <div><dt>Date of birth</dt><dd>{{ profile.patientDob }}</dd></div>
-              <div><dt>Body type</dt><dd>{{ profile.patientBodytype }}</dd></div>
-              <div><dt>Reason for visit</dt><dd>{{ profile.patientReason }}</dd></div>
+              <div><dt>Name</dt><dd>{{ profile.fullName }}</dd></div>
+              <div><dt>Date of birth</dt><dd>{{ profile.dateOfBirth }}</dd></div>
+              <div><dt>Body type</dt><dd>{{ profile.bodyType }}</dd></div>
+              <div><dt>Reason for visit</dt><dd>{{ profile.reasonForVisit }}</dd></div>
             </dl>
             <p class="privacy-note">The diagnosis and educator answer key stay hidden during the interview.</p>
           </template>
@@ -114,9 +114,9 @@ const phaseLabel = computed(() => profile.value ? 'History taking' : 'Intake')
 
 const patientImage = computed(() => {
   if (!profile.value) return '/assets/images/door.webp'
-  const age = calculateAge(profile.value.patientDob)
+  const age = calculateAge(profile.value.dateOfBirth)
   const decade = age < 20 ? '1019' : age < 30 ? '2029' : age < 40 ? '3039' : age < 50 ? '4049' : '5059'
-  return `/assets/images/${decade}-${profile.value.patientBodytype}/01.png`
+  return `/assets/images/${decade}-${profile.value.bodyType}/01.png`
 })
 
 async function beginSession(): Promise<void> {
@@ -161,8 +161,8 @@ function createTurnId(): string {
   return globalThis.crypto.randomUUID()
 }
 
-function calculateAge(dob: string): number {
-  const birthDate = new Date(`${dob}T00:00:00`)
+function calculateAge(dateOfBirth: string): number {
+  const birthDate = new Date(`${dateOfBirth}T00:00:00`)
   if (Number.isNaN(birthDate.getTime())) return 30
   const today = new Date()
   let age = today.getFullYear() - birthDate.getFullYear()

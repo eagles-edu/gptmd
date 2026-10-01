@@ -4,19 +4,24 @@ import { nuxtH3ReexportPlugin, removeLegacyEsbuildOptions } from './scripts/nuxt
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
-  devtools: { enabled: true },
+  devtools: { enabled: false },
   debug: false,
   css: ['~/assets/css/fonts.css', '~/assets/scss/main.scss', '~/assets/css/main.css'],
   routeRules: {
     '/': { prerender: true },
     '/about': { prerender: true },
+    '/account': { prerender: true },
     '/commands': { prerender: true },
+    '/contact': { prerender: true },
     '/help': { prerender: true },
+    '/history-taking': { prerender: true },
     '/tutorial': { prerender: true }
   },
   runtimeConfig: {
     public: {
-      apiBase: process.env.NUXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:4000'
+      apiBase: process.env.NUXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:4000',
+      paymentPortalUrl: process.env.NUXT_PUBLIC_PAYMENT_PORTAL_URL ?? '',
+      supportEmail: process.env.NUXT_PUBLIC_SUPPORT_EMAIL ?? ''
     }
   },
   vuetify: {

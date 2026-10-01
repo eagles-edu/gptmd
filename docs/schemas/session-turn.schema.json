@@ -1,0 +1,377 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "SessionTurn",
+  "type": "object",
+  "properties": {
+    "turnId": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 200
+    },
+    "sessionId": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9_-]{43}$"
+    },
+    "sequence": {
+      "type": "integer",
+      "exclusiveMinimum": 0,
+      "maximum": 9007199254740991
+    },
+    "acceptedAt": {
+      "type": "string",
+      "format": "date-time",
+      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+    },
+    "learnerMessage": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000
+    },
+    "patientResponse": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 8000
+    },
+    "patientReportedFacts": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "factId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "field": {
+            "type": "string",
+            "enum": [
+              "lastMenstrualPeriod",
+              "typicalMenstrualPeriodDescription",
+              "dysmenorrheaHistory",
+              "anyPain",
+              "pqrstResult",
+              "medicalHistory",
+              "lastPelvicExam",
+              "lastPapSmear",
+              "lastBreastExam",
+              "lastMammogram",
+              "comorbidity",
+              "currentMedications",
+              "pastMedications",
+              "nutraceuticalUse",
+              "supplementVitaminUse",
+              "tradChineseMedicine",
+              "homeopathicTreatmentsMeds",
+              "acupunctureHistory",
+              "surgicalHistory",
+              "obstetricalHistory",
+              "numberPregnancies",
+              "numberLiveBirths",
+              "numberChildren",
+              "numberMiscarriage",
+              "numberStillbirths",
+              "numberAbortions",
+              "numberEctopicPregnancies",
+              "tubalLigation",
+              "hysterectomyHistory",
+              "perimenopauseStatus",
+              "perimenopauseSymptoms",
+              "menopauseStatus",
+              "menopauseSymptoms",
+              "postmenopauseStatus",
+              "postmenopauseSymptoms",
+              "hormoneReplacementTherapy",
+              "sexualActivityCurrent",
+              "contraceptionMethods",
+              "stdHistory",
+              "familyMedicalHistory",
+              "illicitDrugUse",
+              "methadoneTreatment",
+              "cannabisUse",
+              "alcoholUse",
+              "nutritionHabits",
+              "sleepQualityQuantity",
+              "mentalHealthCurrent",
+              "mentalHealthPast",
+              "relationshipStatus",
+              "homeEnvironment",
+              "mentalAbuseHistory",
+              "physicalAbuseHistory",
+              "sexualAbuseHistory",
+              "lifeStyle",
+              "employmentHistory",
+              "educationalHistory",
+              "exerciseCurrent",
+              "dnaStudies",
+              "miscellaneousDetailsNos"
+            ]
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 4000
+              },
+              {
+                "type": "number"
+              },
+              {
+                "minItems": 1,
+                "maxItems": 50,
+                "type": "array",
+                "items": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 500
+                }
+              }
+            ]
+          },
+          "source": {
+            "type": "string",
+            "const": "patient_reported"
+          },
+          "turnId": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 200
+          },
+          "turnSequence": {
+            "type": "integer",
+            "exclusiveMinimum": 0,
+            "maximum": 9007199254740991
+          },
+          "recordedAt": {
+            "type": "string",
+            "format": "date-time",
+            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+          }
+        },
+        "required": [
+          "factId",
+          "field",
+          "value",
+          "source",
+          "turnId",
+          "turnSequence",
+          "recordedAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "clinicalActions": {
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "sessionId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}$"
+              },
+              "turnId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "occurredAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "order"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "requested",
+                  "completed",
+                  "cancelled"
+                ]
+              },
+              "testName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "result": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "actionId",
+              "sessionId",
+              "turnId",
+              "occurredAt",
+              "kind",
+              "status",
+              "testName",
+              "result"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "sessionId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}$"
+              },
+              "turnId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "occurredAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "exam"
+              },
+              "status": {
+                "type": "string",
+                "enum": [
+                  "requested",
+                  "consented",
+                  "declined",
+                  "completed"
+                ]
+              },
+              "examName": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "chaperone": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "enum": [
+                      "not_required",
+                      "offered",
+                      "accepted",
+                      "declined"
+                    ]
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              },
+              "finding": {
+                "anyOf": [
+                  {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 2000
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
+              }
+            },
+            "required": [
+              "actionId",
+              "sessionId",
+              "turnId",
+              "occurredAt",
+              "kind",
+              "status",
+              "examName",
+              "chaperone",
+              "finding"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "actionId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "sessionId": {
+                "type": "string",
+                "pattern": "^[A-Za-z0-9_-]{43}$"
+              },
+              "turnId": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 200
+              },
+              "occurredAt": {
+                "type": "string",
+                "format": "date-time",
+                "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+              },
+              "kind": {
+                "type": "string",
+                "const": "assessment"
+              },
+              "status": {
+                "type": "string",
+                "const": "submitted"
+              },
+              "assessment": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 8000
+              }
+            },
+            "required": [
+              "actionId",
+              "sessionId",
+              "turnId",
+              "occurredAt",
+              "kind",
+              "status",
+              "assessment"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    }
+  },
+  "required": [
+    "turnId",
+    "sessionId",
+    "sequence",
+    "acceptedAt",
+    "learnerMessage",
+    "patientResponse",
+    "patientReportedFacts",
+    "clinicalActions"
+  ],
+  "additionalProperties": false
+}

@@ -1,8 +1,11 @@
 # Structured data contracts
 
-Zod schemas in `app/schemas/` are the runtime source of truth for data received
-from or sent to services. Each contract validates untrusted JSON at the
-boundary and infers the corresponding TypeScript type from the same schema.
+Zod schemas in `app/schemas/` and `services/api/src/` are the runtime source of
+truth for data received from or sent to services. Each contract validates
+untrusted JSON at the boundary and infers the corresponding TypeScript type
+from the same schema. API session contracts live in
+`services/api/src/session-contracts.ts`; they define data shapes only and do
+not by themselves implement session routes, persistence, or lifecycle rules.
 
 The published JSON Schema is generated from those Zod contracts for
 documentation, OpenAPI integration, and provider structured outputs. Regenerate

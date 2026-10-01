@@ -4,11 +4,12 @@
       <img src="/assets/images/logosing.svg" alt="GPTpatient" width="150" height="55">
     </NuxtLink>
     <nav aria-label="Main navigation">
-      <NuxtLink to="/">Encounter</NuxtLink>
-      <NuxtLink to="/about">About</NuxtLink>
-      <NuxtLink to="/tutorial">Tutorial</NuxtLink>
-      <NuxtLink to="/commands">Commands</NuxtLink>
-      <NuxtLink to="/help">Help</NuxtLink>
+      <NuxtLink to="/">Home</NuxtLink>
+      <NuxtLink to="/tutorial">Instructions</NuxtLink>
+      <NuxtLink to="/history-taking">History Overview</NuxtLink>
+      <NuxtLink to="/account">Account</NuxtLink>
+      <NuxtLink to="/contact">Contact</NuxtLink>
+      <NuxtLink class="visit-link" to="/encounter">Begin Visit</NuxtLink>
     </nav>
     <button
     class="theme-toggle" type="button" :aria-label="isDark ? 'Switch to light theme' : 'Switch to dark theme'"
@@ -66,6 +67,17 @@ nav a:hover,
 nav a:focus-visible,
 nav a.router-link-active {
   background: rgb(255 255 255 / 15%);
+}
+
+nav a.visit-link {
+  background: #e8c879;
+  color: #183c43;
+  font-weight: 700;
+}
+
+nav a.visit-link:hover,
+nav a.visit-link:focus-visible {
+  background: #f3dc9f;
 }
 
 .theme-toggle {
