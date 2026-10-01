@@ -2,12 +2,17 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePatientApi } from '../../app/composables/usePatientApi'
 
 const fetchMock = vi.fn()
+const apiAuthHeaders = {
+  Authorization: 'Bearer supabase-test-access-token',
+  'X-GPTMD-Tenant-ID': 'tenant-test'
+}
 
 describe('patient API response contracts', () => {
   beforeEach(() => {
     fetchMock.mockReset()
     vi.stubGlobal('useRuntimeConfig', () => ({ public: { apiBase: 'https://api.example.test/' } }))
     vi.stubGlobal('$fetch', fetchMock)
+    vi.stubGlobal('useGptmdAuth', () => ({ accessHeaders: vi.fn().mockResolvedValue(apiAuthHeaders) }))
   })
 
   afterEach(() => {
@@ -20,7 +25,7 @@ describe('patient API response contracts', () => {
     await expect(usePatientApi().createSession()).resolves.toEqual({ sessionId: 'session-123' })
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/api/sessions', {
       method: 'POST',
-      credentials: 'include'
+      headers: apiAuthHeaders
     })
   })
 
@@ -57,7 +62,10 @@ describe('patient API response contracts', () => {
     await expect(usePatientApi().setupSession('session / one')).resolves.toEqual(profile)
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.example.test/api/sessions/session%20%2F%20one/setup',
-      { method: 'POST', credentials: 'include' }
+      {
+        method: 'POST',
+        headers: { ...apiAuthHeaders, 'Idempotency-Key': 'scenario-setup-session / one' }
+      }
     )
   })
 
@@ -71,7 +79,7 @@ describe('patient API response contracts', () => {
       'https://api.example.test/api/sessions/session-1/turns',
       {
         method: 'POST',
-        credentials: 'include',
+        headers: apiAuthHeaders,
         body: { turnId: 'turn-1', text: 'Question' }
       }
     )

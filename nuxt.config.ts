@@ -2,15 +2,16 @@
 import { defineNuxtConfig } from 'nuxt/config'
 import { nuxtH3ReexportPlugin, removeLegacyEsbuildOptions } from './scripts/nuxt-build-compat'
 
+const { NODE_ENV: nodeEnvironment } = process.env
+
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
-  devtools: { enabled: false },
+  devtools: { enabled: true },
   debug: false,
   css: ['~/assets/css/fonts.css', '~/assets/scss/main.scss', '~/assets/css/main.css'],
   routeRules: {
     '/': { prerender: true },
     '/about': { prerender: true },
-    '/account': { prerender: true },
     '/commands': { prerender: true },
     '/contact': { prerender: true },
     '/help': { prerender: true },
@@ -20,7 +21,11 @@ export default defineNuxtConfig({
   runtimeConfig: {
     public: {
       apiBase: process.env.NUXT_PUBLIC_API_BASE ?? 'http://127.0.0.1:4000',
+      supabaseUrl: process.env.NUXT_PUBLIC_SUPABASE_URL ?? '',
+      supabaseKey: process.env.NUXT_PUBLIC_SUPABASE_KEY ?? '',
       paymentPortalUrl: process.env.NUXT_PUBLIC_PAYMENT_PORTAL_URL ?? '',
+      paymentCheckout6MonthUrl: process.env.NUXT_PUBLIC_PAYMENT_CHECKOUT_6_MONTH_URL ?? '',
+      paymentCheckout12MonthUrl: process.env.NUXT_PUBLIC_PAYMENT_CHECKOUT_12_MONTH_URL ?? '',
       supportEmail: process.env.NUXT_PUBLIC_SUPPORT_EMAIL ?? ''
     }
   },
@@ -47,9 +52,24 @@ export default defineNuxtConfig({
   modules: [
     'vuetify-nuxt-module',
     '@nuxt/eslint',
+    '@nuxtjs/supabase',
     'nuxt-security'
   ],
+  supabase: {
+    url: process.env.NUXT_PUBLIC_SUPABASE_URL || 'http://127.0.0.1:8000',
+    key: process.env.NUXT_PUBLIC_SUPABASE_KEY || 'not-configured',
+    redirect: false,
+    useSsrCookies: true,
+    types: false,
+    cookieOptions: {
+      sameSite: 'lax',
+      secure: nodeEnvironment === 'production'
+    }
+  },
   vite: {
+    resolve: {
+      alias: [{ find: /^cookie$/, replacement: 'cookie-es' }]
+    },
     build: {
       rolldownOptions: {
         checks: {

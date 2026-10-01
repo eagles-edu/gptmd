@@ -19,6 +19,8 @@ const allowed = [
   'API_AUTH_JWT_SECRET',
   'API_AUTH_JWT_ISSUER',
   'API_AUTH_JWT_AUDIENCE',
+  'API_AUTH_JWT_JWKS_URL',
+  'API_CORS_ORIGINS',
   'HOST',
   'PORT'
 ]

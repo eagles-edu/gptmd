@@ -4,6 +4,24 @@
     <h1 id="account-title">Account Status</h1>
     <p class="intro">Your account overview brings together service usage, learning metrics, downloads, and payment access.</p>
 
+    <div v-if="user" class="identity-row">
+      <span>Signed in as {{ user.email || 'Google account' }}</span>
+      <button type="button" class="sign-out" @click="signOut">Sign out</button>
+    </div>
+    <NuxtLink v-else-if="isConfigured" class="sign-in-link" to="/login">Sign in with Google</NuxtLink>
+
+    <section v-if="user && tenantIds.length" class="workspace-picker" aria-labelledby="workspace-title">
+      <label id="workspace-title" for="workspace-select">GPTpatient workspace</label>
+      <select id="workspace-select" v-model="selectedTenantId">
+        <option v-for="(tenantId, index) in tenantIds" :key="tenantId" :value="tenantId">
+          Workspace {{ index + 1 }} · {{ tenantId }}
+        </option>
+      </select>
+    </section>
+    <v-alert v-if="membershipMessage" type="info" variant="tonal" class="connection-note">
+      {{ membershipMessage }}
+    </v-alert>
+
     <v-alert class="connection-note" type="info" variant="tonal">
       Live account reporting is not connected yet. These sections will show data after the account reporting service is configured.
     </v-alert>
@@ -26,12 +44,38 @@
       </section>
       <section class="status-card payment-card" aria-labelledby="payment-title">
         <div class="card-heading"><span aria-hidden="true">$</span><h2 id="payment-title">Payment gateway</h2></div>
+        <p>Choose prepaid access for 6 or 12 months. Renewals require a new checkout; payments do not renew automatically.</p>
+        <p>Planned payment methods: Google Pay first, phone-scanned QR for local customers, and PayPal later.</p>
+        <div class="payment-actions">
+          <a
+            v-if="paymentCheckout6MonthUrl"
+            class="action-link"
+            :href="paymentCheckout6MonthUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Continue to 6-month checkout <span aria-hidden="true">↗</span>
+          </a>
+          <span v-else class="status-label">6-month checkout not configured</span>
+          <a
+            v-if="paymentCheckout12MonthUrl"
+            class="action-link"
+            :href="paymentCheckout12MonthUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Continue to 12-month checkout <span aria-hidden="true">↗</span>
+          </a>
+          <span v-else class="status-label">12-month checkout not configured</span>
+        </div>
+        <p v-if="hasPaymentCheckout" class="payment-activation-note">
+          Payment confirmation and workspace access activation are not connected yet.
+        </p>
+        <p v-else>Payment access will be available after a payment provider is configured.</p>
         <p v-if="paymentPortalUrl">Open the secure payment portal to manage billing.</p>
-        <p v-else class="status-label">Not configured</p>
         <a v-if="paymentPortalUrl" class="action-link" :href="paymentPortalUrl" target="_blank" rel="noreferrer">
           Open payment portal <span aria-hidden="true">↗</span>
         </a>
-        <p v-else>Payment access will be available after a payment provider is configured.</p>
       </section>
     </div>
 
@@ -40,7 +84,45 @@
 </template>
 
 <script setup lang="ts">
-const paymentPortalUrl = useRuntimeConfig().public.paymentPortalUrl
+const { user, isConfigured, accessHeaders, selectedTenantId, signOut } = useGptmdAuth()
+const runtimeConfig = useRuntimeConfig()
+const safePaymentUrl = (value: string): string => {
+  try {
+    const url = new URL(value)
+    return url.protocol === 'https:' ? url.toString() : ''
+  } catch {
+    return ''
+  }
+}
+const paymentPortalUrl = safePaymentUrl(runtimeConfig.public.paymentPortalUrl)
+const paymentCheckout6MonthUrl = safePaymentUrl(runtimeConfig.public.paymentCheckout6MonthUrl)
+const paymentCheckout12MonthUrl = safePaymentUrl(runtimeConfig.public.paymentCheckout12MonthUrl)
+const hasPaymentCheckout = Boolean(paymentCheckout6MonthUrl || paymentCheckout12MonthUrl)
+const apiBase = String(useRuntimeConfig().public.apiBase).replace(/\/$/, '')
+const tenantIds = ref<string[]>([])
+const membershipMessage = ref('')
+
+onMounted(async () => {
+  if (!user.value) return
+  try {
+    const result = await $fetch<unknown>(`${apiBase}/api/account/tenants`, {
+      headers: await accessHeaders(false)
+    })
+    if (!result || typeof result !== 'object' || !Array.isArray((result as { tenantIds?: unknown }).tenantIds)) {
+      throw new Error('Invalid tenant list')
+    }
+    tenantIds.value = (result as { tenantIds: string[] }).tenantIds
+    if (tenantIds.value.length === 0) {
+      membershipMessage.value = 'This Google account is signed in, but it has no active GPTpatient workspace. Contact support to request access.'
+    } else if (tenantIds.value.length > 1 && !tenantIds.value.includes(selectedTenantId.value ?? '')) {
+      membershipMessage.value = 'Choose the workspace you want to use before starting an encounter.'
+    } else if (tenantIds.value.length === 1) {
+      selectedTenantId.value = tenantIds.value[0] ?? null
+    }
+  } catch {
+    membershipMessage.value = 'GPTpatient could not load your workspace access. Try again later.'
+  }
+})
 </script>
 
 <style scoped>
@@ -73,6 +155,49 @@ h1 {
 
 .connection-note {
   margin: 1.5rem 0;
+}
+
+.identity-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin: 1.3rem 0;
+}
+
+.sign-out,
+.sign-in-link {
+  background: #176d70;
+  border: 0;
+  border-radius: 0.55rem;
+  color: #fff;
+  cursor: pointer;
+  display: inline-flex;
+  font: inherit;
+  font-weight: 700;
+  padding: 0.65rem 0.9rem;
+  text-decoration: none;
+}
+
+.workspace-picker {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0 1.5rem;
+  max-width: 32rem;
+}
+
+.workspace-picker label {
+  font-weight: 750;
+}
+
+.workspace-picker select {
+  background: var(--app-surface, #fff);
+  border: 1px solid rgb(31 74 77 / 30%);
+  border-radius: 0.5rem;
+  color: inherit;
+  font: inherit;
+  min-height: 2.8rem;
+  padding: 0.45rem 0.7rem;
 }
 
 .account-grid {
@@ -128,6 +253,16 @@ h2 {
 
 .action-link {
   color: #176d70;
+  font-weight: 700;
+}
+
+.payment-actions {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1rem 0;
+}
+
+.payment-activation-note {
   font-weight: 700;
 }
 

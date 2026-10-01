@@ -1,86 +1,108 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
+import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify, type JWTPayload } from 'jose'
 
 export interface AuthenticatedPrincipal {
   subjectId: string
   tenantId: string
 }
 
+export interface AuthenticatedIdentity {
+  subjectId: string
+  tenantId?: string
+}
+
 declare module 'express-serve-static-core' {
   interface Request {
     principal?: AuthenticatedPrincipal
+    identity?: AuthenticatedIdentity
   }
 }
 
-interface JwtClaims {
-  sub?: unknown
+export interface JwtClaims extends JWTPayload {
+  sub?: string
   tenant_id?: unknown
-  iss?: unknown
-  aud?: unknown
-  exp?: unknown
-  nbf?: unknown
 }
 
 export interface JwtConfiguration {
   secret: string | null
   issuer: string | null
   audience: string | null
+  jwksUrl?: string | null
+}
+
+const remoteKeys = new Map<string, ReturnType<typeof createRemoteJWKSet>>()
+
+function isValidJwksUrl(value: string | null | undefined): value is string {
+  if (!value) return false
+  try {
+    const url = new URL(value)
+    const loopback = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+    return (url.protocol === 'https:' || (url.protocol === 'http:' && loopback)) &&
+      !url.username && !url.password && !url.hash
+  } catch {
+    return false
+  }
 }
 
 export const isJwtConfigurationReady = (configuration: JwtConfiguration): boolean =>
   Boolean(
-    configuration.secret && Buffer.byteLength(configuration.secret) >= 32 &&
-    configuration.issuer && configuration.audience
-  )
+    (configuration.secret && Buffer.byteLength(configuration.secret) >= 32) ||
+    isValidJwksUrl(configuration.jwksUrl)
+  ) && Boolean(configuration.issuer && configuration.audience)
 
-const decodeJson = (segment: string): Record<string, unknown> | null => {
-  try {
-    const value: unknown = JSON.parse(Buffer.from(segment, 'base64url').toString('utf8'))
-    return value && typeof value === 'object' && !Array.isArray(value)
-      ? value as Record<string, unknown>
-      : null
-  } catch {
-    return null
+function getRemoteKeys(url: string): ReturnType<typeof createRemoteJWKSet> {
+  let keySet = remoteKeys.get(url)
+  if (!keySet) {
+    keySet = createRemoteJWKSet(new URL(url))
+    remoteKeys.set(url, keySet)
   }
+  return keySet
 }
 
-const audienceMatches = (audience: unknown, expected: string): boolean =>
-  audience === expected || (Array.isArray(audience) && audience.includes(expected))
-
-export function verifyAccessToken(
+export async function verifyAccessToken(
   token: string,
   configuration: JwtConfiguration,
   nowSeconds = Math.floor(Date.now() / 1000)
-): AuthenticatedPrincipal | null {
-  const { secret, issuer, audience } = configuration
-  if (!isJwtConfigurationReady(configuration) || !secret || !issuer || !audience) return null
+): Promise<AuthenticatedIdentity | null> {
+  const { secret, issuer, audience, jwksUrl } = configuration
+  if (!isJwtConfigurationReady(configuration) || !issuer || !audience) return null
 
-  const segments = token.split('.')
-  if (segments.length !== 3) return null
-  const [encodedHeader, encodedClaims, encodedSignature] = segments
-  if (!encodedHeader || !encodedClaims || !encodedSignature) return null
-
-  const header = decodeJson(encodedHeader)
-  const claims = decodeJson(encodedClaims) as JwtClaims | null
-  if (header?.alg !== 'HS256' || header.typ !== 'JWT' || !claims) return null
-
-  const expected = createHmac('sha256', secret)
-    .update(`${encodedHeader}.${encodedClaims}`)
-    .digest()
-  let supplied: Buffer
+  let algorithm: string | undefined
   try {
-    supplied = Buffer.from(encodedSignature, 'base64url')
+    algorithm = decodeProtectedHeader(token).alg
   } catch {
     return null
   }
-  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return null
+  let claims: JwtClaims
+  try {
+    if (algorithm === 'HS256' && secret && Buffer.byteLength(secret) >= 32) {
+      const result = await jwtVerify(token, Buffer.from(secret), {
+        algorithms: ['HS256'],
+        issuer,
+        audience,
+        currentDate: new Date(nowSeconds * 1000)
+      })
+      claims = result.payload as JwtClaims
+    } else if (algorithm === 'ES256' && isValidJwksUrl(jwksUrl)) {
+      const result = await jwtVerify(token, getRemoteKeys(jwksUrl), {
+        algorithms: ['ES256'],
+        issuer,
+        audience,
+        currentDate: new Date(nowSeconds * 1000)
+      })
+      claims = result.payload as JwtClaims
+    } else {
+      return null
+    }
+  } catch {
+    return null
+  }
 
-  if (claims.iss !== issuer || !audienceMatches(claims.aud, audience)) return null
-  if (typeof claims.exp !== 'number' || !Number.isFinite(claims.exp) || claims.exp <= nowSeconds) return null
-  if (claims.nbf !== undefined && (
-    typeof claims.nbf !== 'number' || !Number.isFinite(claims.nbf) || claims.nbf > nowSeconds
-  )) return null
   if (typeof claims.sub !== 'string' || !claims.sub.trim() || claims.sub.length > 200) return null
-  if (typeof claims.tenant_id !== 'string' || !claims.tenant_id.trim() || claims.tenant_id.length > 200) return null
+  const tenantId = typeof claims.tenant_id === 'string' && claims.tenant_id.trim() && claims.tenant_id.length <= 200
+    ? claims.tenant_id
+    : undefined
 
-  return { subjectId: claims.sub, tenantId: claims.tenant_id }
+  // Supabase Auth does not issue a GPTMD tenant claim. A tenant claim from an
+  // existing/custom issuer may guide selection, but membership is still checked.
+  return tenantId ? { subjectId: claims.sub, tenantId } : { subjectId: claims.sub }
 }

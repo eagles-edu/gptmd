@@ -84,10 +84,12 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
           })
         : null,
       model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
+      allowedOrigins: (env.API_CORS_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),
       jwt: {
         secret: env.API_AUTH_JWT_SECRET ?? null,
         issuer: env.API_AUTH_JWT_ISSUER ?? null,
-        audience: env.API_AUTH_JWT_AUDIENCE ?? null
+        audience: env.API_AUTH_JWT_AUDIENCE ?? null,
+        jwksUrl: env.API_AUTH_JWT_JWKS_URL ?? null
       },
       sessionStore: postgresPool ? createPostgresSessionStore(postgresPool) : null
     },

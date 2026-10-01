@@ -44,6 +44,7 @@ export type ScenarioSetupResult =
 export type StoreResult = 'allowed' | 'membership_missing' | 'entitlement_denied' | 'quota_exceeded'
 
 export interface SessionStore {
+  getActiveTenantIds(subjectId: string): Promise<string[]>
   hasActiveMembership(principal: AuthenticatedPrincipal): Promise<boolean>
   consumeQuota(principal: AuthenticatedPrincipal, feature: QuotaFeature): Promise<StoreResult>
   createSession(
@@ -123,7 +124,18 @@ async function rollback(client: PoolClient): Promise<void> {
 
 export function createPostgresSessionStore(pool: Pool): SessionStore {
   return {
+    async getActiveTenantIds(subjectId) {
+      const result = await pool.query<{ tenant_id: string }>(
+        `SELECT tenant_id FROM tenant_memberships
+         WHERE subject_id = $1 AND status = 'active'
+         ORDER BY tenant_id`,
+        [subjectId]
+      )
+      return result.rows.map((row) => row.tenant_id)
+    },
+
     async hasActiveMembership(principal) {
+      if (!principal.tenantId) return false
       const result = await pool.query(
         `SELECT 1 FROM tenant_memberships
          WHERE tenant_id = $1 AND subject_id = $2 AND status = 'active'`,

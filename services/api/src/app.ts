@@ -35,6 +35,7 @@ export interface ApiDependencies {
   model: string
   jwt: JwtConfiguration
   sessionStore: SessionStore | null
+  allowedOrigins?: string[]
 }
 
 const validInput = (value: unknown): value is string =>
@@ -45,6 +46,21 @@ export function createApiApp(dependencies: ApiDependencies): Express {
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
   app.use(express.json({ limit: '1mb' }))
+  app.use((request, response, next) => {
+    const origin = request.header('origin')
+    const allowed = origin && dependencies.allowedOrigins?.includes(origin)
+    if (allowed && origin) {
+      response.setHeader('Access-Control-Allow-Origin', origin)
+      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, X-GPTMD-Tenant-ID')
+      response.setHeader('Vary', 'Origin')
+    }
+    if (request.method === 'OPTIONS') {
+      response.sendStatus(allowed ? 204 : origin ? 403 : 204)
+      return
+    }
+    next()
+  })
 
   app.use('/api', async (request, response, next) => {
     if (!dependencies.sessionStore || !isJwtConfigurationReady(dependencies.jwt)) {
@@ -53,12 +69,33 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
     const authorization = request.header('authorization')
     const match = authorization?.match(/^Bearer ([A-Za-z0-9_.-]+)$/)
-    const principal = match ? verifyAccessToken(match[1] ?? '', dependencies.jwt) : null
-    if (!principal) {
+    const identity = match ? await verifyAccessToken(match[1] ?? '', dependencies.jwt) : null
+    if (!identity) {
       response.status(401).json({ error: 'Valid bearer authentication is required' })
       return
     }
     try {
+      if (request.method === 'GET' && request.path === '/account/tenants') {
+        request.identity = identity
+        next()
+        return
+      }
+      const memberships = await dependencies.sessionStore.getActiveTenantIds(identity.subjectId)
+      const requestedTenant = request.header('x-gptmd-tenant-id') ?? identity.tenantId
+      const tenantId = requestedTenant ?? (memberships.length === 1 ? memberships[0] : undefined)
+      if (memberships.length === 0) {
+        response.status(403).json({ error: 'Active tenant membership is required' })
+        return
+      }
+      if (!tenantId && memberships.length > 1) {
+        response.status(409).json({ error: 'Choose an active GPTMD tenant before continuing' })
+        return
+      }
+      if (!tenantId || !memberships.includes(tenantId)) {
+        response.status(403).json({ error: 'Active tenant membership is required' })
+        return
+      }
+      const principal = { subjectId: identity.subjectId, tenantId }
       if (!await dependencies.sessionStore.hasActiveMembership(principal)) {
         response.status(403).json({ error: 'Active tenant membership is required' })
         return
@@ -72,6 +109,19 @@ export function createApiApp(dependencies: ApiDependencies): Express {
 
   app.get('/healthz', (_request, response) => {
     response.json({ status: 'ok', service: 'gptmd-api' })
+  })
+
+  app.get('/api/account/tenants', async (request, response) => {
+    const identity = request.identity
+    if (!identity || !dependencies.sessionStore) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    try {
+      response.json({ tenantIds: await dependencies.sessionStore.getActiveTenantIds(identity.subjectId) })
+    } catch {
+      response.status(503).json({ error: 'Account service is unavailable' })
+    }
   })
 
   app.get('/readyz', async (_request, response) => {

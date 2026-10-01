@@ -43,6 +43,7 @@ function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore
     versions: sessionVersions
   }
   return {
+    getActiveTenantIds: vi.fn().mockResolvedValue(['tenant-a', 'tenant-b']),
     hasActiveMembership: vi.fn().mockResolvedValue(true),
     consumeQuota: vi.fn().mockResolvedValue('allowed'),
     createSession: vi.fn().mockResolvedValue(record),
@@ -218,6 +219,80 @@ describe('GPTMD API integrations', () => {
       expect(invalid.status).toBe(401)
       expect(inactive.status).toBe(403)
       expect(sessionStore.createSession).not.toHaveBeenCalled()
+    })
+  })
+
+  it('resolves Supabase identities against GPTMD memberships and rejects unlisted tenant headers', async () => {
+    const getActiveTenantIds = vi.fn().mockResolvedValue(['tenant-a', 'tenant-b'])
+    const sessionStore = createSessionStore({ getActiveTenantIds })
+    const dependencies = createDependencies({ sessionStore })
+    await withApi(dependencies, async (baseUrl) => {
+      const token = makeToken({ tenant_id: undefined })
+      const tenants = await fetch(`${baseUrl}/api/account/tenants`, {
+        headers: { authorization: `Bearer ${token}` }
+      })
+      expect(tenants.status).toBe(200)
+      expect(await tenants.json()).toEqual({ tenantIds: ['tenant-a', 'tenant-b'] })
+
+      const missingSelection = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST', headers: { authorization: `Bearer ${token}` }
+      })
+      expect(missingSelection.status).toBe(409)
+
+      const selected = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'x-gptmd-tenant-id': 'tenant-b' }
+      })
+      expect(selected.status).toBe(201)
+      expect(sessionStore.createSession).toHaveBeenCalledWith(
+        { subjectId: 'learner-1', tenantId: 'tenant-b' },
+        sessionVersions
+      )
+
+      const unlisted = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${token}`, 'x-gptmd-tenant-id': 'tenant-c' }
+      })
+      expect(unlisted.status).toBe(403)
+    })
+  })
+
+  it('selects a sole membership automatically and permits only configured browser origins', async () => {
+    const sessionStore = createSessionStore({
+      getActiveTenantIds: vi.fn().mockResolvedValue(['tenant-only'])
+    })
+    const dependencies = createDependencies({
+      sessionStore,
+      allowedOrigins: ['https://gptmd.example.test']
+    })
+    await withApi(dependencies, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${makeToken({ tenant_id: undefined })}` }
+      })
+      expect(response.status).toBe(201)
+      expect(sessionStore.createSession).toHaveBeenCalledWith(
+        { subjectId: 'learner-1', tenantId: 'tenant-only' },
+        sessionVersions
+      )
+
+      const allowed = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'https://gptmd.example.test',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'authorization,x-gptmd-tenant-id'
+        }
+      })
+      expect(allowed.status).toBe(204)
+      expect(allowed.headers.get('access-control-allow-origin')).toBe('https://gptmd.example.test')
+
+      const rejected = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'OPTIONS',
+        headers: { origin: 'https://other.example.test', 'access-control-request-method': 'POST' }
+      })
+      expect(rejected.status).toBe(403)
+      expect(rejected.headers.get('access-control-allow-origin')).toBeNull()
     })
   })
 

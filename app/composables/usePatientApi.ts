@@ -15,10 +15,12 @@ function getApiBase(): string {
 }
 
 export function usePatientApi() {
+  const auth = useGptmdAuth()
+
   async function createSession(): Promise<CreateSessionResult> {
     const result = await $fetch<unknown>(`${getApiBase()}/api/sessions`, {
       method: 'POST',
-      credentials: 'include'
+      headers: await auth.accessHeaders()
     })
     const parsed = CreateSessionResponseSchema.safeParse(result)
 
@@ -32,7 +34,13 @@ export function usePatientApi() {
   async function setupSession(sessionId: string): Promise<PatientProfile> {
     const result = await $fetch<unknown>(
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/setup`,
-      { method: 'POST', credentials: 'include' }
+      {
+        method: 'POST',
+        headers: {
+          ...await auth.accessHeaders(),
+          'Idempotency-Key': `scenario-setup-${sessionId}`
+        }
+      }
     )
     const parsed = SetupResponseSchema.safeParse(result)
 
@@ -48,7 +56,7 @@ export function usePatientApi() {
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/turns`,
       {
         method: 'POST',
-        credentials: 'include',
+        headers: await auth.accessHeaders(),
         body: { turnId, text }
       }
     )

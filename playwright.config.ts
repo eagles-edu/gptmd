@@ -17,6 +17,10 @@ export default defineConfig({
   webServer: {
     command: 'env -u NO_COLOR PORT=3001 node .output/server/index.mjs',
     reuseExistingServer: false,
-    url: 'http://127.0.0.1:3001'
+    url: 'http://127.0.0.1:3001',
+    env: {
+      NUXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:3001',
+      NUXT_PUBLIC_SUPABASE_KEY: 'test-publishable-key'
+    }
   }
 })

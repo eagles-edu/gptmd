@@ -31,13 +31,24 @@ to the process.
 
 ## Authentication and tenant provisioning
 
-The API accepts HS256 bearer JWTs from a trusted identity issuer. Configure
-`API_AUTH_JWT_SECRET` with at least 32 random bytes, plus the exact expected
-`API_AUTH_JWT_ISSUER` and `API_AUTH_JWT_AUDIENCE`. Tokens must contain `sub`,
-`tenant_id`, `iss`, `aud`, and an unexpired `exp`; the API does not issue login
-tokens or trust entitlements embedded in tokens. Keep the signing key only in
-the ignored `.env` or the deployment secret store. Use TLS at the reverse proxy
-before accepting bearer tokens outside loopback.
+The API verifies signed bearer JWTs from a trusted identity issuer. Configure
+the exact expected `API_AUTH_JWT_ISSUER` and `API_AUTH_JWT_AUDIENCE`. For the
+current self-hosted Supabase Auth Docker setup, set
+`API_AUTH_JWT_JWKS_URL` to the public `/auth/v1/.well-known/jwks.json` URL and
+use audience `authenticated`. Legacy HS256-only setups can instead use
+`API_AUTH_JWT_SECRET` with at least 32 random bytes. Tokens must contain `sub`,
+`iss`, `aud`, and an unexpired `exp`. The API does not issue login tokens or
+trust entitlements embedded in tokens. A token's optional `tenant_id` is only
+a workspace selection hint; the API checks every selection against active
+membership in GPTMD PostgreSQL. Keep private signing material only in ignored
+secret storage. Use TLS at the reverse proxy before accepting bearer tokens
+outside loopback.
+
+The browser sends the Supabase access token as a bearer token. Configure
+`API_CORS_ORIGINS` with exact trusted web origins. `GET /api/account/tenants`
+returns active workspace IDs for the authenticated subject. Other API routes
+accept `X-GPTMD-Tenant-ID`; when omitted, the API chooses a workspace only if
+the user has exactly one active membership.
 
 Apply the schema as the application database owner after PostgreSQL is ready:
 
@@ -53,6 +64,9 @@ monthly quota or active-session limit means unlimited; zero means no use. The
 API rechecks active membership, atomically reserves monthly usage, and returns
 `403` for missing capability or `429` for exhausted limits. Usage is counted
 when the API accepts work, including a provider request that later fails.
+
+See [`docs/SELF-HOSTED-SUPABASE.md`](../../docs/SELF-HOSTED-SUPABASE.md) for
+the Docker and Google OAuth setup.
 
 Session IDs contain 256 random bits encoded as base64url. Session lookup binds
 the ID, tenant, and authenticated subject in one database query; an absent or
