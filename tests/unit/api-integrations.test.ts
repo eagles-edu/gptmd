@@ -341,7 +341,6 @@ describe('GPTMD API integrations', () => {
 
   it('pins setup versions at session creation and returns one private-safe result for concurrent retries', async () => {
     const sessionId = randomBytes(32).toString('base64url')
-    const scenarioId = randomBytes(32).toString('base64url')
     const generated: GeneratedPatientScenario = {
       conversationId: 'conv_internal_only',
       responseId: 'resp_internal_only',
@@ -370,7 +369,6 @@ describe('GPTMD API integrations', () => {
     }
     const setupResponse: PatientScenarioSetupResult = {
       sessionId,
-      scenarioId,
       status: 'ready',
       createdAt: '2026-10-01T00:01:00.000Z',
       patient: {
@@ -379,7 +377,8 @@ describe('GPTMD API integrations', () => {
         bodyType: 'average',
         reasonForVisit: 'Pelvic pain'
       },
-      versions: sessionVersions
+      versions: sessionVersions,
+      readiness: { profile: true, redis: true, conversation: true }
     }
     const generatePatientScenario = vi.fn().mockResolvedValue(generated)
     let stored: PatientScenarioSetupResult | null = null
@@ -430,6 +429,8 @@ describe('GPTMD API integrations', () => {
       expect(duplicate.status).toBe(200)
       expect(firstBody).toEqual(duplicateBody)
       expect(firstBody.patient).not.toHaveProperty('diagnosis')
+      expect(firstBody).not.toHaveProperty('scenarioId')
+      expect(firstBody.readiness).toEqual({ profile: true, redis: true, conversation: true })
       expect(JSON.stringify(firstBody)).not.toContain('conv_internal_only')
       expect(JSON.stringify(firstBody)).not.toContain('resp_internal_only')
       expect(generatePatientScenario).toHaveBeenCalledOnce()

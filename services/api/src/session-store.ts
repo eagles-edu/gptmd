@@ -14,6 +14,7 @@ import {
   type PatientScenarioVersionPins
 } from './patient-profile.ts'
 import { derivePatientSetup, toLearnerPatientProfile } from './patient-setup.ts'
+import type { PatientStateStore } from './patient-state-store.ts'
 
 export type QuotaFeature = 'sessions' | 'responses'
 export type SessionStatus = 'initializing' | 'ready' | 'active' | 'completed' | 'cancelled'
@@ -27,11 +28,11 @@ export type SessionRecord = {
 
 export type PatientScenarioSetupResult = {
   sessionId: string
-  scenarioId: string
   status: 'ready'
   createdAt: string
   patient: ReturnType<typeof toLearnerPatientProfile>
   versions: PatientScenarioVersionPins
+  readiness: { profile: true; redis: true; conversation: true }
 }
 
 export type ScenarioSetupResult =
@@ -40,6 +41,7 @@ export type ScenarioSetupResult =
   | 'idempotency_conflict'
   | 'invalid_state'
   | 'version_unavailable'
+  | 'state_unavailable'
 
 export type StoreResult = 'allowed' | 'membership_missing' | 'entitlement_denied' | 'quota_exceeded'
 
@@ -74,6 +76,7 @@ type EntitlementRow = {
 
 type SetupSessionRow = {
   session_id: string
+  patient_profile_id: string | null
   status: SessionStatus
   created_at: Date
   setup_idempotency_key_hash: string | null
@@ -88,6 +91,7 @@ type ScenarioRow = {
   created_at: Date
   profile_digest: string
   profile_json: unknown
+  provider_conversation_id: string
 }
 
 const toVersionPins = (row: Pick<SetupSessionRow,
@@ -106,11 +110,11 @@ function toSetupResponse(
 ): PatientScenarioSetupResult {
   return {
     sessionId,
-    scenarioId: scenario.scenarioId,
     status: 'ready',
     createdAt: scenario.createdAt,
     patient: toLearnerPatientProfile(derivePatientSetup(scenario.profile)),
-    versions
+    versions,
+    readiness: { profile: true, redis: true, conversation: true }
   }
 }
 
@@ -122,7 +126,10 @@ async function rollback(client: PoolClient): Promise<void> {
   }
 }
 
-export function createPostgresSessionStore(pool: Pool): SessionStore {
+export function createPostgresSessionStore(
+  pool: Pool,
+  patientStateStore: PatientStateStore | null = null
+): SessionStore {
   return {
     async getActiveTenantIds(subjectId) {
       const result = await pool.query<{ tenant_id: string }>(
@@ -220,15 +227,17 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
           return 'quota_exceeded'
         }
         const sessionId = randomBytes(32).toString('base64url')
+        const patientProfileId = randomBytes(32).toString('base64url')
         const inserted = await client.query<{ created_at: Date; updated_at: Date }>(
           `INSERT INTO app_sessions (
-             session_id, tenant_id, subject_id, status,
+             session_id, patient_profile_id, tenant_id, subject_id, status,
              prompt_version, model_version, schema_version, policy_version
            )
-           VALUES ($1, $2, $3, 'initializing', $4, $5, $6, $7)
+           VALUES ($1, $2, $3, $4, 'initializing', $5, $6, $7, $8)
            RETURNING created_at, updated_at`,
           [
             sessionId,
+            patientProfileId,
             principal.tenantId,
             principal.subjectId,
             versions.promptVersion,
@@ -261,7 +270,7 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
       try {
         await client.query('BEGIN')
         const selected = await client.query<SetupSessionRow>(
-          `SELECT session_id, status, created_at, setup_idempotency_key_hash,
+          `SELECT session_id, patient_profile_id, status, created_at, setup_idempotency_key_hash,
                   prompt_version, model_version, schema_version, policy_version
            FROM app_sessions
            WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3
@@ -274,6 +283,14 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
           return 'not_found'
         }
 
+        const patientProfileId = session.patient_profile_id ?? randomBytes(32).toString('base64url')
+        if (!session.patient_profile_id) {
+          await client.query(
+            `UPDATE app_sessions SET patient_profile_id = $2 WHERE session_id = $1`,
+            [sessionId, patientProfileId]
+          )
+        }
+
         const versions = toVersionPins(session)
         if (session.setup_idempotency_key_hash && session.setup_idempotency_key_hash !== idempotencyHash) {
           await client.query('ROLLBACK')
@@ -281,7 +298,7 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
         }
 
         const saved = await client.query<ScenarioRow>(
-          `SELECT scenario_id, created_at, profile_digest, profile_json
+          `SELECT scenario_id, created_at, profile_digest, profile_json, provider_conversation_id
            FROM patient_scenarios WHERE session_id = $1`,
           [sessionId]
         )
@@ -304,7 +321,21 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
             await client.query('ROLLBACK')
             throw new Error('Stored patient scenario digest does not match its profile')
           }
+          if (!patientStateStore) {
+            await client.query('ROLLBACK')
+            return 'state_unavailable'
+          }
+          await patientStateStore.initialize(sessionId, scenario.scenarioId)
           await client.query('COMMIT')
+          await patientStateStore.saveReady({
+            sessionId,
+            patientProfileId: scenario.scenarioId,
+            profile: scenario.profile,
+            setupProjection: derivePatientSetup(scenario.profile),
+            conversationId: savedRow.provider_conversation_id,
+            profileDigest: scenario.profileDigest,
+            schemaVersion: scenario.schemaVersion
+          })
           return toSetupResponse(sessionId, scenario, versions)
         }
 
@@ -321,6 +352,12 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
           return 'version_unavailable'
         }
 
+        if (!patientStateStore) {
+          await client.query('ROLLBACK')
+          return 'state_unavailable'
+        }
+        await patientStateStore.initialize(sessionId, patientProfileId)
+
         const generated = await generateScenario(versions, session.created_at)
         const profile = PatientScenarioProfileSchema.parse(generated.profile)
         if (!isPatientScenarioConsistent(profile, session.created_at)) {
@@ -330,7 +367,7 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
           throw new Error('Generated patient scenario has no provider Conversation ID')
         }
         const scenario = ImmutablePatientScenarioSchema.parse({
-          scenarioId: randomBytes(32).toString('base64url'),
+          scenarioId: patientProfileId,
           schemaVersion: versions.schemaVersion,
           createdAt: new Date().toISOString(),
           profileDigest: createHash('sha256').update(JSON.stringify(profile)).digest('hex'),
@@ -362,6 +399,15 @@ export function createPostgresSessionStore(pool: Pool): SessionStore {
           [sessionId, idempotencyHash]
         )
         await client.query('COMMIT')
+        await patientStateStore.saveReady({
+          sessionId,
+          patientProfileId,
+          profile: scenario.profile,
+          setupProjection: derivePatientSetup(scenario.profile),
+          conversationId: generated.conversationId,
+          profileDigest: scenario.profileDigest,
+          schemaVersion: scenario.schemaVersion
+        })
         return toSetupResponse(sessionId, scenario, versions)
       } catch (error) {
         await rollback(client)

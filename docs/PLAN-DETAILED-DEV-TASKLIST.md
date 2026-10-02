@@ -35,53 +35,56 @@ These foundations are context for sequencing. They do not complete any patient-w
 
 Complete the phases in order where they establish shared contracts or data ownership. Within each phase, use the matching IDs in the companion checklist and keep its acceptance evidence with the change.
 
-### Phase 1 — Contracts, identity, and session bootstrap
+- [x] **Phase 1 — Contracts, identity, and session bootstrap**
 
-- [x] **1A — Inventory canonical patient-profile fields and seed inputs.** Treat `services/api/catalog/patient-profile.json` as the canonical full-profile field list; separately identify active GPTMD inputs, Nuxt008's visible setup, historical generator choices, and examples/fixtures that are not live seeds.
-- [x] **1B — Generate and validate the full patient profile in provider context.** The API module creates a Responses Conversation before generation; requests a strict structured profile using the canonical field catalog, including only case-relevant history entries; validates schema, dates, counts, and age/reproductive consistency; and retries a rejected profile at most once in a fresh Conversation. The authenticated setup route now commits the validated profile and Conversation binding to PostgreSQL with its immutable scenario snapshot.
-- [x] **1C — Derive the setup profile from that scenario.** `services/api/src/patient-setup.ts` preserves the canonical names `fullName`, `dateOfBirth`, `bodyType`, `reasonForVisit`, and `diagnosis` in the private setup record. The learner-safe response uses the same names and omits `diagnosis`. No second model call or field renaming is used.
-- [x] Define runtime-validated schemas for the immutable patient scenario, patient-reported fact expansions, session state, turns, clinical actions, terminal events, and archive status.
-- [x] Implement authentication, tenant/session ownership checks, entitlements, quotas, and opaque application session IDs. `services/api/src/auth.ts` validates issuer- and audience-bound HS256 bearer tokens; PostgreSQL membership and entitlement checks gate API use; monthly session/response limits and active-session limits are reserved transactionally; session IDs are 256-bit random base64url values and reads require matching owner and tenant. Database provisioning and identity-provider token issuance remain deployment setup.
-- [x] Make scenario setup idempotent. `POST /api/sessions/:sessionId/setup` requires an `Idempotency-Key`; PostgreSQL locks the owned session while generating, validates and saves one immutable profile plus digest and provider Conversation binding, and marks the session `ready` in the same commit. Matching retries return the saved learner-safe result; a different key conflicts. Session creation pins prompt, configured model, schema, and policy versions, and setup uses those stored versions.
-- [x] Keep provider Conversation IDs internal and tied to the authenticated application session. The ID is stored only in the private `patient_scenarios` row and is omitted from HTTP responses.
-- [ ] **1D — Build the signed-in home and account entry points.** Present Instructions, History-Taking Overview, Account Status (usage, metrics, downloads, and payment gateway), Contact Us, and Begin Visit. Preserve authentication and account context when opening an encounter. The signed-in UI and Supabase Auth integration are implemented; the local Auth-only Docker stack is healthy and the Google authorization start was verified. Full browser sign-in and GPTMD tenant membership provisioning remain before end-to-end sign-in is complete.
-- [ ] **1E — Add encounter preflight and permission handling.** Show a clear consent/readiness modal. Request microphone access from an explicit user action for audio use; microphone denial must retain a usable transcript path when permitted. Explain client-side storage honestly: local storage is not a sensitive-session vault, and any browser persistence request is separate from microphone access.
-- [ ] **1F — Coordinate patient setup and readiness.** Allocate opaque `sid` (app session) and per-visit `ppid` (synthetic patient profile) identifiers; initialize the Redis JSON patient receptacle and bind it to the session; only then trigger setup generation. After the prompt returns a validated profile with its Conversation ID, save that ID against both identifiers and resolve the same Conversation for later turns. Store the complete private profile and internal five-value projection in Redis; return the client-safe values sans diagnosis, if any. Select and preload the matching image assets, report readiness, keep the LED amber while required steps are pending, and turn it green and enable Enter Room only when ready.
+- [x] **1A — Inventory canonical patient-profile fields and seed inputs.** Treat `services/api/catalog/patient-profile.json` as the canonical reason/history field-name catalog and `services/api/src/patient-profile.ts` as the complete runtime contract; separately identify active GPTMD inputs, Nuxt008's visible setup, historical generator choices, and examples/fixtures that are not live seeds.
+  - [x] **1B — Generate and validate the full patient profile in provider context.** The API module creates a Responses Conversation before generation; requests a strict structured profile using the canonical field catalog, including only case-relevant history entries; validates schema, dates, counts, and age/reproductive consistency; and retries a rejected profile at most once in a fresh Conversation. The authenticated setup route now commits the validated profile and Conversation binding to PostgreSQL with its immutable scenario snapshot.
+  - [x] **1C — Derive the setup profile from that scenario.** `services/api/src/patient-setup.ts` preserves the canonical names `fullName`, `dateOfBirth`, `bodyType`, `reasonForVisit`, and `diagnosis` in the private setup record. The learner-safe response uses the same names and omits `diagnosis`. No second model call or field renaming is used.
+  - [x] Define runtime-validated schemas for the immutable patient scenario, patient-reported fact expansions, session state, turns, clinical actions, terminal events, and archive status.
+  - [x] Implement authentication, tenant/session ownership checks, entitlements, quotas, and opaque application session IDs. `services/api/src/auth.ts` validates issuer- and audience-bound HS256 bearer tokens; PostgreSQL membership and entitlement checks gate API use; monthly session/response limits and active-session limits are reserved transactionally; session IDs are 256-bit random base64url values and reads require matching owner and tenant. Database provisioning and identity-provider token issuance remain deployment setup.
+  - [x] Make scenario setup idempotent. `POST /api/sessions/:sessionId/setup` requires an `Idempotency-Key`; PostgreSQL locks the owned session while generating, validates and saves one immutable profile plus digest and provider Conversation binding, and marks the session `ready` in the same commit. Matching retries return the saved learner-safe result; a different key conflicts. Session creation pins prompt, configured model, schema, and policy versions, and setup uses those stored versions.
+  - [x] Keep provider Conversation IDs internal and tied to the authenticated application session. The ID is stored in the private `patient_scenarios` row and Redis patient receptacle, and is omitted from HTTP responses.
+  - [x] **1D — Build the signed-in home and account entry points.** Present Instructions, History-Taking Overview, Account Status (usage, metrics, downloads, and payment gateway), Contact Us, and Begin Visit. Preserve authentication and the selected workspace when opening an encounter. The signed-in home/account journey is browser-tested with an authenticated Supabase fixture and mocked GPTMD membership/session APIs. Real Google browser sign-in and production workspace provisioning remain deployment verification; account reporting and payment services remain separately unimplemented and are labeled unavailable.
+  - [x] **1E — Add encounter preflight and permission handling.** The encounter opens with a fictional-scenario consent and readiness dialog. Transcript mode works without microphone access; selecting audio alone does not request permission, and a separate button triggers the microphone check. The stream is stopped immediately after a successful permission check, and both denial and success return to transcript mode. The user must confirm fictional details before continuing. The dialog explains that local storage is not a secure session vault, this app does not save account or encounter data there, and persistent-storage requests are separate. Desktop and mobile browser coverage verifies permission denial, consent gating, storage copy visibility, and usable fallback.
+  - [x] **1F — Coordinate patient setup and readiness.** Session creation allocates an opaque `sid` and a distinct per-visit `ppid`. Setup initializes both Redis JSON bindings before generation; PostgreSQL stores the immutable profile and Conversation ID under the pair, and Redis receives the complete profile, private five-value projection, digest, schema version, and same Conversation ID after commit. Matching retries restore Redis from that saved scenario without another generation. The browser receives only the four learner-safe values, preloads the matching portrait, shows amber while setup or image loading is pending, and enables Enter Room only after backend, portrait, and transcript readiness. Unit and desktop/mobile browser checks cover ordering, state repair, private response shape, the readiness gate, and entering the room. Apply migration 003 before running this API version against a database.
 
-**Phase gate:**
+- [x] **Phase 1 gate passed.**
 
-- [ ] Repeated setup requests produce one stable scenario; unauthorized or cross-tenant access returns no patient data.
-- [ ] A setup retry cannot create a second active `sid`/`ppid` pairing or expose the private profile or provider Conversation ID to the browser.
-- [ ] The Enter Room action stays disabled until profile, Redis state, required image assets, and the selected audio/input mode are ready; text-only use can proceed without microphone permission.
+  - [x] Repeated setup requests restore one stable scenario; unauthorized or cross-tenant access returns no patient data.
+  - [x] A setup retry cannot create a second active `sid`/`ppid` pairing or expose the private profile or provider Conversation ID to the browser.
+  - [x] The Enter Room action stays disabled until profile, Redis state, required image assets, and the selected audio/input mode are ready; text-only use can proceed without microphone permission.
 
-#### 1A — Canonical patient-profile fields and existing seed inventory
+- [x] **1A — Canonical patient-profile fields and existing seed inventory**
 
-[`services/api/catalog/patient-profile.json`](../services/api/catalog/patient-profile.json) is the canonical, evolving catalog of possible full patient-profile fields; it may grow as requirements are clarified. It is not a requirement to populate every field for every patient. For each added field, define its meaning, data type, and required/optional/inapplicable behavior, then decide whether the patient-profile schema version or stored data needs migration. Preserve the catalog; select and require fields according to each scenario's clinical relevance. Represent a relevant negative (for example, no alcohol use) separately from unknown or not yet elicited information, and omit or mark fields that do not apply. Do not invent personal history just to fill the catalog. This inventory separates canonical profile fields from actual seed values, historical source material, and illustrative records. **The 1B generator now runs through the authenticated, idempotent setup route and saves the accepted scenario in PostgreSQL before session activation.**
+[`services/api/catalog/patient-profile.json`](../services/api/catalog/patient-profile.json) is the canonical catalog of scenario-relevant reason/history field names. It does not define concrete patient values or require every field in every scenario. The full private runtime shape is enforced by [`services/api/src/patient-profile.ts`](../services/api/src/patient-profile.ts): identity and visit fields (`fullName`, `dateOfBirth`, `bodyType`, `reasonForVisit`, and private nullable `diagnosis`); applicable history entries with a field, status, and nullable string/number/string-array value; present pregnancy and menopausal status; patient beliefs; supported exam and test findings; and stable persona traits. History status is `known`, `negative`, `unknown`, or `not_applicable`; `not yet elicited` belongs to encounter disclosure state, not the initial profile. The four-field learner response omits `diagnosis`. For each added canonical field, define its meaning, type, applicability, and status/value rules, then decide whether the schema version or stored records need migration. Require fields according to each scenario's clinical relevance, distinguish relevant negatives from unknowns, and do not invent history to fill the catalog.
 
-**Current GPTMD runtime inputs and examples**
+The current immutable patient-scenario schema version is 1 and is stored with each scenario. This inventory correction and marking the JSON example as a template do not change the runtime profile shape, so they require no version bump or stored-profile migration. Revisit both when a runtime field or its meaning changes.
 
-- **Actual generation seeds:** none found. Cases are generated from the canonical field catalog rather than checked-in runtime seed records.
-- **Current response contract:** `fullName`, `dateOfBirth`, `bodyType`, and `reasonForVisit`. It is the learner-safe subset of the private scenario and omits `diagnosis`.
-- **Nuxt008 historical setup request:** the earlier client used `patientName`, `patientDob`, `patientBodytype`, `patientReason`, and `patientDiagnosis`. These are legacy names, not current GPTMD contract fields. Its backend is absent from the Nuxt008 repository, so the client does not show whether that backend generated a complete profile first.
-- **Current test fixture:** Ari Nguyen · DOB 1990-01-01 · average · pelvic pain. This is test data, not an active scenario seed.
-- **Checked-in JSON placeholder:** Example Patient · DOB 1990-04-15 · average · irregular menstrual cycles. This is an incomplete example, not a generated case.
+- [x] **Current GPTMD runtime inputs and examples**
 
-**Historical generator options documented in `docs/plangpt.md`**
+  - Runtime generation inputs: no checked-in patient seed records or deterministic patient-value seed were found. The authenticated setup route calls the Responses generator with a generic fictional-patient instruction and the strict runtime profile schema. The JSON catalog supplies eligible reason/history field names; it is not a list of patient instances or the generator's values.
+  - Current response contract: `fullName`, `dateOfBirth`, `bodyType`, and `reasonForVisit`. This learner-safe projection comes from the accepted private profile and omits `diagnosis`.
+  - Nuxt008 historical setup request: the earlier client used `patientName`, `patientDob`, `patientBodytype`, `patientReason`, and `patientDiagnosis`. These are legacy wire names, not current GPTMD fields. The inspected Nuxt008 client sends a prompt requesting five values; its backend is absent, so this source does not establish that it first created or retained a complete profile.
+  - Automated test fixtures: Ari Nguyen · DOB 1990-01-01 · average · pelvic pain appears in unit and browser tests as deterministic contract/setup data. It is not an active scenario seed.
+  - Checked-in illustrative JSON: `docs/gpt-patient-obgyn.json` is a template, not a runtime input or generated case. Its values are placeholders and `diagnosis` is null; see its `templateNote`.
+  - Historical examples and source material: Jane Doe and Emily Clark records appear in `docs/gpt-patient-prompt-obgyn-legacy-notes.md`; they are illustrative legacy records, not evidence of runtime seeds. That file preserves legacy prompt/code behavior, including broad history requests. `docs/plangpt.md` records historical generator options and examples as archival behavior, not current constraints.
 
-- **Identity:** choose a first and last name from finite lists; the documentation does not enumerate the names. Choose age 20–57, derive a DOB, and choose body type `average` or `heavy`.
-- **Complaint/diagnosis pairs:** irregular menstrual bleeding → abnormal uterine bleeding; pelvic pain → endometriosis; missed period and nausea → early intrauterine pregnancy; vaginal itching/discharge → vaginitis; painful urination/urgency → urinary tract infection.
-- **Profile content requested by the historical prompt:** medical, lifestyle, gynecologic, obstetric, psychological/psychosocial, medication/pharmacological, and family histories; comorbidities; patient concern; and communication traits such as mood, maturity, verbosity, education, and willingness to volunteer information.
+- [x] **Historical generator options documented in `docs/plangpt.md`**
 
-**Historical examples, not generator seeds**
+  - Identity: choose a first and last name from finite lists; the documentation does not enumerate the names. Choose age 20–57, derive a DOB, and choose body type `average` or `heavy`.
+  - Complaint/diagnosis pairs: irregular menstrual bleeding → abnormal uterine bleeding; pelvic pain → endometriosis; missed period and nausea → early intrauterine pregnancy; vaginal itching/discharge → vaginitis; painful urination/urgency → urinary tract infection.
+  - Profile content requested by the historical prompt: medical, lifestyle, gynecologic, obstetric, psychological/psychosocial, medication/pharmacological, and family histories; comorbidities; patient concern; and communication traits such as mood, maturity, verbosity, education, and willingness to volunteer information.
 
-- Jane Doe · DOB 1985-05-15 · average · PCOS · irregular periods.
-- Emily Clark · DOB 1985-07-23 · average · PCOS · irregular cycles and abdominal discomfort.
+- [x] **Historical generator behavior and examples, not current seeds**
 
-These examples appear in legacy notes; they do not prove either patient was selected by a runtime generator. The age range 20–57 is also only historical behavior and cannot constrain the target profile, which must validate age-dependent facts such as a 16-year-old not being menopausal and a 75-year-old not being pregnant.
+  - Jane Doe · DOB 1985-05-15 · average · PCOS · irregular periods.
+  - Emily Clark · DOB 1985-07-23 · average · PCOS · irregular cycles and abdominal discomfort.
 
-**1A finding:** GPTMD currently has no live patient-profile seed inputs. `services/api/catalog/patient-profile.json` defines the canonical detailed patient-profile fields; the historical prompt documents some broad history categories but is not an exhaustive schema and does not supersede that list. Recoverable historical seed values are the name-list/age/body-type rules and five complaint/diagnosis pairs above. Nuxt008 confirms the five-field frontend/image-selection boundary but does not establish its backend generation order. The target must generate and validate the complete canonical profile first, then derive that five-field projection from it.
+The examples appear in legacy notes; they do not prove either patient was selected by a runtime generator. The age range 20–57 and complaint/diagnosis pairs are also historical behavior, not current generation constraints. The target profile instead validates age-dependent facts such as a 16-year-old not being menopausal and a 75-year-old not being pregnant.
 
-#### 1B — Generate and validate the full patient profile
+**1A finding:** GPTMD currently has no checked-in runtime patient seeds; the live setup route generates a complete structured profile and validates it before saving. The canonical field-name catalog and runtime schema are separate from test fixtures, the illustrative JSON template, and historical prompt examples. Historical notes recover general generation options and five complaint/diagnosis pairings, but they are not reproducible seed records or current constraints. Nuxt008 confirms a five-value client request boundary but does not establish its backend generation order. Generate and validate the complete private profile first, then derive the learner-safe four-field response and private five-value setup projection from that accepted profile.
+
+- [x] **1B — Generate and validate the full patient profile**
 
 The generator first creates the **complete private patient profile**: identity, a clinically coherent current case, the histories relevant to that case, patient beliefs, supported exam/test findings, diagnosis or explicitly unknown status, and stable communication traits. The field catalog in `services/api/catalog/patient-profile.json` does not mean every case needs every field. Define which fields are required, optional, or inapplicable for each scenario; distinguish an explicit negative from unknown information; track “not yet elicited” in encounter disclosure state rather than treating it as a profile value; and never invent unrelated personal history to fill a field. Create the session's OpenAI Conversation before generation, then generate the profile as a structured Responses result in that conversation so the provider retains the scenario for later turns. Validate the profile as one case before activating the session. Save the same full profile as the app-owned canonical record in PostgreSQL and its active copy in Redis; the OpenAI Conversation is model context, not the app's ownership or recovery database. Do not construct the visible variables independently or let them disagree with the profile.
 
@@ -89,37 +92,38 @@ The private scenario contract uses canonical names `fullName`, `dateOfBirth`, `b
 
 Age and reproductive facts must be checked together using age calculated from DOB at the session's fixed start time. Reject or regenerate contradictory cases: a 16-year-old must not be seeded as menopausal, and a 75-year-old must not be seeded as pregnant. Historical pregnancies remain possible only when their ages and timeline are coherent. Validate complaint, diagnosis, history, and supported results against each other before any patient response is generated.
 
-#### 1C — Derive five setup variables and enter the image-selection lane
+- [x] **1C — Derive five setup variables and enter the image-selection lane**
 
 After the complete profile passes validation, derive these five values directly from it in application code, following Nuxt008's five-value setup boundary. `services/api/src/patient-setup.ts` implements this projection from the accepted `PatientScenarioProfile`; it also maps the internal projection to the four-field learner response. The authenticated setup route persists the immutable scenario before returning the learner projection.
 
-1. `fullName`
-2. `dateOfBirth` (ISO `YYYY-MM-DD`)
-3. `bodyType`
-4. `reasonForVisit` (chief complaint)
-5. `diagnosis` (if any)
+- [x] **Five setup values derived from the validated profile**
+  1. `fullName`
+  2. `dateOfBirth` (ISO `YYYY-MM-DD`)
+  3. `bodyType`
+  4. `reasonForVisit` (chief complaint)
+  5. `diagnosis` (if any)
 
 Treat this as a selection from the validated profile, not a second model request or a second set of names. That avoids a second model round trip, additional output/input tokens, and mismatched demographics. The five-value private setup record feeds server-side setup and image selection. Image selection uses `dateOfBirth` to calculate the age band and `bodyType` to select the matching portrait directory. The client response contains the same first four fields and omits private `diagnosis`.
 
-#### 1D — Signed-in home and account entry points
+- [x] **1D — Signed-in home and account entry points**
 
-The Nuxt client has home entry points for Instructions (`/tutorial`), History-Taking Overview (`/history-taking`), Account Status (`/account`), Contact Us (`/contact`), and Begin Visit (`/encounter`). Google sign-in uses self-hosted Supabase Auth over the official Docker Compose stack with the Nuxt SSR-cookie integration and PKCE. The encounter and account routes require a signed-in user when the Supabase endpoint is configured. The client sends its access token to the Express API; the API resolves active workspace membership in GPTMD PostgreSQL and checks each requested workspace. Account Status lets users sign out and select among multiple workspaces, and reserves sections for usage, metrics, downloads, and payment access. It reports unavailable account data honestly; HTTPS hosted checkout links appear only when the corresponding `NUXT_PUBLIC_PAYMENT_CHECKOUT_6_MONTH_URL` or `NUXT_PUBLIC_PAYMENT_CHECKOUT_12_MONTH_URL` is configured, and the billing portal link appears only when `NUXT_PUBLIC_PAYMENT_PORTAL_URL` is configured. Checkout links do not activate workspace access because payment confirmation is not connected yet. Contact uses the optional `NUXT_PUBLIC_SUPPORT_EMAIL`. Account and encounter data are not written to browser storage.
+The Nuxt client has home entry points for Instructions (`/tutorial`), History-Taking Overview (`/history-taking`), Account Status (`/account`), Contact Us (`/contact`), and Begin Visit (`/encounter`). A signed-in home state shows the current identity and workspace readiness; users with multiple memberships select a workspace before Begin Visit is enabled. That selection stays in shared auth state and is sent as `X-GPTMD-Tenant-ID` when the encounter session is created. Google sign-in uses self-hosted Supabase Auth over the official Docker Compose stack with the Nuxt SSR-cookie integration and PKCE. The encounter and account routes require a signed-in user when the Supabase endpoint is configured. The client sends its access token to the Express API; the API resolves active workspace membership in GPTMD PostgreSQL and checks each requested workspace. Account Status lets users sign out and select among multiple workspaces, and reserves sections for usage, metrics, downloads, and payment access. It reports unavailable account data honestly and offers retry when membership lookup fails; HTTPS hosted checkout links appear only when the corresponding `NUXT_PUBLIC_PAYMENT_CHECKOUT_6_MONTH_URL` or `NUXT_PUBLIC_PAYMENT_CHECKOUT_12_MONTH_URL` is configured, and the billing portal link appears only when `NUXT_PUBLIC_PAYMENT_PORTAL_URL` is configured. Checkout links do not activate workspace access because payment confirmation is not connected yet. Contact uses the optional `NUXT_PUBLIC_SUPPORT_EMAIL`. Account and encounter data are not written to browser storage.
 
 **Payment direction:** Offer prepaid 6- and 12-month access terms. The customer must initiate each renewal; do not automatically charge off-session. Google Pay (GPay) is the planned primary online checkout method, with a phone-scannable QR payment option for local customers and PayPal to be added later. Select a provider that supports one-time Google Pay checkout and local QR payments with reliable server-side payment confirmation. Generate a unique QR/invoice per renewal and extend access only after confirmed payment. The payment provider and renewal checkout flow remain unselected.
 
-**Implementation boundary:** the signed-in application path is implemented, including Supabase token handoff and server-side membership checks. The self-hosted Supabase stack has Google OAuth configured, and the authorization start was verified to redirect to Google with the expected callback; full browser sign-in and GPTMD tenant membership provisioning remain unverified. Account usage summaries, learning metrics, downloads, and billing services remain unimplemented and are shown as unavailable. Payment direction is prepaid 6- and 12-month terms with customer-initiated renewal, GPay first, local phone QR, and PayPal later. The account UI accepts HTTPS hosted checkout links per term, but provider selection, actual checkout configuration, payment confirmation, renewal reminders, and entitlement expiry/extension remain to be implemented. Do not treat a Google identity alone as an active GPTpatient workspace.
+**Implementation boundary:** the signed-in application path is implemented, including Supabase token handoff and server-side membership checks. Browser coverage uses a deterministic authenticated Supabase fixture and mocked tenant/session APIs to verify account selection through encounter creation. The self-hosted Supabase stack has Google OAuth configured, and the authorization start was verified to redirect to Google with the expected callback; a live Google browser sign-in and production GPTMD tenant membership provisioning remain deployment checks. Account usage summaries, learning metrics, downloads, and billing services remain unimplemented and are shown as unavailable. Payment direction is prepaid 6- and 12-month terms with customer-initiated renewal, GPay first, local phone QR, and PayPal later. The account UI accepts HTTPS hosted checkout links per term, but provider selection, actual checkout configuration, payment confirmation, renewal reminders, and entitlement expiry/extension remain to be implemented. Do not treat a Google identity alone as an active GPTpatient workspace.
 
-#### 1E — Encounter preflight, consent, and browser capabilities
+- [x] **1E — Encounter preflight, consent, and browser capabilities**
 
 When the encounter opens, explain the selected interaction mode and show its readiness state. Ask for microphone access only when the user chooses an audio mode and from a clear user action; if access is denied, keep transcript/text input available when that mode is allowed. Do not present local storage as a browser permission equivalent to microphone access: ordinary web storage has no such prompt. Use it only for non-sensitive preferences. Never store the patient profile, diagnosis, transcript, audio, or provider IDs in local storage. If persistent browser storage is useful for an explicitly supported offline preference, `navigator.storage.persist()` is a distinct, best-effort request and does not authorize storing clinical session data. See [microphone access](https://developer.mozilla.org/en-US/docs/Web/API/MediaDevices/getUserMedia) and [persistent browser storage](https://developer.mozilla.org/en-US/docs/Web/API/StorageManager/persist).
 
-#### 1F — Bind session, patient profile, provider context, and readiness
+- [x] **1F — Bind session, patient profile, provider context, and readiness**
 
 Use `sid` for the opaque authenticated application session and `ppid` for the opaque synthetic patient profile created for that visit. `ppid` is not a person's login identity or a reusable real-patient identifier. The authenticated `sid` owns the visit; Redis keeps a session-to-`ppid` binding and a Redis JSON profile receptacle keyed by the per-visit `ppid`. Initialize both with an `initializing` state and an idempotency key before setup generation. Do not expose either private profile data or provider IDs to the browser.
 
-The authenticated setup route validates the application session and owner, then the PostgreSQL session row lock serializes duplicate setup requests. The generator creates the OpenAI Conversation, sends the pinned structured setup prompt, validates the response, and returns the accepted profile and its `conversationId` together. The route saves the immutable scenario, digest, and private Conversation binding, then marks the session ready in the same database commit. Matching retries return that saved result. A rejected profile is retried in a fresh Conversation, and only the successful attempt's ID is bound to the active profile. `responseId` is request/result metadata; `conversationId` is the continuity handle. Redis mirroring and `ppid` allocation remain follow-up work.
+The authenticated setup route validates the application session and owner, then the PostgreSQL session row lock serializes duplicate setup requests. The generator creates the OpenAI Conversation, sends the pinned structured setup prompt, validates the response, and returns the accepted profile and its `conversationId` together. The route saves the immutable scenario, digest, and private Conversation binding, then marks the session ready in the same database commit. Matching retries return that saved result. A rejected profile is retried in a fresh Conversation, and only the successful attempt's ID is bound to the active profile. `responseId` is request/result metadata; `conversationId` is the continuity handle. Migration 003 adds the per-visit `ppid` binding. Setup initializes session and patient JSON documents in Redis before generation, then mirrors the accepted full profile, private five-value projection, digest, schema version, and Conversation ID after the PostgreSQL commit. A retry repairs that Redis mirror from the immutable scenario without a new provider call.
 
-When a valid profile and its Conversation ID return together, derive the learner-safe profile from the validated source and save the immutable scenario, digest, version pins, and Conversation binding in the same PostgreSQL transaction as the session's `ready` transition. Return only the four client-safe values, sans diagnosis. Redis mirroring and portrait selection remain follow-up work. Keep the diagnosis, complete profile, and provider Conversation ID server-side. The readiness coordinator reports which prerequisites are pending; show amber while setup, Redis, image loading, or the selected audio/input mode is pending, and green only when all required components are ready. Enable Enter Room only in that ready state. Microphone readiness is required for a selected audio mode, but it must not block an allowed text-only visit. Other non-payload work stays asynchronous under the project's response-latency rule.
+When a valid profile and its Conversation ID return together, derive the learner-safe profile from the validated source and save the immutable scenario, digest, version pins, and Conversation binding in the same PostgreSQL transaction as the session's `ready` transition. Return only the four client-safe values, sans diagnosis. Keep the diagnosis, complete profile, and provider Conversation ID server-side. The readiness coordinator reports which prerequisites are pending; show amber while setup, Redis, image loading, or the selected audio/input mode is pending, and green only when all required components are ready. Enable Enter Room only in that ready state. Microphone readiness is required for a selected audio mode, but it must not block an allowed text-only visit. Other non-payload work stays asynchronous under the project's response-latency rule. Runtime database verification still requires applying migration 003 to the configured application database.
 
 #### Provider persistence and cost/performance
 
@@ -127,93 +131,96 @@ The [Assistants migration guide](https://developers.openai.com/api/docs/assistan
 
 Generate the full profile once. Derive the five setup values locally; a second model call only to extract them would add a round trip and token cost without adding useful information. Stateful Conversations remove manual history assembly; they do not make prior context free. Conversation items are prepended to the next Response, so the full profile and accepted history continue to contribute input tokens and can grow toward the model's context limit. Keep the profile concise and structured, record input, output, cached-token use, latency, and estimated cost per session, and benchmark realistic short and long encounters against the selected model's current [pricing](https://developers.openai.com/api/docs/pricing). Prompt caching may lower charges for repeated eligible prefixes, but does not remove the profile from context or eliminate its latency, retention, and privacy considerations. If context management or compaction is needed, rebuild it only from the app-owned scenario and event history. A failed profile validation must not leave a bad scenario in the active Conversation: abandon that provider context and retry in a fresh one within a bounded policy.
 
-### Phase 2 — Redis live state and PostgreSQL durable history
+- [ ] **Phase 2 — Redis live state and PostgreSQL durable history**
 
-- [ ] Define PostgreSQL migrations and constraints for customer/session records, immutable scenario references, ordered session events, usage, download engagement, and outcomes.
-- [ ] Implement Redis JSON storage for active patient/session state and a Redis Stream for accepted-turn and terminal events. Commit the live state, accepted reply, retry key, and recovery event atomically in one Redis request.
-- [ ] Implement a PostgreSQL event worker that reads the stream, persists events in order and idempotently, and acknowledges only after commit.
-- [ ] Add recovery from Redis persistence and rebuild of active state from PostgreSQL history when Redis state is missing. Document the accepted one-second Redis loss window and verify the local recovery path.
+  - [ ] Define PostgreSQL migrations and constraints for customer/session records, immutable scenario references, ordered session events, usage, download engagement, and outcomes.
+  - [ ] Implement Redis JSON storage for active patient/session state and a Redis Stream for accepted-turn and terminal events. Commit the live state, accepted reply, retry key, and recovery event atomically in one Redis request.
+  - [ ] Implement a PostgreSQL event worker that reads the stream, persists events in order and idempotently, and acknowledges only after commit.
+  - [ ] Add recovery from Redis persistence and rebuild of active state from PostgreSQL history when Redis state is missing. Document the accepted one-second Redis loss window and verify the local recovery path.
 
-**Phase gate:**
+- [ ] **Phase 2 gate passed.**
 
-- [ ] A repeated turn ID returns the saved reply without a duplicate event. A worker retry cannot duplicate database records. A Redis restart and a PostgreSQL outage have documented, exercised recovery paths.
+  - [ ] A repeated turn ID returns the saved reply without a duplicate event. A worker retry cannot duplicate database records. A Redis restart and a PostgreSQL outage have documented, exercised recovery paths.
 
-### Phase 3 — Serialized patient turns and history-taking
+- [ ] **Phase 3 — Serialized patient turns and history-taking**
 
-- [ ] Implement the turn lock and idempotency handling per session. Build model input only from the authorized scenario, accepted facts, disclosure state, and current encounter phase.
-- [ ] Validate model output and proposed fact expansions against the immutable scenario, prior accepted facts, chronology, and fixed test/exam results.
-- [ ] Save the accepted reply and all state required for the next turn in the single Redis commit. Return without waiting for PostgreSQL or a background worker.
-- [ ] Persist transcript, coverage, disclosure, and assessment events through workers. Keep model failure and validation-failure audits asynchronous.
+  - [ ] Implement the turn lock and idempotency handling per session. Build model input only from the authorized scenario, accepted facts, disclosure state, and current encounter phase.
+  - [ ] Validate model output and proposed fact expansions against the immutable scenario, prior accepted facts, chronology, and fixed test/exam results.
+  - [ ] Save the accepted reply and all state required for the next turn in the single Redis commit. Return without waiting for PostgreSQL or a background worker.
+  - [ ] Persist transcript, coverage, disclosure, and assessment events through workers. Keep model failure and validation-failure audits asynchronous.
 
-**Phase gate:**
+- [ ] **Phase 3 gate passed.**
 
-- [ ] Turns remain serialized within a session; retries return the same accepted reply; one session cannot read another session’s facts; no unvalidated model fact becomes canonical.
+  - [ ] Turns remain serialized within a session; retries return the same accepted reply; one session cannot read another session’s facts; no unvalidated model fact becomes canonical.
 
-### Phase 4 — Orders, exams, assessment, and debrief
+- [ ] **Phase 4 — Orders, exams, assessment, and debrief**
 
-- [ ] Implement authorized orders and exams against fixed scenario catalogs, including consent, decline, chaperone, completion, and supported findings.
-- [ ] Track pertinent history coverage without forcing irrelevant or sensitive questions.
-- [ ] Validate learner assessment submission; score against a versioned, educator-reviewed rubric; generate debrief from durable scenario and accepted event history.
-- [ ] Keep answer keys hidden until an authorized instructor view or the permitted debrief stage.
+  - [ ] Implement authorized orders and exams against fixed scenario catalogs, including consent, decline, chaperone, completion, and supported findings.
+  - [ ] Track pertinent history coverage without forcing irrelevant or sensitive questions.
+  - [ ] Validate learner assessment submission; score against a versioned, educator-reviewed rubric; generate debrief from durable scenario and accepted event history.
+  - [ ] Keep answer keys hidden until an authorized instructor view or the permitted debrief stage.
 
-**Phase gate:**
+- [ ] **Phase 4 gate passed.**
 
-- [ ] Results and findings come only from the fixed scenario; patient-reported claims cannot become confirmed tests or exam findings; assessment and debrief are reproducible from saved records.
+  - [ ] Results and findings come only from the fixed scenario; patient-reported claims cannot become confirmed tests or exam findings; assessment and debrief are reproducible from saved records.
 
-### Phase 5 — Transcript, speech, and Full Audio
+- [ ] **Phase 5 — Transcript, speech, and Full Audio**
 
-- [ ] Keep transcript mode as the initial text path and make optional speech synthesis independent of event persistence.
-- [ ] Add consent and entitlement checks for audio. Bind each real-time connection to one authenticated application session.
-- [ ] Reconcile transcript, phase, and action events with Redis session state; persist them to PostgreSQL asynchronously.
-- [ ] Recover from reconnects without losing accepted encounter state or applying an action twice.
+  - [ ] Keep transcript mode as the initial text path and make optional speech synthesis independent of event persistence.
+  - [ ] Add consent and entitlement checks for audio. Bind each real-time connection to one authenticated application session.
+  - [ ] Reconcile transcript, phase, and action events with Redis session state; persist them to PostgreSQL asynchronously.
+  - [ ] Recover from reconnects without losing accepted encounter state or applying an action twice.
 
-**Phase gate:**
+- [ ] **Phase 5 gate passed.**
 
-- [ ] Text and audio modes use the same patient/session state machine; browser reconnect and provider disconnect do not duplicate turns or expose another session.
+  - [ ] Text and audio modes use the same patient/session state machine; browser reconnect and provider disconnect do not duplicate turns or expose another session.
 
-### Phase 6 — Completion, archives, and records
+- [ ] **Phase 6 — Completion, archives, and records**
 
-- [ ] On completion or cancellation, atomically record terminal state in Redis, set the absolute 20-minute Redis JSON expiry, and queue the terminal event without waiting for PostgreSQL.
-- [ ] Have background workers persist the terminal event and create one idempotent archive job. Build the private profile, transcript, audio, and debrief archive only after all earlier session events are durable.
-- [ ] Authorize each download through terminal time plus 72 hours, issue short-lived URLs within the remaining window, and record request versus completed transfer as separate events.
-- [ ] Keep client/session records, usage, download activity, and outcomes in PostgreSQL after temporary Redis state and archive objects expire.
+  - [ ] On completion or cancellation, atomically record terminal state in Redis, set the absolute 20-minute Redis JSON expiry, and queue the terminal event without waiting for PostgreSQL.
+  - [ ] Have background workers persist the terminal event and create one idempotent archive job. Build the private profile, transcript, audio, and debrief archive only after all earlier session events are durable.
+  - [ ] Authorize each download through terminal time plus 72 hours, issue short-lived URLs within the remaining window, and record request versus completed transfer as separate events.
+  - [ ] Keep client/session records, usage, download activity, and outcomes in PostgreSQL after temporary Redis state and archive objects expire.
 
-**Phase gate:**
+- [ ] **Phase 6 gate passed.**
 
-- [ ] No archive is marked ready before content and metadata checks pass; no new download is authorized after the cutoff; cleanup delays do not extend access.
+  - [ ] No archive is marked ready before content and metadata checks pass; no new download is authorized after the cutoff; cleanup delays do not extend access.
 
-### Phase 7 — Workers, back-pressure, and observability
+- [ ] **Phase 7 — Workers, back-pressure, and observability**
 
-- [ ] Run PostgreSQL persistence, usage/download recording, archive work, and cleanup in dedicated background workers. Use worker threads only for CPU-heavy work such as compression.
-- [ ] Bound queues and retries; monitor queue age, size, worker lag, Redis memory, stream retention, and database availability.
-- [ ] Instrument learner-visible stages separately from background handoff and worker completion. A handler must never await background completion.
-- [ ] Reject new work quickly at configured high-water marks; keep accepted work recoverable and alert on unconfirmed events.
+  - [ ] Run PostgreSQL persistence, usage/download recording, archive work, and cleanup in dedicated background workers. Use worker threads only for CPU-heavy work such as compression.
+  - [ ] Bound queues and retries; monitor queue age, size, worker lag, Redis memory, stream retention, and database availability.
+  - [ ] Instrument learner-visible stages separately from background handoff and worker completion. A handler must never await background completion.
+  - [ ] Reject new work quickly at configured high-water marks; keep accepted work recoverable and alert on unconfirmed events.
 
-**Phase gate:**
+- [ ] **Phase 7 gate passed.**
 
-- [ ] For every request path, demonstrate zero waiting on side work. Keep measured nonblocking handoff overhead below 5 ms. Report model, network, lock, and payload-critical Redis timings separately from background work.
+  - [ ] For every request path, demonstrate zero waiting on side work. Keep measured nonblocking handoff overhead below 5 ms. Report model, network, lock, and payload-critical Redis timings separately from background work.
 
-### Phase 8 — Deployment and release
+- [ ] **Phase 8 — Deployment and release**
 
-- [ ] Keep Nuxt and the Express API as separate deployables. Keep PostgreSQL and Redis private and backend-only; configure secrets, named volumes, health/readiness, graceful shutdown, and backups.
-- [ ] Test the Redis Stack 7.4 to Redis 8 upgrade separately before adopting it. Confirm JSON/Streams behavior, persistence, expiry, and recovery before changing the runtime.
-- [ ] Complete clinical educator review, security and privacy review, load/back-pressure checks, recovery exercises, and retention acceptance before release.
+  - [ ] Keep Nuxt and the Express API as separate deployables. Keep PostgreSQL and Redis private and backend-only; configure secrets, named volumes, health/readiness, graceful shutdown, and backups.
+  - [ ] Test the Redis Stack 7.4 to Redis 8 upgrade separately before adopting it. Confirm JSON/Streams behavior, persistence, expiry, and recovery before changing the runtime.
+  - [ ] Complete clinical educator review, security and privacy review, load/back-pressure checks, recovery exercises, and retention acceptance before release.
 
-**Phase gate:**
+- [ ] **Phase 8 gate passed.**
 
-- [ ] Production-like verification covers service restart, Redis data recovery, PostgreSQL outage and catch-up, worker retry, duplicate turns, queue overload, 20-minute active-state expiry, and the 72-hour archive access boundary.
+  - [ ] Production-like verification covers service restart, Redis data recovery, PostgreSQL outage and catch-up, worker retry, duplicate turns, queue overload, 20-minute active-state expiry, and the 72-hour archive access boundary.
 
 ## Cross-phase acceptance rules
 
-- [ ] Keep all 286 detailed node IDs and labels aligned with the seven focused D2 maps; use the overview flow for navigation, not duplicate work.
-- [ ] Enforce zero waiting on non-payload operations in every user-facing request; verify that handlers do not await side-work promises.
-- [ ] Give every durable write an owner, stable identifier, idempotent retry behavior, and recovery path; give every queue capacity and age monitoring.
-- [ ] Separate application implementation evidence from infrastructure readiness and clinical educator approval.
-- [ ] Run focused checks for changed behavior, then `npm run check` for application changes. For documentation-only plan changes, verify links and node references without claiming application tests ran.
+- [ ] **Cross-phase acceptance group**
+
+  - [ ] Keep all 286 detailed node IDs and labels aligned with the seven focused D2 maps; use the overview flow for navigation, not duplicate work.
+  - [ ] Enforce zero waiting on non-payload operations in every user-facing request; verify that handlers do not await side-work promises.
+  - [ ] Give every durable write an owner, stable identifier, idempotent retry behavior, and recovery path; give every queue capacity and age monitoring.
+  - [ ] Separate application implementation evidence from infrastructure readiness and clinical educator approval.
+  - [ ] Run focused checks for changed behavior, then `npm run check` for application changes. For documentation-only plan changes, verify links and node references without claiming application tests ran.
 
 ## Source documents
 
-- [Modernization design and rationale](plangpt-modernization.md)
-- [286-node implementation companion checklist](plangpt-modernization-checklist.md)
-- [Editable D2 diagrams](diagrams/)
-- [Current versus proposed implementation status](plangpt-modernization.md#status-at-a-glance)
+- [x] **Source documents documented**
+  - [Modernization design and rationale](plangpt-modernization.md)
+  - [286-node implementation companion checklist](plangpt-modernization-checklist.md)
+  - [Editable D2 diagrams](diagrams/)
+  - [Current versus proposed implementation status](plangpt-modernization.md#status-at-a-glance)

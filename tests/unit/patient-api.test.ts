@@ -20,16 +20,28 @@ describe('patient API response contracts', () => {
   })
 
   it('creates a session and normalizes the configured API base', async () => {
-    fetchMock.mockResolvedValue({ sessionId: 'session-123' })
+    const session = {
+      sessionId: 's'.repeat(43),
+      status: 'initializing',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      versions: {
+        promptVersion: 'patient-scenario-prompt-v1',
+        modelVersion: 'gpt-6-luna',
+        schemaVersion: 1,
+        policyVersion: 'patient-scenario-policy-v1'
+      }
+    }
+    fetchMock.mockResolvedValue(session)
 
-    await expect(usePatientApi().createSession()).resolves.toEqual({ sessionId: 'session-123' })
+    await expect(usePatientApi().createSession()).resolves.toEqual(session)
     expect(fetchMock).toHaveBeenCalledWith('https://api.example.test/api/sessions', {
       method: 'POST',
       headers: apiAuthHeaders
     })
   })
 
-  it.each([undefined, '', 42, null])('rejects an invalid session response: %s', async (sessionId) => {
+  it.each([undefined, '', 42, null, 'session-123'])('rejects an invalid session response: %s', async (sessionId) => {
     fetchMock.mockResolvedValue({ sessionId })
 
     await expect(usePatientApi().createSession()).rejects.toThrow(
@@ -51,15 +63,27 @@ describe('patient API response contracts', () => {
   })
 
   it('accepts a valid profile and encodes the session identifier', async () => {
-    const profile = {
-      fullName: 'Ari Nguyen',
-      dateOfBirth: '1990-01-01',
-      bodyType: 'average',
-      reasonForVisit: 'Pelvic pain'
+    const setup = {
+      sessionId: 's'.repeat(43),
+      status: 'ready',
+      createdAt: '2026-10-01T00:01:00.000Z',
+      patient: {
+        fullName: 'Ari Nguyen',
+        dateOfBirth: '1990-01-01',
+        bodyType: 'average',
+        reasonForVisit: 'Pelvic pain'
+      },
+      versions: {
+        promptVersion: 'patient-scenario-prompt-v1',
+        modelVersion: 'gpt-6-luna',
+        schemaVersion: 1,
+        policyVersion: 'patient-scenario-policy-v1'
+      },
+      readiness: { profile: true, redis: true, conversation: true }
     }
-    fetchMock.mockResolvedValue({ profile })
+    fetchMock.mockResolvedValue(setup)
 
-    await expect(usePatientApi().setupSession('session / one')).resolves.toEqual(profile)
+    await expect(usePatientApi().setupSession('session / one')).resolves.toEqual(setup)
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.example.test/api/sessions/session%20%2F%20one/setup',
       {

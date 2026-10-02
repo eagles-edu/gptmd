@@ -7,11 +7,6 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{43}$"
     },
-    "scenarioId": {
-      "type": "string",
-      "minLength": 1,
-      "maxLength": 200
-    },
     "status": {
       "type": "string",
       "const": "ready"
@@ -86,15 +81,38 @@
         "policyVersion"
       ],
       "additionalProperties": false
+    },
+    "readiness": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": "boolean",
+          "const": true
+        },
+        "redis": {
+          "type": "boolean",
+          "const": true
+        },
+        "conversation": {
+          "type": "boolean",
+          "const": true
+        }
+      },
+      "required": [
+        "profile",
+        "redis",
+        "conversation"
+      ],
+      "additionalProperties": false
     }
   },
   "required": [
     "sessionId",
-    "scenarioId",
     "status",
     "createdAt",
     "patient",
-    "versions"
+    "versions",
+    "readiness"
   ],
   "additionalProperties": false
 }

@@ -3,11 +3,11 @@ import {
   SetupResponseSchema,
   TurnResponseSchema,
   type CreateSessionResult,
-  type PatientProfile,
+  type PatientSetupResult,
   type TurnResult
 } from '../schemas/patient-api'
 
-export type { CreateSessionResult, PatientProfile, TurnResult } from '../schemas/patient-api'
+export type { CreateSessionResult, PatientProfile, PatientSetupResult, TurnResult } from '../schemas/patient-api'
 
 function getApiBase(): string {
   const config = useRuntimeConfig()
@@ -31,7 +31,7 @@ export function usePatientApi() {
     return parsed.data
   }
 
-  async function setupSession(sessionId: string): Promise<PatientProfile> {
+  async function setupSession(sessionId: string): Promise<PatientSetupResult> {
     const result = await $fetch<unknown>(
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/setup`,
       {
@@ -48,7 +48,7 @@ export function usePatientApi() {
       throw new Error('The setup service returned an invalid patient profile.')
     }
 
-    return parsed.data.profile
+    return parsed.data
   }
 
   async function sendTurn(sessionId: string, turnId: string, text: string): Promise<TurnResult> {

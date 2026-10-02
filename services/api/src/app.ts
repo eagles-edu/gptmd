@@ -248,6 +248,8 @@ export function createApiApp(dependencies: ApiDependencies): Express {
           response.status(409).json({ error: 'Session setup was already started with another Idempotency-Key' })
         } else if (result === 'version_unavailable') {
           response.status(503).json({ error: 'Pinned patient scenario versions are unavailable' })
+        } else if (result === 'state_unavailable') {
+          response.status(503).json({ error: 'Patient state storage is unavailable' })
         } else response.status(409).json({ error: 'Session is not available for setup' })
         return
       }

@@ -1,5 +1,13 @@
 # Standard operating procedures
 
+## Keep SDE cue captures out of scratch
+
+Automatic CuratorMD captures use the `sde_cue_capture` type and remain in the
+native inbox for later full-thread synthesis. They are not individual review
+candidates and do not need scratch files or manual dispositions. When cleaning
+older scratch copies, first confirm each record ID and complete payload match
+the corresponding native-inbox source, then remove only those redundant copies.
+
 ## Five-stage development workflow
 
 Start with a concise summary of the problem, intended result, and success
@@ -200,3 +208,49 @@ source.
 
 <!-- curatormd:record_id=68840525e30b7342b87e8fbd7aeab9a3;content_sha256=b0b178abc003bc40c14eadd35b44fe15eff9b85a70fe1ed691f14d10b09f4a78 -->
 <!-- curatormd:fingerprint=84b19649e464f0b2236e019118bfcaa32d2a2b59ea0e80f1f52f4391d8c7267d -->
+
+## Reclaim Space from Unused Supabase Images
+
+**Added:** 2026-10-02
+
+## Reclaim Space from Unused Supabase Images
+
+**Beginning — trigger and context:** On the 60 GB root filesystem, usage had reached 51 GB (84%) with 9.8 GB free, and /var/lib/containerd had grown to about 14 GB. The configured BuildKit cache was 3.217 GB, near the project’s retained 3 GB target, so cache pruning was not the appropriate first action. The request was to relieve containerd disk pressure while preserving active containers, images, volumes, and the cache reserve.
+
+**Middle — decisions and work:** Inspected df/df -i, Docker 29.1.3 storage configuration, docker system df -v, all containers and images, containerd content/snapshot usage, and the active Supabase Compose configuration. The active Supabase stack contained only api-gw, db, and auth; the six cached images for realtime, storage-api, studio, edge-runtime, postgres-meta, and supavisor were unused by any running or stopped container and were absent from the active service list. Removed only those image tags with docker image rm, allowing Docker/containerd metadata and shared layers to be handled by the runtime. Left all seven active containers, four volumes, remaining images, BuildKit cache, and daemon configuration intact. An ops Compose ps check could not interpolate POSTGRES_DB in the current shell environment; verified the running database directly with docker inspect and pg_isready instead.
+
+**End — outcome and verification:** After removal, root usage fell to 45 GB (75%) with 16 GB free, and /var/lib/containerd fell to 7.5 GB, reclaiming about 6 GB. All seven containers remained running; Supabase auth, Supabase DB, Supabase Envoy, ops PostgreSQL, and Redis Stack reported healthy, Redis returned PONG, and both PostgreSQL servers accepted connections. The 3.217 GB BuildKit cache and all volumes were unchanged. Docker's summary still reported 6.269 GB reclaimable for images although the detailed listing showed five remaining unused non-Supabase images totaling about 0.9 GB; this estimate discrepancy was not investigated. The disk-pressure repair completed without service interruption; the removed Supabase images will be pulled again if those services are enabled later.
+
+**Future utility:** Provides a conservative containerd cleanup path for this host: compare filesystem usage with Docker's image/cache accounting, verify the active Compose service set and container references, remove only clearly unused image tags via Docker, preserve volumes and the build-cache reserve, then verify disk space and dependent service health. Avoid deleting containerd snapshot/content files directly or using a broad system prune.
+
+**Project impact:** Observed: about 6 GB of root filesystem space was recovered and containerd usage decreased by about 6.5 GB; all running containers remained healthy and database/Redis probes succeeded. Expected: checking configured services and container references before image removal reduces the risk of interrupting active workloads or deleting persistent data. The residual Docker reclaimable-space estimate remains unexplained.
+
+**Follow-up:** If additional space is needed, investigate the mismatch between docker system df's 6.269 GB reclaimable estimate and detailed image references before removing other images; inspect current service and volume state again because these measurements change over time.
+
+**Verification:** Observed: about 6 GB of root filesystem space was recovered and containerd usage decreased by about 6.5 GB; all running containers remained healthy and database/Redis probes succeeded. Expected: checking configured services and container references before image removal reduces the risk of interrupting active workloads or deleting persistent data. The residual Docker reclaimable-space estimate remains unexplained.
+
+<!-- curatormd:record_id=90e2cb6484262618edecdfeaf5c9cc43;content_sha256=d9f60b7ab4c7e1201fb734b55235b3a9e08ca55edcc97bae26eddee58d38ca42 -->
+<!-- curatormd:fingerprint=ec1d6097247698847142e6565415b597d8745d8230e2586c41129665303449df -->
+
+## Remove unused Docker images conservatively
+
+**Added:** 2026-10-02
+
+## Remove unused Docker images conservatively
+
+**Beginning — trigger and context:** Docker storage accounting showed multiple reclaimable image tags and a large BuildKit cache, but active containers depended on the remaining images. The cleanup needed to recover confirmed unused image data while preserving services, volumes, and cache that had not been proven safe to remove.
+
+**Middle — decisions and work:** Compared image references with running containers and separated confirmed unused image tags from layers used by active workloads. Removed five unused image tags through Docker, leaving all nine running containers and four volumes intact. Did not delete raw containerd or OverlayFS files, and did not remove active images when Docker's reclaimable estimate conflicted with container references. The later accounting still showed about 3.921 GB marked reclaimable, so that estimate was retained as an unresolved discrepancy.
+
+**End — outcome and verification:** The five-tag image removal reported 238.2 MB reclaimed. Redis returned PONG, both PostgreSQL containers accepted connections, and all nine containers and four volumes remained intact. The additional reported reclaimable image data was not removed because its references were inconsistent; the event records a partial cleanup rather than a full disk-reclamation result.
+
+**Future utility:** Provides a repeatable safe cleanup rule: validate image use against active containers, remove only clearly unused tags through Docker, preserve volumes and active images, and investigate accounting mismatches before further deletion.
+
+**Project impact:** Observed: 238.2 MB was reclaimed while all nine running containers and four volumes remained intact and service probes succeeded. Expected: reference checks and Docker-managed removal reduce risk to active workloads and storage metadata. The residual reclaimable-space estimate remains unexplained.
+
+**Follow-up:** Reinspect current Docker image references and cache state before further cleanup; do not rely on the unresolved reclaimable estimate alone.
+
+**Verification:** Observed: 238.2 MB was reclaimed while all nine running containers and four volumes remained intact and service probes succeeded. Expected: reference checks and Docker-managed removal reduce risk to active workloads and storage metadata. The residual reclaimable-space estimate remains unexplained.
+
+<!-- curatormd:record_id=8705cd21d024b1b845925f7cf29ba88d;content_sha256=2ffe96f58304078014ac8d4725cd493d20ba04f1950fa3313d86e4a0c045d72f -->
+<!-- curatormd:fingerprint=d2b0fec99ed6ba8164b26c3b520864a9d276bba4491094659d78397668f49ece -->

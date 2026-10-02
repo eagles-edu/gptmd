@@ -1,5 +1,52 @@
 <template>
   <section class="encounter-page" aria-labelledby="encounter-title">
+    <v-dialog v-model="preflightOpen" persistent max-width="46rem" aria-labelledby="preflight-title">
+      <v-card class="preflight-card" rounded="xl" variant="elevated">
+        <v-card-text class="preflight-content">
+          <p class="eyebrow">Visit readiness</p>
+          <h2 id="preflight-title" class="preflight-title">Before you begin</h2>
+          <p class="preflight-intro">
+            This is a fictional training encounter, not medical care. Use fictional details only; never enter real patient identifiers or private health information.
+          </p>
+
+          <fieldset class="mode-options">
+            <legend>Choose how you will interact</legend>
+            <label class="mode-option">
+              <input v-model="interactionMode" type="radio" name="interaction-mode" value="transcript">
+              <span><strong>Transcript only</strong><small>Available now. Microphone access is not needed.</small></span>
+            </label>
+            <label class="mode-option">
+              <input v-model="interactionMode" type="radio" name="interaction-mode" value="audio">
+              <span><strong>Audio</strong><small>Audio conversations are not connected yet. You can check microphone permission, then continue by transcript.</small></span>
+            </label>
+          </fieldset>
+
+          <div v-if="interactionMode === 'audio'" class="microphone-check">
+            <button type="button" class="permission-button" :disabled="microphoneStatus === 'requesting'" @click="requestMicrophoneAccess">
+              {{ microphoneStatus === 'requesting' ? 'Checking microphone…' : 'Allow microphone access' }}
+            </button>
+            <p class="permission-hint">This request happens only after you select audio and press the button. The check stops the microphone immediately and does not record.</p>
+          </div>
+          <p v-if="microphoneMessage" class="permission-message" role="status" aria-live="polite">{{ microphoneMessage }}</p>
+
+          <div class="readiness-details">
+            <p><strong>Transcript readiness:</strong> available without microphone permission.</p>
+            <p><strong>Browser storage:</strong> local storage is not a secure session vault and has no permission prompt. GPTpatient does not save account or encounter data there. Any browser request for persistent storage would be separate; this app makes no such request.</p>
+          </div>
+
+          <div class="preflight-actions">
+            <label class="fictional-confirmation">
+              <input v-model="fictionalDetailsConfirmed" type="checkbox">
+              <span>I understand this is a fictional training scenario and will use fictional details only.</span>
+            </label>
+            <button type="button" class="continue-button" :disabled="!canContinue" @click="continueWithTranscript">
+              Continue with transcript
+            </button>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <div class="intro">
       <p class="eyebrow">OBGYN clinical English communication</p>
       <h1 id="encounter-title">A patient history, one question at a time</h1>
@@ -16,6 +63,17 @@
             <span class="status-dot" :class="`status-${status}`" aria-hidden="true" />
             <span>{{ statusLabel }}</span>
           </div>
+          <ol class="setup-readiness" aria-label="Patient setup readiness">
+            <li :data-ready="backendReady" :class="{ 'is-ready': backendReady }">
+              Patient profile and Redis state
+            </li>
+            <li :data-ready="imageReady" :class="{ 'is-ready': imageReady }">
+              Patient portrait loaded
+            </li>
+            <li :data-ready="inputReady" :class="{ 'is-ready': inputReady }">
+              Transcript input available
+            </li>
+          </ol>
           <h2>Patient profile</h2>
           <template v-if="profile">
             <dl class="profile-fields">
@@ -31,8 +89,8 @@
           <v-btn v-if="!profile" color="primary" :loading="pending" :disabled="pending" block @click="beginSession">
             Create patient session
           </v-btn>
-          <v-btn v-else color="primary" disabled block>
-            Assessment submission not connected
+          <v-btn v-else color="primary" :disabled="!canEnterRoom" block @click="enterRoom">
+            {{ status === 'error' ? 'Retry readiness' : 'Enter Room' }}
           </v-btn>
         </v-card-text>
       </v-card>
@@ -54,7 +112,7 @@
             <span class="message-label">{{ message.role === 'doctor' ? 'You' : 'Patient' }}</span>
             <p>{{ message.text }}</p>
           </article>
-          <p v-if="pending && profile" class="working-message">The patient is responding…</p>
+          <p v-if="status === 'working' && profile" class="working-message">The patient is responding…</p>
         </div>
 
         <form class="question-form" @submit.prevent="sendQuestion">
@@ -63,7 +121,7 @@
             id="doctor-question"
             v-model="question"
             auto-grow
-            :disabled="!profile || pending"
+            :disabled="!roomEntered || pending"
             hide-details
             maxlength="2000"
             placeholder="Ask one natural follow-up question…"
@@ -72,7 +130,7 @@
           />
           <div class="form-actions">
             <span class="mode-note">Voice capture and spoken replies follow after the API audio lane is connected.</span>
-            <v-btn color="primary" type="submit" :disabled="!profile || !question.trim() || pending" :loading="pending">
+            <v-btn color="primary" type="submit" :disabled="!roomEntered || !question.trim() || pending" :loading="pending">
               Send question
             </v-btn>
           </div>
@@ -90,22 +148,39 @@
 import { computed, ref } from 'vue'
 import { usePatientApi, type PatientProfile } from '../composables/usePatientApi'
 
-type EncounterStatus = 'idle' | 'creating' | 'ready' | 'working' | 'error'
+type EncounterStatus = 'idle' | 'creating' | 'preloading' | 'ready' | 'active' | 'working' | 'error'
 type Message = { turnId: string; role: 'doctor' | 'patient'; text: string }
+type InteractionMode = 'transcript' | 'audio'
+type MicrophoneStatus = 'not-requested' | 'requesting' | 'granted' | 'denied' | 'unavailable'
 
 const api = usePatientApi()
 const sessionId = ref<string | null>(null)
 const profile = ref<PatientProfile | null>(null)
+const backendReady = ref(false)
+const imageReady = ref(false)
+const roomEntered = ref(false)
 const question = ref('')
 const messages = ref<Message[]>([])
 const status = ref<EncounterStatus>('idle')
 const errorMessage = ref('')
-const pending = computed(() => status.value === 'creating' || status.value === 'working')
+const preflightOpen = ref(true)
+const interactionMode = ref<InteractionMode>('transcript')
+const fictionalDetailsConfirmed = ref(false)
+const microphoneStatus = ref<MicrophoneStatus>('not-requested')
+const microphoneMessage = ref('')
+const pending = computed(() => ['creating', 'preloading', 'working'].includes(status.value))
+const canContinue = computed(() => fictionalDetailsConfirmed.value && interactionMode.value === 'transcript')
+const inputReady = computed(() => interactionMode.value === 'transcript')
+const canEnterRoom = computed(() =>
+  status.value === 'ready' && backendReady.value && imageReady.value && inputReady.value
+)
 
 const statusLabel = computed(() => ({
   idle: 'Awaiting session',
   creating: 'Creating patient',
+  preloading: 'Loading patient portrait',
   ready: 'Ready for interview',
+  active: 'Ready for interview',
   working: 'Patient responding',
   error: 'Session needs attention'
 })[status.value])
@@ -119,13 +194,49 @@ const patientImage = computed(() => {
   return `/assets/images/${decade}-${profile.value.bodyType}/01.png`
 })
 
+function continueWithTranscript(): void {
+  if (!canContinue.value) return
+  preflightOpen.value = false
+}
+
+async function requestMicrophoneAccess(): Promise<void> {
+  if (interactionMode.value !== 'audio' || microphoneStatus.value === 'requesting') return
+  microphoneMessage.value = ''
+  if (!navigator.mediaDevices?.getUserMedia) {
+    microphoneStatus.value = 'unavailable'
+    microphoneMessage.value = 'Microphone access is unavailable in this browser or page context. Transcript mode remains available without it.'
+    interactionMode.value = 'transcript'
+    return
+  }
+
+  microphoneStatus.value = 'requesting'
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    for (const track of stream.getTracks()) track.stop()
+    microphoneStatus.value = 'granted'
+    microphoneMessage.value = 'Permission granted. Audio conversations are not connected yet, so continue with transcript; the microphone check has stopped.'
+  } catch {
+    microphoneStatus.value = 'denied'
+    microphoneMessage.value = 'Microphone permission was denied. No microphone is needed for transcript mode; you can continue without it.'
+  }
+  interactionMode.value = 'transcript'
+}
+
 async function beginSession(): Promise<void> {
   errorMessage.value = ''
   status.value = 'creating'
+  backendReady.value = false
+  imageReady.value = false
+  roomEntered.value = false
 
   try {
     sessionId.value ??= (await api.createSession()).sessionId
-    profile.value = await api.setupSession(sessionId.value)
+    const setup = await api.setupSession(sessionId.value)
+    profile.value = setup.patient
+    backendReady.value = setup.readiness.profile && setup.readiness.redis && setup.readiness.conversation
+    status.value = 'preloading'
+    await preloadImage(patientImage.value)
+    imageReady.value = true
     status.value = 'ready'
   } catch (error) {
     status.value = 'error'
@@ -133,9 +244,24 @@ async function beginSession(): Promise<void> {
   }
 }
 
+function enterRoom(): void {
+  if (!canEnterRoom.value) return
+  roomEntered.value = true
+  status.value = 'active'
+}
+
+function preloadImage(source: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const image = new Image()
+    image.onload = () => resolve()
+    image.onerror = () => reject(new Error('The patient portrait could not be loaded. Retry readiness to try again.'))
+    image.src = source
+  })
+}
+
 async function sendQuestion(): Promise<void> {
   const text = question.value.trim()
-  if (!sessionId.value || !profile.value || !text || pending.value) return
+  if (!sessionId.value || !profile.value || !roomEntered.value || !text || pending.value) return
 
   const turnId = createTurnId()
   messages.value.push({ turnId, role: 'doctor', text })
@@ -173,13 +299,152 @@ function calculateAge(dateOfBirth: string): number {
 function readableError(error: unknown): string {
   const message = error instanceof Error ? error.message : 'The patient service could not complete the request.'
   if (message.includes('404') || message.includes('Not Found')) {
-    return 'The GPTMD API is still a health-check scaffold. Patient session and setup endpoints have not been migrated yet.'
+    return 'The patient session or setup route is unavailable. Check the GPTMD API and confirm that its database migrations are applied.'
   }
   return message
 }
 </script>
 
 <style scoped>
+.preflight-card {
+  display: flex;
+  flex-direction: column;
+  color: var(--app-text, #183c43);
+  max-height: calc(100dvh - 2rem);
+  overflow: hidden;
+}
+
+.preflight-content {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.preflight-title {
+  font-size: clamp(1.8rem, 4vw, 2.35rem);
+  margin: 0.25rem 0 0.6rem;
+}
+
+.preflight-intro,
+.readiness-details p,
+.permission-hint,
+.permission-message {
+  color: var(--app-muted-text, #59696a);
+  line-height: 1.55;
+}
+
+.mode-options {
+  border: 0;
+  display: grid;
+  gap: 0.65rem;
+  margin: 1.3rem 0;
+  padding: 0;
+}
+
+.mode-options legend {
+  font-weight: 800;
+  margin-bottom: 0.65rem;
+}
+
+.mode-option {
+  align-items: flex-start;
+  background: var(--app-surface, #fff);
+  border: 1px solid rgb(31 74 77 / 20%);
+  border-radius: 0.8rem;
+  cursor: pointer;
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.9rem;
+}
+
+.mode-option input,
+.fictional-confirmation input {
+  accent-color: #176d70;
+  flex: 0 0 auto;
+  height: 1.1rem;
+  margin-top: 0.15rem;
+  width: 1.1rem;
+}
+
+.mode-option span {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.mode-option small {
+  color: var(--app-muted-text, #59696a);
+  line-height: 1.45;
+}
+
+.microphone-check {
+  margin: 0.9rem 0 1.1rem;
+}
+
+.permission-button,
+.continue-button {
+  background: #176d70;
+  border: 0;
+  border-radius: 0.55rem;
+  color: #fff;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 750;
+  min-height: 2.9rem;
+  padding: 0.7rem 1rem;
+}
+
+.permission-button:disabled,
+.continue-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.permission-hint,
+.permission-message {
+  font-size: 0.9rem;
+  margin: 0.65rem 0 0;
+}
+
+.readiness-details {
+  background: #eff6f3;
+  border-radius: 0.8rem;
+  margin: 1.2rem 0;
+  padding: 0.8rem 1rem;
+}
+
+.readiness-details p {
+  margin: 0.35rem 0;
+}
+
+.fictional-confirmation {
+  align-items: flex-start;
+  cursor: pointer;
+  display: flex;
+  gap: 0.7rem;
+  line-height: 1.5;
+  margin: 0.15rem 0 0.5rem;
+}
+
+.preflight-actions {
+  background: rgb(var(--v-theme-surface));
+  bottom: 0;
+  display: grid;
+  gap: 0.35rem;
+  padding: 0.7rem 0 0.15rem;
+  position: sticky;
+}
+
+.continue-button {
+  justify-self: end;
+}
+
+.permission-button:focus-visible,
+.continue-button:focus-visible,
+.mode-option:focus-within,
+.fictional-confirmation:focus-within {
+  outline: 3px solid #c27b43;
+  outline-offset: 3px;
+}
+
 .encounter-page {
   margin: 0 auto;
   max-width: 1280px;
@@ -243,6 +508,30 @@ function readableError(error: unknown): string {
   margin-bottom: 1.2rem;
 }
 
+.setup-readiness {
+  color: var(--app-text-muted);
+  display: grid;
+  font-size: 0.86rem;
+  gap: 0.4rem;
+  list-style: none;
+  margin: 0 0 1.2rem;
+  padding: 0;
+}
+
+.setup-readiness li::before {
+  color: #9a641b;
+  content: '◷';
+  display: inline-block;
+  font-weight: 800;
+  margin-right: 0.5rem;
+  width: 1rem;
+}
+
+.setup-readiness li.is-ready::before {
+  color: #187247;
+  content: '✓';
+}
+
 .status-dot {
   background: #94a3b8;
   border-radius: 50%;
@@ -255,7 +544,12 @@ function readableError(error: unknown): string {
   box-shadow: 0 0 0 4px var(--app-success-soft);
 }
 
-.status-creating, .status-working {
+.status-active {
+  background: var(--app-success);
+  box-shadow: 0 0 0 4px var(--app-success-soft);
+}
+
+.status-creating, .status-preloading, .status-working {
   background: var(--app-warning);
   box-shadow: 0 0 0 4px var(--app-warning-soft);
 }

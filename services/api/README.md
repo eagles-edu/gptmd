@@ -55,6 +55,7 @@ Apply the schema as the application database owner after PostgreSQL is ready:
 ```bash
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/001_auth_sessions.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/002_patient_scenario_setup.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/003_patient_profile_binding.sql
 ```
 
 Provision a tenant row in `tenants`, its active `(tenant_id, subject_id)` in
@@ -78,7 +79,14 @@ so concurrent matching requests share the committed result and a changed key
 receives `409`. The validated private profile, digest, and Conversation ID are
 committed together with the session's transition to `ready`. A database
 trigger rejects updates to saved scenario rows. The setup response contains
-only the learner-safe profile projection.
+only the learner-safe profile projection. Setup initializes the session and
+per-visit patient JSON documents in Redis before calling the profile generator;
+after PostgreSQL commits the accepted profile, its five-value private setup
+projection, digest, version, and Conversation ID are mirrored into Redis. A
+matching retry repairs a missing Redis mirror from the immutable PostgreSQL
+scenario without creating a new provider Conversation. Apply migration 003
+before starting this version of the API; `/readyz` checks that the binding
+column exists.
 
 ## Local development
 

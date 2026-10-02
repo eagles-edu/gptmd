@@ -1,19 +1,19 @@
 <template>
-  <main class="checkout-demo" aria-labelledby="checkout-title">
+  <main class="checkout-demo" :class="{ 'theme-dark': isDark }" aria-labelledby="checkout-title">
     <div class="demo-banner">
       <span class="demo-dot" aria-hidden="true"/>
-      VISUAL MOCKUP · SAMPLE PRICES · NO PAYMENT IS PROCESSED
+      CHECKOUT PREVIEW · SAMPLE PRICES · NO PAYMENT IS PROCESSED
     </div>
 
     <header class="checkout-heading">
       <div>
-        <p class="eyebrow">GPTpatient membership</p>
+        <p class="eyebrow">GPTpatient membership · Gói GPTpatient</p>
         <h1 id="checkout-title">Practice with confidence.</h1>
-        <p class="heading-copy">Choose your access period and review a secure checkout concept.</p>
+        <p class="heading-copy">Choose an access period and review a digital service checkout preview.</p>
       </div>
-      <div class="secure-note">
-        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10V7a6 6 0 0 1 12 0v3M5 10h14v11H5z" /><path d="M12 14v3" /></svg>
-        <span><strong>Secure checkout</strong><small>Protected payment flow</small></span>
+      <div class="secure-note delivery-note">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v14H4z" /><path d="M4 9h16M8 5v4m8-4v4" /></svg>
+        <span><strong>Digital access</strong><small>No physical shipment</small></span>
       </div>
     </header>
 
@@ -26,6 +26,7 @@
         :class="{ 'is-active': stage === index, 'is-complete': stage > index }"
         :aria-current="stage === index ? 'step' : undefined"
         :aria-label="`Stage ${index + 1}: ${label}`"
+        :disabled="index > stage"
         @click="stage = index"
       >
         <span class="step-number">
@@ -78,15 +79,42 @@
           </div>
           <div class="panel-actions">
             <span class="quiet-copy">You can review everything before payment.</span>
-            <button class="primary-button" type="button" @click="stage = 1">Continue <span aria-hidden="true">→</span></button>
+            <button class="primary-button" type="button" @click="addPlanToCart">{{ hasPlanInCart ? 'Update plan in cart' : 'Add plan to cart' }} <span aria-hidden="true">→</span></button>
           </div>
         </template>
 
         <template v-else-if="stage === 1">
           <div class="panel-heading">
-            <p class="panel-kicker">02 · Review your order</p>
+            <p class="panel-kicker">02 · Contact and delivery · Liên hệ và cung cấp</p>
+            <h2>Where should access details go?</h2>
+            <p>Thông tin truy cập sẽ được gửi đến đâu?</p>
+            <p>This preview keeps the information on this page only. It is not sent or saved. · Bản xem trước chỉ giữ thông tin trên trang này, không gửi hoặc lưu lại.</p>
+          </div>
+          <form class="buyer-details" @submit.prevent="stage = 2">
+            <label class="field-label" for="buyer-name">Name <span>Họ và tên</span></label>
+            <input id="buyer-name" v-model.trim="buyerName" autocomplete="name" name="name" type="text" required>
+            <label class="field-label" for="buyer-email">Email for service information <span>Email nhận thông tin dịch vụ</span></label>
+            <input id="buyer-email" v-model.trim="buyerEmail" autocomplete="email" name="email" type="email" required>
+            <label class="field-label" for="billing-address">Billing/contact address <span>Địa chỉ thanh toán/liên hệ</span></label>
+            <textarea id="billing-address" v-model.trim="billingAddress" autocomplete="street-address" name="address" rows="3" required/>
+            <label class="field-label" for="delivery-method">Delivery method <span>Phương thức cung cấp</span></label>
+            <select id="delivery-method" v-model="deliveryMethod" name="delivery-method" required>
+              <option value="digital">Digital workspace access · Truy cập không gian làm việc số</option>
+            </select>
+            <p class="field-help">No package or carrier is used. Workspace access would be provided after a confirmed payment; that activation is not connected yet.</p>
+            <p class="field-help" lang="vi">Không giao hàng vật lý. Quyền truy cập sẽ được cấp sau khi xác nhận thanh toán; chức năng kích hoạt hiện chưa được kết nối.</p>
+            <div class="panel-actions">
+              <button class="text-button" type="button" @click="stage = 0">← Change plan</button>
+              <button class="primary-button" type="submit">Review details · Xem lại thông tin <span aria-hidden="true">→</span></button>
+            </div>
+          </form>
+        </template>
+
+        <template v-else-if="stage === 2">
+          <div class="panel-heading">
+            <p class="panel-kicker">03 · Review your order</p>
             <h2>Everything look right?</h2>
-            <p>Your membership begins after your payment is confirmed.</p>
+            <p>This is a preview. No order has been submitted.</p>
           </div>
           <div class="order-review">
             <div class="review-icon" aria-hidden="true">
@@ -103,88 +131,75 @@
               <li><span aria-hidden="true">✓</span> Progress tools for your learning</li>
             </ul>
           </div>
+          <dl class="buyer-review">
+            <div><dt>Name</dt><dd>{{ buyerName }}</dd></div>
+            <div><dt>Email</dt><dd>{{ buyerEmail }}</dd></div>
+            <div><dt>Billing/contact address</dt><dd>{{ billingAddress }}</dd></div>
+            <div><dt>Delivery</dt><dd>Digital workspace access</dd></div>
+          </dl>
+          <label class="policy-acknowledgement">
+            <input v-model="acceptedPolicies" type="checkbox" name="policy-acknowledgement">
+            <span>
+              <span>I acknowledge that I have reviewed the <NuxtLink to="/service-provision" target="_blank" rel="noopener noreferrer">service provision</NuxtLink>, <NuxtLink to="/refunds" target="_blank" rel="noopener noreferrer">refund</NuxtLink>, and <NuxtLink to="/terms" target="_blank" rel="noopener noreferrer">terms</NuxtLink> information for this preview.</span>
+              <span lang="vi">Tôi xác nhận đã đọc thông tin <NuxtLink to="/service-provision" target="_blank" rel="noopener noreferrer">cung cấp dịch vụ</NuxtLink>, <NuxtLink to="/refunds" target="_blank" rel="noopener noreferrer">hoàn tiền</NuxtLink> và <NuxtLink to="/terms" target="_blank" rel="noopener noreferrer">điều khoản</NuxtLink> của bản xem trước này.</span>
+            </span>
+          </label>
           <div class="panel-actions">
-            <button class="text-button" type="button" @click="stage = 0">← Change plan</button>
-            <button class="primary-button" type="button" @click="stage = 2">Continue to payment <span aria-hidden="true">→</span></button>
+            <button class="text-button" type="button" @click="stage = 1">← Edit details</button>
+            <button class="primary-button" type="button" :disabled="!acceptedPolicies" @click="stage = 3">Pay via ACB2Pay sandbox <span aria-hidden="true">→</span></button>
           </div>
-        </template>
-
-        <template v-else-if="stage === 2">
-          <div class="panel-heading">
-            <p class="panel-kicker">03 · Payment method</p>
-            <h2>Choose how to pay</h2>
-            <p>Your payment details are handled by the payment provider.</p>
-          </div>
-          <button class="payment-choice is-chosen" type="button" aria-pressed="true">
-            <span class="choice-radio" aria-hidden="true"><span/></span>
-            <span class="gpay-wordmark" role="img" aria-label="Google Pay"><span class="google-g">G</span><strong>Pay</strong></span>
-            <span class="choice-detail"><strong>Google Pay</strong><small>Choose a saved card in Google Pay</small></span>
-            <svg class="choice-chevron" viewBox="0 0 24 24" aria-hidden="true"><path d="m9 18 6-6-6-6" /></svg>
-          </button>
-          <div class="provider-note">
-            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 22s8-4 8-11V5l-8-3-8 3v6c0 7 8 11 8 11Z" /><path d="m9 12 2 2 4-4" /></svg>
-            <span>Google Pay securely shares a payment token with the payment processor. GPTpatient does not store your card details.</span>
-          </div>
-          <div class="panel-actions">
-            <button class="text-button" type="button" @click="stage = 1">← Back to order</button>
-            <button class="primary-button" type="button" @click="stage = 3"><span class="google-g">G</span> Continue with Google Pay</button>
-          </div>
-        </template>
-
-        <template v-else-if="stage === 3">
-          <div class="panel-heading sheet-intro">
-            <p class="panel-kicker">04 · Google Pay payment screen</p>
-            <h2>Confirm with Google Pay</h2>
-            <p>This is a visual preview of the payment sheet shown to your customer.</p>
-          </div>
-          <div class="pay-sheet" role="group" aria-label="Simulated Google Pay payment sheet">
-            <div class="sheet-topline"><span class="gpay-wordmark"><span class="google-g">G</span><strong>Pay</strong></span><span class="demo-chip">PREVIEW</span></div>
-            <div class="sheet-merchant"><span class="merchant-mark">g</span><span><strong>GPTpatient</strong><small>Secure online payment</small></span></div>
-            <div class="sheet-amount"><small>Pay</small><strong>{{ priceLabel }}</strong><span>{{ termLabel }} · one-time</span></div>
-            <div class="sheet-divider"/>
-            <div class="sheet-row"><span class="sheet-row-icon card-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="M3 10h18" /></svg></span><span><strong>Visa ···· {{ cardChoice }}</strong><small>Personal card</small></span><button type="button" class="change-button" @click="cardChoice = cardChoice === '4242' ? '1108' : '4242'">Change</button></div>
-            <div class="sheet-row"><span class="sheet-row-icon contact-icon" aria-hidden="true"><svg viewBox="0 0 24 24"><circle cx="12" cy="8" r="4" /><path d="M4 21a8 8 0 0 1 16 0" /></svg></span><span><strong>Alex Morgan</strong><small>alex.morgan@example.com</small></span><svg class="sheet-check" viewBox="0 0 20 20" aria-hidden="true"><path d="m4 10 4 4 8-8" /></svg></div>
-            <p class="sheet-disclaimer">This screen is simulated for layout review. A live Google Pay sheet is provided by Google at checkout.</p>
-            <button class="sheet-pay-button" type="button" @click="stage = 4"><span>Pay</span><strong>{{ priceLabel }}</strong></button>
-            <button class="sheet-cancel" type="button" @click="stage = 2">Cancel</button>
-          </div>
-          <div class="actual-sheet-note"><strong>Google’s screenshot requirement:</strong> this preview cannot replace the real payment-sheet evidence. Capture a live sheet using another device to photograph the Android screen.</div>
         </template>
 
         <template v-else>
-          <div class="success-view">
-            <span class="success-mark" aria-hidden="true"><svg viewBox="0 0 32 32"><path d="m8 16 5 5L24 10" /></svg></span>
-            <p class="panel-kicker">05 · Post-purchase</p>
-            <h2>Payment complete</h2>
-            <p>Your practice access is ready. We’ve sent the purchase details to your email.</p>
-            <div class="success-receipt"><span>{{ termLabel }} access</span><strong>{{ priceLabel }}</strong><small>Order # GPT-20481 · Sample confirmation</small></div>
-            <div class="success-actions"><button class="primary-button" type="button" @click="stage = 0">Return to plans <span aria-hidden="true">↗</span></button><button class="text-button" type="button" @click="stage = 1">View order details</button></div>
+          <div class="panel-heading">
+            <p class="panel-kicker">04 · ACB2Pay sandbox</p>
+            <h2>Sandbox connection pending</h2>
+            <p>The ACB2Pay handoff screen is ready for integration. The bank's merchant-specific API package and test credentials are still pending.</p>
+            <p lang="vi">Màn hình chuyển tiếp ACB2Pay đã sẵn sàng để tích hợp. Tài liệu API và thông tin kiểm thử riêng cho đơn vị bán hàng đang chờ ngân hàng cung cấp.</p>
+          </div>
+          <div class="payment-status" role="status" aria-live="polite">
+            <strong>Payment is unavailable in this preview</strong>
+            <p>No payment request was sent. No order was created, no charge was made, and no workspace access was changed.</p>
+            <p lang="vi">Bản xem trước không gửi yêu cầu thanh toán, không tạo đơn hàng, không thu tiền và không thay đổi quyền truy cập.</p>
+          </div>
+          <div class="panel-actions">
+            <button class="text-button" type="button" @click="stage = 2">← Back to order review</button>
+            <span class="quiet-copy">No provider request was made from this preview.</span>
           </div>
         </template>
       </section>
 
       <aside class="summary-card" aria-label="Order summary">
-        <div class="summary-top"><p>ORDER SUMMARY</p><span class="summary-lock" role="img" aria-label="Secure"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 10V7a6 6 0 0 1 12 0v3M5 10h14v11H5z" /></svg></span></div>
-        <div class="summary-product"><span class="summary-logo">GPT</span><div><strong>GPTpatient</strong><small>Clinical communication practice</small></div></div>
-        <div class="summary-plan"><span>{{ termLabel }}</span><button v-if="stage < 2" type="button" @click="stage = 0">Edit</button></div>
-        <div class="summary-line"><span>Sample amount</span><strong>{{ priceLabel }}</strong></div>
-        <div class="summary-line muted-line"><span>Tax</span><span>Calculated at checkout</span></div>
-        <div class="summary-total"><span>Total</span><strong>{{ priceLabel }}<small>USD</small></strong></div>
-        <div class="summary-renewal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M5.6 9A7 7 0 0 1 18 6l2 2M4 16l2 2a7 7 0 0 0 12.4-3" /></svg><span>This is a one-time purchase. Renew only when you decide.</span></div>
-        <div class="summary-foot"><span>Encrypted checkout</span><span>·</span><span>Privacy protected</span></div>
+        <div class="summary-top"><p>CART PREVIEW</p><span class="cart-count">{{ cartCountLabel }}</span></div>
+        <div v-if="hasPlanInCart" class="summary-product"><span class="summary-logo">GPT</span><div><strong>GPTpatient</strong><small>Clinical communication practice</small></div></div>
+        <p v-else class="empty-cart">Choose an access plan, then add it here.</p>
+        <template v-if="hasPlanInCart">
+          <div class="summary-plan"><span>{{ termLabel }}</span><button v-if="stage === 0" type="button" @click="stage = 0">Edit</button></div>
+          <div class="summary-line"><span>Sample amount</span><strong>{{ priceLabel }}</strong></div>
+          <div class="summary-line muted-line"><span>Taxes and fees</span><span>Not calculated in preview</span></div>
+          <div class="summary-total"><span>Total</span><strong>{{ priceLabel }}<small>USD</small></strong></div>
+          <div class="summary-renewal"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5" /><path d="M5.6 9A7 7 0 0 1 18 6l2 2M4 16l2 2a7 7 0 0 0 12.4-3" /></svg><span>This is a one-time purchase. Renew only when you decide.</span></div>
+        </template>
+        <div class="summary-foot"><span>Digital access</span><span>·</span><span>Preview only</span></div>
       </aside>
     </div>
-    <footer class="checkout-footer"><span>Need help? <NuxtLink to="/contact">Contact support</NuxtLink></span><span>Payments are securely processed by your selected provider.</span></footer>
+    <footer class="checkout-footer"><span>Need help? <NuxtLink to="/contact">Contact support</NuxtLink></span><span>ACB2Pay sandbox is not connected.</span></footer>
   </main>
 </template>
 
 <script setup lang="ts">
 useHead({ title: 'Checkout preview | GPTpatient' })
 
-const stageLabels = ['Select plan', 'Review order', 'Payment method', 'Google Pay', 'Complete']
+const stageLabels = ['Plan', 'Details', 'Review', 'Pay']
+const { isDark } = useAppTheme()
 const stage = ref(0)
+const hasPlanInCart = ref(false)
 const selectedTerm = ref<'three' | 'six' | 'twelve'>('twelve')
-const cardChoice = ref<'4242' | '1108'>('4242')
+const buyerName = ref('')
+const buyerEmail = ref('')
+const billingAddress = ref('')
+const deliveryMethod = ref('digital')
+const acceptedPolicies = ref(false)
 const planDetails = {
   three: { termLabel: '3-month access', priceLabel: '$60.00' },
   six: { termLabel: '6-month access', priceLabel: '$120.00' },
@@ -193,6 +208,12 @@ const planDetails = {
 const selectedPlan = computed(() => planDetails[selectedTerm.value])
 const termLabel = computed(() => selectedPlan.value.termLabel)
 const priceLabel = computed(() => selectedPlan.value.priceLabel)
+const cartCountLabel = computed(() => hasPlanInCart.value ? '1 item' : '0 items')
+
+function addPlanToCart() {
+  hasPlanInCart.value = true
+  stage.value = 1
+}
 </script>
 
 <style scoped>
@@ -377,6 +398,14 @@ h1, h2, h3, p {
   border-color: #a9d8cd;
 }
 
+.step-button:disabled {
+  cursor: default;
+}
+
+.step-button:disabled:not(.is-active) {
+  opacity: 0.62;
+}
+
 .checkout-layout {
   align-items: start;
   display: grid;
@@ -421,6 +450,55 @@ h1, h2, h3, p {
   margin: 0;
   min-width: 0;
   padding: 0;
+}
+
+.buyer-details {
+  display: grid;
+  gap: 0.55rem;
+}
+
+.field-label {
+  color: #27465b;
+  font-size: 0.8rem;
+  font-weight: 700;
+  margin-top: 0.35rem;
+}
+
+.field-label span {
+  color: #667a8b;
+  display: block;
+  font-size: 0.69rem;
+  font-weight: 500;
+  margin-top: 0.12rem;
+}
+
+.buyer-details input, .buyer-details textarea, .buyer-details select {
+  background: #fff;
+  border: 1px solid #bac9d2;
+  border-radius: 0.55rem;
+  color: #203b52;
+  font: inherit;
+  font-size: 0.9rem;
+  min-height: 2.8rem;
+  padding: 0.65rem 0.75rem;
+  width: 100%;
+}
+
+.buyer-details textarea {
+  min-height: 6rem;
+  resize: vertical;
+}
+
+.buyer-details input:focus-visible, .buyer-details textarea:focus-visible, .buyer-details select:focus-visible, .policy-acknowledgement input:focus-visible {
+  outline: 3px solid #e8c879;
+  outline-offset: 2px;
+}
+
+.field-help {
+  color: #667a8b;
+  font-size: 0.74rem;
+  line-height: 1.5;
+  margin: 0.15rem 0 0;
 }
 
 .plan-option {
@@ -599,6 +677,13 @@ h1, h2, h3, p {
   transform: translateY(-1px);
 }
 
+.primary-button:disabled {
+  background: #80918f;
+  border-color: #80918f;
+  cursor: not-allowed;
+  transform: none;
+}
+
 .primary-button:focus-visible, .text-button:focus-visible, .step-button:focus-visible, .plan-option:focus-visible, .payment-choice:focus-visible, .sheet-pay-button:focus-visible, .sheet-cancel:focus-visible, .change-button:focus-visible {
   outline: 3px solid #e8c879;
   outline-offset: 3px;
@@ -678,6 +763,84 @@ h1, h2, h3, p {
 
 .included-section {
   margin: 1.5rem 0 0.2rem;
+}
+
+.buyer-review {
+  background: #f6f9fa;
+  border: 1px solid #e4edf2;
+  border-radius: 0.75rem;
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.2rem 0;
+  padding: 1rem;
+}
+
+.buyer-review div {
+  min-width: 0;
+}
+
+.buyer-review dt {
+  color: #667a8b;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.buyer-review dd {
+  color: #203b52;
+  font-size: 0.83rem;
+  margin: 0.15rem 0 0;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.policy-acknowledgement {
+  align-items: flex-start;
+  color: #506579;
+  display: flex;
+  font-size: 0.77rem;
+  gap: 0.55rem;
+  line-height: 1.5;
+}
+
+.policy-acknowledgement > span > span {
+  display: block;
+}
+
+.policy-acknowledgement > span > span + span {
+  margin-top: 0.35rem;
+}
+
+.policy-acknowledgement input {
+  accent-color: #087b75;
+  flex: 0 0 auto;
+  height: 1rem;
+  margin: 0.15rem 0 0;
+  width: 1rem;
+}
+
+.policy-acknowledgement a {
+  color: #08756f;
+  font-weight: 700;
+  text-underline-offset: 0.15em;
+}
+
+.payment-status {
+  background: #fff7e5;
+  border: 1px solid #f2dfb3;
+  border-radius: 0.75rem;
+  color: #765712;
+  padding: 1rem;
+}
+
+.payment-status strong {
+  display: block;
+  font-size: 0.85rem;
+}
+
+.payment-status p {
+  font-size: 0.78rem;
+  line-height: 1.55;
+  margin: 0.4rem 0 0;
 }
 
 .included-section h3 {
@@ -1113,14 +1276,10 @@ h1, h2, h3, p {
   margin: 0;
 }
 
-.summary-lock svg {
-  fill: none;
-  height: 1rem;
-  stroke: #087b75;
-  stroke-linecap: round;
-  stroke-linejoin: round;
-  stroke-width: 1.6;
-  width: 1rem;
+.cart-count {
+  color: #087b75;
+  font-size: 0.7rem;
+  font-weight: 750;
 }
 
 .summary-product {
@@ -1128,6 +1287,13 @@ h1, h2, h3, p {
   display: flex;
   gap: 0.7rem;
   padding: 1.1rem 0 1rem;
+}
+
+.empty-cart {
+  color: #748695;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  margin: 1rem 0;
 }
 
 .summary-logo {
@@ -1274,6 +1440,95 @@ h1, h2, h3, p {
 
 .checkout-footer a:hover {
   text-decoration: underline;
+}
+
+.checkout-demo.theme-dark .checkout-panel,
+.checkout-demo.theme-dark .summary-card,
+.checkout-demo.theme-dark .secure-note,
+.checkout-demo.theme-dark .plan-option,
+.checkout-demo.theme-dark .order-review,
+.checkout-demo.theme-dark .buyer-review,
+.checkout-demo.theme-dark .buyer-details input,
+.checkout-demo.theme-dark .buyer-details textarea,
+.checkout-demo.theme-dark .buyer-details select {
+  background: var(--app-surface);
+  border-color: var(--app-border);
+  color: var(--app-text);
+}
+
+.checkout-demo.theme-dark .plan-option.plan-selected,
+.checkout-demo.theme-dark .review-icon,
+.checkout-demo.theme-dark .summary-logo,
+.checkout-demo.theme-dark .summary-renewal {
+  background: var(--app-surface-accent);
+}
+
+.checkout-demo.theme-dark .checkout-heading h1,
+.checkout-demo.theme-dark .panel-heading h2,
+.checkout-demo.theme-dark .plan-copy strong,
+.checkout-demo.theme-dark .plan-price strong,
+.checkout-demo.theme-dark .summary-line strong,
+.checkout-demo.theme-dark .review-copy strong,
+.checkout-demo.theme-dark .review-price,
+.checkout-demo.theme-dark .included-section h3,
+.checkout-demo.theme-dark .summary-product strong,
+.checkout-demo.theme-dark .summary-total,
+.checkout-demo.theme-dark .summary-total strong,
+.checkout-demo.theme-dark .field-label,
+.checkout-demo.theme-dark .buyer-review dd {
+  color: var(--app-text-strong);
+}
+
+.checkout-demo.theme-dark .heading-copy,
+.checkout-demo.theme-dark .panel-heading > p:last-child,
+.checkout-demo.theme-dark .field-label span,
+.checkout-demo.theme-dark .field-help,
+.checkout-demo.theme-dark .review-copy small,
+.checkout-demo.theme-dark .buyer-review dt,
+.checkout-demo.theme-dark .summary-plan,
+.checkout-demo.theme-dark .summary-line,
+.checkout-demo.theme-dark .summary-top p,
+.checkout-demo.theme-dark .empty-cart,
+.checkout-demo.theme-dark .summary-product small,
+.checkout-demo.theme-dark .summary-foot,
+.checkout-demo.theme-dark .summary-total small,
+.checkout-demo.theme-dark .checkout-footer {
+  color: var(--app-text-muted);
+}
+
+.checkout-demo.theme-dark .step-button,
+.checkout-demo.theme-dark .text-button,
+.checkout-demo.theme-dark .policy-acknowledgement a,
+.checkout-demo.theme-dark .checkout-footer a {
+  color: var(--app-accent);
+}
+
+.checkout-demo.theme-dark .step-number,
+.checkout-demo.theme-dark .panel-actions,
+.checkout-demo.theme-dark .summary-top {
+  border-color: var(--app-border);
+}
+
+.checkout-demo.theme-dark .summary-renewal {
+  color: var(--app-text);
+}
+
+.checkout-demo.theme-dark .summary-renewal svg {
+  stroke: var(--app-accent);
+}
+
+.checkout-demo.theme-dark .cart-count {
+  color: var(--app-accent);
+}
+
+.checkout-demo.theme-dark .payment-status {
+  background: var(--app-warning-soft);
+  border-color: var(--app-warning);
+  color: var(--app-warning);
+}
+
+.checkout-demo.theme-dark .payment-status p {
+  color: var(--app-text);
 }
 
 @media (width <= 850px) {

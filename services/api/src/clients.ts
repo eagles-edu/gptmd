@@ -4,6 +4,7 @@ import { createClient } from 'redis'
 import type { ApiDependencies, PostgresProbe, RedisProbe } from './app.js'
 import { generatePatientScenario } from './patient-profile.js'
 import { createPostgresSessionStore } from './session-store.ts'
+import { createRedisPatientStateStore } from './patient-state-store.ts'
 
 export interface ServiceClients {
   dependencies: ApiDependencies
@@ -54,7 +55,12 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
                to_regclass('public.tenant_memberships') IS NOT NULL AND
                to_regclass('public.tenant_entitlements') IS NOT NULL AND
                to_regclass('public.tenant_monthly_usage') IS NOT NULL AND
-               to_regclass('public.app_sessions') IS NOT NULL AS ready`
+               to_regclass('public.app_sessions') IS NOT NULL AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'app_sessions'
+                   AND column_name = 'patient_profile_id'
+               ) AS ready`
           )
           if (!result.rows[0]?.ready) throw new Error('API schema migration is missing')
           return result
@@ -91,7 +97,12 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
         audience: env.API_AUTH_JWT_AUDIENCE ?? null,
         jwksUrl: env.API_AUTH_JWT_JWKS_URL ?? null
       },
-      sessionStore: postgresPool ? createPostgresSessionStore(postgresPool) : null
+      sessionStore: postgresPool
+        ? createPostgresSessionStore(
+            postgresPool,
+            redisClient ? createRedisPatientStateStore(redisClient) : null
+          )
+        : null
     },
     async close() {
       await Promise.all([

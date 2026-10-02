@@ -7,6 +7,17 @@ export function useGptmdAuth() {
   const selectedTenantId = useState<string | null>('gptmd-selected-tenant', () => null)
   const isConfigured = computed(() => Boolean(config.public.supabaseUrl && config.public.supabaseKey))
 
+  async function loadTenantIds(): Promise<string[]> {
+    const tenants = await $fetch<unknown>(`${String(config.public.apiBase).replace(/\/$/, '')}/api/account/tenants`, {
+      headers: await accessHeaders(false)
+    })
+    if (!tenants || typeof tenants !== 'object' || !Array.isArray((tenants as TenantListResponse).tenantIds)
+      || !(tenants as TenantListResponse).tenantIds.every((tenantId) => typeof tenantId === 'string' && tenantId.length > 0)) {
+      throw new Error('The account service returned an invalid tenant list.')
+    }
+    return (tenants as TenantListResponse).tenantIds
+  }
+
   async function accessHeaders(requireTenant = true): Promise<Record<string, string>> {
     const accessToken = session.value?.access_token
     if (!accessToken) {
@@ -43,7 +54,7 @@ export function useGptmdAuth() {
     const requestedPath = route.query.redirect
     redirectInfo.path.value = typeof requestedPath === 'string' && requestedPath.startsWith('/') && !requestedPath.startsWith('//')
       ? requestedPath
-      : '/account'
+      : '/'
     const redirectTo = new URL('/confirm', window.location.origin).toString()
     const { error } = await supabase.auth.signInWithOAuth({
       provider: 'google',
@@ -59,5 +70,5 @@ export function useGptmdAuth() {
     await navigateTo('/login')
   }
 
-  return { user, session, selectedTenantId, isConfigured, accessHeaders, signInWithGoogle, signOut }
+  return { user, session, selectedTenantId, isConfigured, accessHeaders, loadTenantIds, signInWithGoogle, signOut }
 }

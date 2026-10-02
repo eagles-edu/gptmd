@@ -132,11 +132,11 @@ Record download requests and outcomes by adding events to the background stream 
 
 #### Signed-in home and visit entry
 
-- [ ] `i01` Show the signed-in home page after authentication
-- [ ] `i02` Link Instructions and History-Taking Overview
-- [ ] `i03` Show Account Status: usage · metrics · downloads · payment gateway
-- [ ] `i04` Provide Contact Us entry point
-- [ ] `i05` Begin Visit opens the encounter screen with account context
+- [x] `i01` Show the signed-in home page after authentication
+- [x] `i02` Link Instructions and History-Taking Overview
+- [x] `i03` Show Account Status: usage · metrics · downloads · payment gateway
+- [x] `i04` Provide Contact Us entry point
+- [x] `i05` Begin Visit opens the encounter screen with account context
 
 #### Encounter preflight and browser capabilities
 

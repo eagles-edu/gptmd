@@ -16,6 +16,10 @@ export default defineNuxtConfig({
     '/contact': { prerender: true },
     '/help': { prerender: true },
     '/history-taking': { prerender: true },
+    '/privacy': { prerender: true },
+    '/refunds': { prerender: true },
+    '/service-provision': { prerender: true },
+    '/terms': { prerender: true },
     '/tutorial': { prerender: true }
   },
   runtimeConfig: {
@@ -26,7 +30,13 @@ export default defineNuxtConfig({
       paymentPortalUrl: process.env.NUXT_PUBLIC_PAYMENT_PORTAL_URL ?? '',
       paymentCheckout6MonthUrl: process.env.NUXT_PUBLIC_PAYMENT_CHECKOUT_6_MONTH_URL ?? '',
       paymentCheckout12MonthUrl: process.env.NUXT_PUBLIC_PAYMENT_CHECKOUT_12_MONTH_URL ?? '',
-      supportEmail: process.env.NUXT_PUBLIC_SUPPORT_EMAIL ?? ''
+      supportEmail: process.env.NUXT_PUBLIC_SUPPORT_EMAIL ?? '',
+      merchantLegalName: process.env.NUXT_PUBLIC_MERCHANT_LEGAL_NAME ?? '',
+      merchantTaxId: process.env.NUXT_PUBLIC_MERCHANT_TAX_ID ?? '',
+      merchantTaxIdIssued: process.env.NUXT_PUBLIC_MERCHANT_TAX_ID_ISSUED ?? '',
+      merchantAddress: process.env.NUXT_PUBLIC_MERCHANT_ADDRESS ?? '',
+      merchantPhone: process.env.NUXT_PUBLIC_MERCHANT_PHONE ?? '',
+      moitVerificationUrl: process.env.NUXT_PUBLIC_MOIT_VERIFICATION_URL ?? ''
     }
   },
   vuetify: {

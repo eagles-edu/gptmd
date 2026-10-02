@@ -8,16 +8,22 @@
       <span>Signed in as {{ user.email || 'Google account' }}</span>
       <button type="button" class="sign-out" @click="signOut">Sign out</button>
     </div>
-    <NuxtLink v-else-if="isConfigured" class="sign-in-link" to="/login">Sign in with Google</NuxtLink>
+    <NuxtLink v-else-if="isConfigured" class="sign-in-link" to="/login?redirect=/account">Sign in with Google</NuxtLink>
 
     <section v-if="user && tenantIds.length" class="workspace-picker" aria-labelledby="workspace-title">
       <label id="workspace-title" for="workspace-select">GPTpatient workspace</label>
       <select id="workspace-select" v-model="selectedTenantId">
         <option v-for="(tenantId, index) in tenantIds" :key="tenantId" :value="tenantId">
-          Workspace {{ index + 1 }} · {{ tenantId }}
+          Workspace {{ index + 1 }}
         </option>
       </select>
     </section>
+    <div v-if="user" class="membership-status" aria-live="polite">
+      <span v-if="membershipState === 'loading'">Loading workspace access…</span>
+      <span v-else-if="membershipState === 'ready' && tenantIds.length === 1">Workspace access is ready.</span>
+      <span v-else-if="membershipState === 'ready' && tenantIds.length > 1">{{ tenantIds.length }} workspaces are available.</span>
+      <button v-else-if="membershipState === 'error'" class="retry-button" type="button" @click="loadMemberships">Retry workspace access</button>
+    </div>
     <v-alert v-if="membershipMessage" type="info" variant="tonal" class="connection-note">
       {{ membershipMessage }}
     </v-alert>
@@ -45,7 +51,7 @@
       <section class="status-card payment-card" aria-labelledby="payment-title">
         <div class="card-heading"><span aria-hidden="true">$</span><h2 id="payment-title">Payment gateway</h2></div>
         <p>Choose prepaid access for 6 or 12 months. Renewals require a new checkout; payments do not renew automatically.</p>
-        <p>Planned payment methods: Google Pay first, phone-scanned QR for local customers, and PayPal later.</p>
+        <p>ACB2Pay sandbox onboarding is in progress. No payment method is available in the app yet.</p>
         <div class="payment-actions">
           <a
             v-if="paymentCheckout6MonthUrl"
@@ -84,7 +90,7 @@
 </template>
 
 <script setup lang="ts">
-const { user, isConfigured, accessHeaders, selectedTenantId, signOut } = useGptmdAuth()
+const { user, isConfigured, loadTenantIds, selectedTenantId, signOut } = useGptmdAuth()
 const runtimeConfig = useRuntimeConfig()
 const safePaymentUrl = (value: string): string => {
   try {
@@ -98,20 +104,23 @@ const paymentPortalUrl = safePaymentUrl(runtimeConfig.public.paymentPortalUrl)
 const paymentCheckout6MonthUrl = safePaymentUrl(runtimeConfig.public.paymentCheckout6MonthUrl)
 const paymentCheckout12MonthUrl = safePaymentUrl(runtimeConfig.public.paymentCheckout12MonthUrl)
 const hasPaymentCheckout = Boolean(paymentCheckout6MonthUrl || paymentCheckout12MonthUrl)
-const apiBase = String(useRuntimeConfig().public.apiBase).replace(/\/$/, '')
 const tenantIds = ref<string[]>([])
 const membershipMessage = ref('')
+const membershipState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
-onMounted(async () => {
+watch(selectedTenantId, (tenantId) => {
+  if (membershipState.value === 'ready' && tenantId && tenantIds.value.includes(tenantId)) {
+    membershipMessage.value = ''
+  }
+})
+
+async function loadMemberships(): Promise<void> {
   if (!user.value) return
+  membershipState.value = 'loading'
+  membershipMessage.value = ''
   try {
-    const result = await $fetch<unknown>(`${apiBase}/api/account/tenants`, {
-      headers: await accessHeaders(false)
-    })
-    if (!result || typeof result !== 'object' || !Array.isArray((result as { tenantIds?: unknown }).tenantIds)) {
-      throw new Error('Invalid tenant list')
-    }
-    tenantIds.value = (result as { tenantIds: string[] }).tenantIds
+    tenantIds.value = await loadTenantIds()
+    if (selectedTenantId.value && !tenantIds.value.includes(selectedTenantId.value)) selectedTenantId.value = null
     if (tenantIds.value.length === 0) {
       membershipMessage.value = 'This Google account is signed in, but it has no active GPTpatient workspace. Contact support to request access.'
     } else if (tenantIds.value.length > 1 && !tenantIds.value.includes(selectedTenantId.value ?? '')) {
@@ -119,10 +128,14 @@ onMounted(async () => {
     } else if (tenantIds.value.length === 1) {
       selectedTenantId.value = tenantIds.value[0] ?? null
     }
+    membershipState.value = 'ready'
   } catch {
     membershipMessage.value = 'GPTpatient could not load your workspace access. Try again later.'
+    membershipState.value = 'error'
   }
-})
+}
+
+onMounted(loadMemberships)
 </script>
 
 <style scoped>
@@ -198,6 +211,28 @@ h1 {
   font: inherit;
   min-height: 2.8rem;
   padding: 0.45rem 0.7rem;
+}
+
+.membership-status {
+  color: var(--app-muted-text, #59696a);
+  font-size: 0.9rem;
+  min-height: 1.5rem;
+}
+
+.retry-button {
+  background: transparent;
+  border: 0;
+  color: #176d70;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  padding: 0;
+  text-decoration: underline;
+}
+
+.retry-button:focus-visible {
+  outline: 2px solid #176d70;
+  outline-offset: 3px;
 }
 
 .account-grid {

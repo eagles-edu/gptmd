@@ -1,7 +1,8 @@
 {
-  "fullName": "Example Patient",
-  "dateOfBirth": "1990-04-15",
-  "bodyType": "average",
-  "reasonForVisit": "Irregular menstrual cycles",
-  "diagnosis": "dysmenorrhea"
+  "templateNote": "Template only: replace placeholders with a validated fictional profile before use. This file is not a generation seed.",
+  "fullName": "<full name>",
+  "dateOfBirth": "<YYYY-MM-DD>",
+  "bodyType": "<average|heavy>",
+  "reasonForVisit": "<reason for visit/chief complaint>",
+  "diagnosis": null
 }

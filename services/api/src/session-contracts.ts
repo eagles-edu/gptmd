@@ -78,7 +78,6 @@ export const SessionCreatedResponseSchema = z.object({
 
 export const PatientScenarioSetupResponseSchema = z.object({
   sessionId: ApplicationSessionIdSchema,
-  scenarioId: OpaqueIdSchema,
   status: z.literal('ready'),
   createdAt: UtcTimestampSchema,
   patient: z.object({
@@ -87,7 +86,12 @@ export const PatientScenarioSetupResponseSchema = z.object({
     bodyType: z.enum(['average', 'heavy']),
     reasonForVisit: z.string().trim().min(1).max(1_000)
   }).strict(),
-  versions: SessionVersionPinsSchema
+  versions: SessionVersionPinsSchema,
+  readiness: z.object({
+    profile: z.literal(true),
+    redis: z.literal(true),
+    conversation: z.literal(true)
+  }).strict()
 }).strict()
 
 /** Durable accepted learner/patient exchange, with related facts and actions. */
