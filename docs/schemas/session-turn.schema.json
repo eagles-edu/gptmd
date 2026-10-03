@@ -22,6 +22,60 @@
       "format": "date-time",
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
     },
+    "phase": {
+      "default": "history",
+      "type": "string",
+      "enum": [
+        "history",
+        "assessment",
+        "debrief"
+      ]
+    },
+    "versions": {
+      "type": "object",
+      "properties": {
+        "promptVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "modelVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "schemaVersion": {
+          "type": "integer",
+          "exclusiveMinimum": 0,
+          "maximum": 9007199254740991
+        },
+        "policyVersion": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "rubricVersion": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "promptVersion",
+        "modelVersion",
+        "schemaVersion",
+        "policyVersion",
+        "rubricVersion"
+      ],
+      "additionalProperties": false
+    },
     "learnerMessage": {
       "type": "string",
       "minLength": 1,
@@ -60,6 +114,7 @@
               "currentMedications",
               "pastMedications",
               "nutraceuticalUse",
+              "cannabisUse",
               "supplementVitaminUse",
               "tradChineseMedicine",
               "homeopathicTreatmentsMeds",
@@ -67,12 +122,12 @@
               "surgicalHistory",
               "obstetricalHistory",
               "numberPregnancies",
-              "numberLiveBirths",
-              "numberChildren",
               "numberMiscarriage",
               "numberStillbirths",
               "numberAbortions",
               "numberEctopicPregnancies",
+              "numberLiveBirths",
+              "numberChildren",
               "tubalLigation",
               "hysterectomyHistory",
               "perimenopauseStatus",
@@ -88,7 +143,6 @@
               "familyMedicalHistory",
               "illicitDrugUse",
               "methadoneTreatment",
-              "cannabisUse",
               "alcoholUse",
               "nutritionHabits",
               "sleepQualityQuantity",
@@ -157,6 +211,252 @@
           "turnId",
           "turnSequence",
           "recordedAt"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "historyCoverage": {
+      "default": [],
+      "maxItems": 59,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "lastMenstrualPeriod",
+          "typicalMenstrualPeriodDescription",
+          "dysmenorrheaHistory",
+          "anyPain",
+          "pqrstResult",
+          "medicalHistory",
+          "lastPelvicExam",
+          "lastPapSmear",
+          "lastBreastExam",
+          "lastMammogram",
+          "comorbidity",
+          "currentMedications",
+          "pastMedications",
+          "nutraceuticalUse",
+          "cannabisUse",
+          "supplementVitaminUse",
+          "tradChineseMedicine",
+          "homeopathicTreatmentsMeds",
+          "acupunctureHistory",
+          "surgicalHistory",
+          "obstetricalHistory",
+          "numberPregnancies",
+          "numberMiscarriage",
+          "numberStillbirths",
+          "numberAbortions",
+          "numberEctopicPregnancies",
+          "numberLiveBirths",
+          "numberChildren",
+          "tubalLigation",
+          "hysterectomyHistory",
+          "perimenopauseStatus",
+          "perimenopauseSymptoms",
+          "menopauseStatus",
+          "menopauseSymptoms",
+          "postmenopauseStatus",
+          "postmenopauseSymptoms",
+          "hormoneReplacementTherapy",
+          "sexualActivityCurrent",
+          "contraceptionMethods",
+          "stdHistory",
+          "familyMedicalHistory",
+          "illicitDrugUse",
+          "methadoneTreatment",
+          "alcoholUse",
+          "nutritionHabits",
+          "sleepQualityQuantity",
+          "mentalHealthCurrent",
+          "mentalHealthPast",
+          "relationshipStatus",
+          "homeEnvironment",
+          "mentalAbuseHistory",
+          "physicalAbuseHistory",
+          "sexualAbuseHistory",
+          "lifeStyle",
+          "employmentHistory",
+          "educationalHistory",
+          "exerciseCurrent",
+          "dnaStudies",
+          "miscellaneousDetailsNos"
+        ]
+      }
+    },
+    "disclosedHistoryFields": {
+      "default": [],
+      "maxItems": 59,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "lastMenstrualPeriod",
+          "typicalMenstrualPeriodDescription",
+          "dysmenorrheaHistory",
+          "anyPain",
+          "pqrstResult",
+          "medicalHistory",
+          "lastPelvicExam",
+          "lastPapSmear",
+          "lastBreastExam",
+          "lastMammogram",
+          "comorbidity",
+          "currentMedications",
+          "pastMedications",
+          "nutraceuticalUse",
+          "cannabisUse",
+          "supplementVitaminUse",
+          "tradChineseMedicine",
+          "homeopathicTreatmentsMeds",
+          "acupunctureHistory",
+          "surgicalHistory",
+          "obstetricalHistory",
+          "numberPregnancies",
+          "numberMiscarriage",
+          "numberStillbirths",
+          "numberAbortions",
+          "numberEctopicPregnancies",
+          "numberLiveBirths",
+          "numberChildren",
+          "tubalLigation",
+          "hysterectomyHistory",
+          "perimenopauseStatus",
+          "perimenopauseSymptoms",
+          "menopauseStatus",
+          "menopauseSymptoms",
+          "postmenopauseStatus",
+          "postmenopauseSymptoms",
+          "hormoneReplacementTherapy",
+          "sexualActivityCurrent",
+          "contraceptionMethods",
+          "stdHistory",
+          "familyMedicalHistory",
+          "illicitDrugUse",
+          "methadoneTreatment",
+          "alcoholUse",
+          "nutritionHabits",
+          "sleepQualityQuantity",
+          "mentalHealthCurrent",
+          "mentalHealthPast",
+          "relationshipStatus",
+          "homeEnvironment",
+          "mentalAbuseHistory",
+          "physicalAbuseHistory",
+          "sexualAbuseHistory",
+          "lifeStyle",
+          "employmentHistory",
+          "educationalHistory",
+          "exerciseCurrent",
+          "dnaStudies",
+          "miscellaneousDetailsNos"
+        ]
+      }
+    },
+    "disclosedFactIds": {
+      "default": [],
+      "maxItems": 100,
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 200
+      }
+    },
+    "historyCoverageState": {
+      "default": [],
+      "maxItems": 59,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "field": {
+            "type": "string",
+            "enum": [
+              "lastMenstrualPeriod",
+              "typicalMenstrualPeriodDescription",
+              "dysmenorrheaHistory",
+              "anyPain",
+              "pqrstResult",
+              "medicalHistory",
+              "lastPelvicExam",
+              "lastPapSmear",
+              "lastBreastExam",
+              "lastMammogram",
+              "comorbidity",
+              "currentMedications",
+              "pastMedications",
+              "nutraceuticalUse",
+              "cannabisUse",
+              "supplementVitaminUse",
+              "tradChineseMedicine",
+              "homeopathicTreatmentsMeds",
+              "acupunctureHistory",
+              "surgicalHistory",
+              "obstetricalHistory",
+              "numberPregnancies",
+              "numberMiscarriage",
+              "numberStillbirths",
+              "numberAbortions",
+              "numberEctopicPregnancies",
+              "numberLiveBirths",
+              "numberChildren",
+              "tubalLigation",
+              "hysterectomyHistory",
+              "perimenopauseStatus",
+              "perimenopauseSymptoms",
+              "menopauseStatus",
+              "menopauseSymptoms",
+              "postmenopauseStatus",
+              "postmenopauseSymptoms",
+              "hormoneReplacementTherapy",
+              "sexualActivityCurrent",
+              "contraceptionMethods",
+              "stdHistory",
+              "familyMedicalHistory",
+              "illicitDrugUse",
+              "methadoneTreatment",
+              "alcoholUse",
+              "nutritionHabits",
+              "sleepQualityQuantity",
+              "mentalHealthCurrent",
+              "mentalHealthPast",
+              "relationshipStatus",
+              "homeEnvironment",
+              "mentalAbuseHistory",
+              "physicalAbuseHistory",
+              "sexualAbuseHistory",
+              "lifeStyle",
+              "employmentHistory",
+              "educationalHistory",
+              "exerciseCurrent",
+              "dnaStudies",
+              "miscellaneousDetailsNos"
+            ]
+          },
+          "asked": {
+            "type": "boolean"
+          },
+          "relevant": {
+            "type": "boolean"
+          },
+          "missing": {
+            "type": "boolean"
+          },
+          "sensitive": {
+            "type": "boolean"
+          },
+          "notRelevant": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "field",
+          "asked",
+          "relevant",
+          "missing",
+          "sensitive",
+          "notRelevant"
         ],
         "additionalProperties": false
       }
@@ -368,9 +668,14 @@
     "sessionId",
     "sequence",
     "acceptedAt",
+    "phase",
     "learnerMessage",
     "patientResponse",
     "patientReportedFacts",
+    "historyCoverage",
+    "disclosedHistoryFields",
+    "disclosedFactIds",
+    "historyCoverageState",
     "clinicalActions"
   ],
   "additionalProperties": false

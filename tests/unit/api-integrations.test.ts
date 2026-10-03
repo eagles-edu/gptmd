@@ -48,6 +48,7 @@ function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore
     consumeQuota: vi.fn().mockResolvedValue('allowed'),
     createSession: vi.fn().mockResolvedValue(record),
     setupScenario: vi.fn().mockResolvedValue('not_found'),
+    submitPatientTurn: vi.fn().mockResolvedValue('not_found'),
     getOwnedSession: vi.fn().mockImplementation(async (principal: AuthenticatedPrincipal, id: string) =>
       principal.tenantId === 'tenant-a' && principal.subjectId === 'learner-1' && id === sessionId
         ? record
@@ -67,6 +68,12 @@ const createDependencies = (overrides: Partial<ApiDependencies> = {}): ApiDepend
   openaiConfigured: true,
   generateResponse: vi.fn().mockResolvedValue({ id: 'resp_test', outputText: 'A test response.' }),
   generatePatientScenario: null,
+  generatePatientTurn: vi.fn().mockResolvedValue({
+    responseId: 'resp_turn_test',
+    output: {
+      patientResponse: 'I have been having pain.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
+    }
+  }),
   model: 'gpt-6-luna',
   jwt: { secret: jwtSecret, issuer: 'https://issuer.test', audience: 'gptmd-api' },
   sessionStore: createSessionStore(),
@@ -459,6 +466,50 @@ describe('GPTMD API integrations', () => {
       expect(response.status).toBe(429)
       expect(session.status).toBe(403)
       expect(generateResponse).not.toHaveBeenCalled()
+    })
+  })
+
+  it('routes a patient turn through the owned session store and returns the learner response shape', async () => {
+    const sessionId = randomBytes(32).toString('base64url')
+    const turnId = 'turn-0001'
+    const submitPatientTurn = vi.fn().mockResolvedValue({
+      status: 'accepted', turnId, sequence: 1, patientResponse: 'I feel pain on my left side.'
+    })
+    const sessionStore = createSessionStore({ submitPatientTurn })
+    const generatePatientTurn = vi.fn().mockResolvedValue({
+      responseId: 'resp-turn', output: {
+        patientResponse: 'I feel pain on my left side.', proposedFacts: [],
+        historyCoverage: [], disclosedHistoryFields: []
+      }
+    })
+    const dependencies = createDependencies({ sessionStore, generatePatientTurn })
+
+    await withApi(dependencies, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/turns`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ turnId, text: 'Where does it hurt?' })
+      })
+
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ turnId, text: 'I feel pain on my left side.' })
+      expect(submitPatientTurn).toHaveBeenCalledWith(
+        { subjectId: 'learner-1', tenantId: 'tenant-a' }, sessionId, turnId,
+        'Where does it hurt?', generatePatientTurn
+      )
+    })
+  })
+
+  it('rejects malformed turn IDs and learner messages before provider work', async () => {
+    const generatePatientTurn = vi.fn()
+    const dependencies = createDependencies({ generatePatientTurn })
+
+    await withApi(dependencies, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${'s'.repeat(43)}/turns`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ turnId: 'bad', text: 'Where does it hurt?' })
+      })
+      expect(response.status).toBe(400)
+      expect(generatePatientTurn).not.toHaveBeenCalled()
     })
   })
 })

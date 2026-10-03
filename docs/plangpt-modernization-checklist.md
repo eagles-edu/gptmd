@@ -1,25 +1,34 @@
 # GPTMD Modernization Companion Checklist
 
-**Status:** Proposed target architecture; patient-session workflows are not implemented yet. **Inventory:** 286 actionable nodes from the seven detailed modernization D2 maps. The overview flow is navigation and is not counted again. Each checkbox below has the same node ID as its D2 task, so the plan and checklist stay traceable.
+**Status (2026-10-03):** The worktree contains verified identity/bootstrap foundations, immutable PostgreSQL scenarios, RedisJSON active profile/session state, Redis Stream to PostgreSQL worker persistence, and a bounded serialized transcript history turn. New setup Conversations have their profile/answer-key items removed and the empty context verified before entering the turn lane; legacy Conversation contexts created before this safeguard have not been audited. Phase 3 remains in progress: chronology and full obstetric validation, first-class disclosure/phase/audit events, and assessment transitions are still open. Checkmarks mean the node’s behavior is implemented and covered by the cited code path and configured checks; a passed high-level gate does not complete later nodes. **Inventory:** 286 actionable nodes from the seven detailed modernization D2 maps. The overview flow is navigation and is not counted again. Each checkbox below has the same node ID as its D2 task, so the plan and checklist stay traceable.
 
 ## How to use this checklist
 
-- A node is complete only when its behavior exists in the module boundary below, its acceptance evidence passes, and failure/recovery behavior is documented. Dependency installation, healthy infrastructure, or a generic readiness endpoint alone does not complete a patient-workflow node.
+- A node is complete only when its behavior exists in the module boundary below, its acceptance evidence passes, and failure/recovery behavior is documented in the implementation. Dependency installation, healthy infrastructure, or a generic readiness endpoint alone does not complete a patient-workflow node.
 - Keep items unchecked until the behavior is implemented and evidenced. Mark a node partially complete in its linked implementation notes; do not mark it complete based on design prose alone.
 - The D2 files under `docs/diagrams/` remain the source for node wording and order. When a diagram node changes, update its checklist entry in the same change.
+
+### Phase 2 storage boundary quick check
+
+These summary boxes point to the detailed nodes below; they are not additional inventory nodes.
+
+- [x] RedisJSON holds the active patient profile and session state (`d06`, `t28`).
+- [x] PostgreSQL holds the immutable scenario (`d01`, `d03`).
+- [x] Accepted-turn events go through the Redis Stream worker into PostgreSQL (`d01`, `t30`, `t32`, `t34`).
 
 ## Existing foundations and evidence boundaries
 
 | State | Foundation | Evidence boundary |
 | --- | --- | --- |
-| Present in source | Nuxt/Vue application shell, encounter UI, patient API contracts and generated schemas; Express API health/readiness and generic Responses route; OpenAI, PostgreSQL, and Redis client adapters. | These are infrastructure and UI foundations. They do not implement authenticated sessions, scenario setup, clinical state writes, the 20-minute Redis JSON lifecycle, or the 72-hour archive. |
+| Present in source | Nuxt/Vue application shell, encounter UI, patient API contracts and generated schemas; Express API; OpenAI, PostgreSQL, and Redis client adapters. | Includes live session creation, structured scenario setup, RedisJSON patient/session state, serialized text turns, and a Redis Stream persistence worker. Orders/exams, assessment/debrief, archive/download lifecycle, and production deployment remain unimplemented. |
 | Previously runtime-verified | Local PostgreSQL healthy, Redis returned `PONG`, API `/readyz` reported PostgreSQL/Redis ready and OpenAI configured; project-scoped filesystem/Redis/PostgreSQL MCPs were registered. | This evidence came from the prior setup pass and was not re-run while creating this checklist. Refresh it before relying on current runtime state. |
 | Redis recovery checked 2026-09-30 | Running local Redis Stack 7.4.7 has append-only persistence set to sync every second, periodic snapshots enabled, a Docker named volume for `/data`, and healthy last-write/last-snapshot status. | This supports recovery after a Redis process/container restart while the host volume remains intact. The instance has no replica; the local volume does not protect against host/disk loss. A sudden failure can lose about the most recent second of Redis writes under the current policy. |
+| Phase 2 gate (user-confirmed) | PostgreSQL migrations and constraints, RedisJSON live state, atomic accepted-turn/terminal stream handoff, idempotent PostgreSQL event worker, Redis recovery, and local recovery checks. | The gate confirmation does not imply that every detailed node in sections 2–7 is complete. |
 | User-reported setup work | OpenAI API setup and private `.env`, project-aligned MCPs, PostgreSQL creation, Redis Stack instantiation, and Nuxt/VS Code extension cleanup. | Keep these visible as completed setup work; do not confuse them with the clinical workflow nodes below. The VS Code crash investigation tied renderer termination to host OOM; it did not establish an extension as the cause. |
 
 ## Technology choices scrutinized
 
-- **Redis handles the live session; PostgreSQL handles durable records.** The API reads and updates the live patient profile in Redis JSON. In the same Redis transaction, it appends the completed turn to a Redis Stream. A separate PostgreSQL worker copies stream entries into the clinical history and acknowledges each entry only after the database commit. Stable event IDs make retries safe. Redis saves and replicas provide recovery for live session data; PostgreSQL history is the independent rebuild source.
+- **RedisJSON owns active profile/session state; PostgreSQL owns the immutable scenario and durable records.** The API reads and updates the active patient profile in RedisJSON. In the same Redis transaction, it appends the completed turn to a Redis Stream. A separate PostgreSQL worker copies stream entries into durable clinical history and acknowledges each entry only after the database commit. Stable event IDs make retries safe. Redis persistence provides recovery for live state; PostgreSQL scenario and event rows provide the rebuild source.
 - **Keep background work out of the response path.** The handler may wait only for authentication, model output, and the Redis read/write needed to produce and safely save the accepted patient turn. Saving the live profile, reply, retry key, and recovery event together is payload-critical state work; PostgreSQL persistence, metrics, archive creation/upload, notifications, analytics, and cleanup are not. Dispatch those side effects without awaiting them. The 5 ms measure is a ceiling for handoff overhead, not permission to wait for a worker or side service. JavaScript `async` code still delays the response if the handler awaits it.
 - **Use dedicated workers with bounded queues.** PostgreSQL event persistence, usage accounting, download tracking, archives, and cleanup run in separate worker processes. CPU-heavy work such as compression may use a worker thread. Workers retry safely, and the PostgreSQL event writer acknowledges a stream entry only after the matching event commits. Monitor queue age and size; reject new sessions quickly before a queue fills rather than making an active learner wait. Keep pending stream entries until PostgreSQL confirms them, even if this means their retention can extend beyond the 20-minute Redis JSON session expiry during a database outage.
 - **Choose behavior when the event queue is unavailable.** The learner response path must not wait on PostgreSQL. If Redis cannot save the live session and its recovery event, fail the turn quickly without returning a reply that cannot be retried safely. The current Redis AOF policy allows about one second of write loss after a sudden failure; the local Redis instance has no replica, so host-loss redundancy remains future work. Keep audio files out of Redis.
@@ -134,15 +143,17 @@ Record download requests and outcomes by adding events to the background stream 
 
 - [x] `i01` Show the signed-in home page after authentication
 - [x] `i02` Link Instructions and History-Taking Overview
-- [x] `i03` Show Account Status: usage · metrics · downloads · payment gateway
+- [x] `i03` Show Account Status: usage · metrics · downloads · payment gateway (sections are present; the underlying data feeds remain open)
 - [x] `i04` Provide Contact Us entry point
 - [x] `i05` Begin Visit opens the encounter screen with account context
 
+**Conversation-control method carried into the visit:** Treat conversation as a volley: each speaker helps the other repair a breakdown so the exchange can continue. Coach the learner through one step at a time: (1) ask for a repeat, repeating the request as many as three or four times when needed; (2) ask for louder, slower, or simpler speech; (3) ask for an unfamiliar word or phrase to be explained another way; (4) ask for spelling; and (5) ask for it to be written down in English if the earlier steps fail. The patient uses the same repair sequence when the learner is unclear. Writing is the final take-home fallback; preserve the original English wording in the encounter transcript and offer a direct text-file download. Translation is not part of this repair flow.
+
 #### Encounter preflight and browser capabilities
 
-- [ ] `i06` Explain audio/text modes, microphone use, and local-data handling
-- [ ] `i07` Request microphone access after explicit audio-mode action; preserve allowed text path if denied
-- [ ] `i08` Keep private profile · diagnosis · transcript · provider IDs out of browser storage
+- [x] `i06` Explain voice/transcript modes, browser speech processing, and local-data handling
+- [ ] `i07` Use cross-browser real-time STT for the voice conversation; keep standard browser `SpeechRecognition` only as an optional, editable, explicit single-question convenience. Preserve Transcript mode when the STT provider is unsupported or unavailable. Current voice loop still uses standard browser recognition, so this target remains open.
+- [x] `i08` Keep private profile · diagnosis · transcript · provider IDs out of browser storage
 
 #### Authentication and account resolution
 
@@ -151,55 +162,55 @@ Record download requests and outcomes by adding events to the background stream 
 - [ ] `a03` OIDC provider authenticates user
 - [ ] `a04` App auth adapter resolves local identity
 - [ ] `a05` Load organization · customer · user · role
-- [ ] `a06` After Begin Visit and preflight, create session · POST /api/sessions
+- [x] `a06` After Begin Visit and preflight, create session · POST /api/sessions
 - [ ] `a07` Check tenant ownership and role
-- [ ] `a08` Deny cross-tenant request without state disclosure
+- [x] `a08` Deny cross-tenant request without state disclosure
 - [ ] `a09` Load model · audio · exam · order entitlements
 - [ ] `a10` Check per-user and per-session quota
-- [ ] `a11` Return bounded quota response
-- [ ] `a12` Create one opaque app sessionId
-- [ ] `a13` Bind session to customer · tenant · user
+- [x] `a11` Return bounded quota response
+- [x] `a12` Create one opaque app sessionId
+- [x] `a13` Bind session to customer · tenant · user
 - [ ] `a14` Rotate HTTP-only · Secure · SameSite cookie
 - [ ] `a15` On each request authenticate cookie or authorized socket ticket
 - [ ] `a16` Recheck session owner · tenant · role · entitlement
-- [ ] `a17` Browser never sends API key · model ID · provider context ID
+- [x] `a17` Browser never sends API key · model ID · provider context ID
 
 #### Idempotent setup lane and immutable synthetic-patient seed creation
 
-- [ ] `s01` POST /api/sessions/:sessionId/setup
-- [ ] `s02` Authenticate · authorize owner · check setup entitlement
-- [ ] `s03` Check setup idempotency key
-- [ ] `s04` Return previously committed seed and setup result
+- [x] `s01` POST /api/sessions/:sessionId/setup
+- [x] `s02` Authenticate · authorize owner · check setup entitlement
+- [x] `s03` Check setup idempotency key
+- [x] `s04` Return previously committed seed and setup result
 - [ ] `s05` Enqueue within bounded setup capacity
 - [ ] `s06` Enforce setup concurrency · queue · timeout · retry budget
 - [ ] `s07` Return pending / overload response without partial activation
-- [ ] `s08` Load versioned prompt · schema · rubric · model config
-- [ ] `s09` Create random scenario seed once; reuse it on retry
-- [ ] `s10` Build strict PatientScenarioSeed structured-output request
+- [ ] `s08` Load versioned prompt · schema · rubric · model config (prompt, schema, and model are pinned; educator rubric is not yet wired)
+- [x] `s09` Create random scenario seed once; reuse it on retry
+- [x] `s10` Build strict PatientScenarioSeed structured-output request
 - [ ] `s11` Generate identity · symptoms · onset · relevant negatives
 - [ ] `s12` Generate history cues · medications · allergies · patient concerns
-- [ ] `s13` Generate clinician-hidden diagnosis or explicitly unknown status
-- [ ] `s14` Generate fixed exam findings · supported test/result catalog
-- [ ] `s15` Generate fixed bounded personality traits and persona seed
+- [x] `s13` Generate clinician-hidden diagnosis or explicitly unknown status
+- [x] `s14` Generate fixed exam findings · supported test/result catalog
+- [ ] `s15` Generate fixed bounded personality traits and persona seed (traits exist; a stable persona seed is not modeled)
 - [ ] `s16` Attach educator-reviewed rubric and version references
-- [ ] `s17` Call Responses API for structured setup output inside the session Conversation
-- [ ] `s18` Validate strict versioned JSON Schema
-- [ ] `s19` Validate field and cross-field constraints in application code
-- [ ] `s20` Discard rejected Conversation; retry same setup identity in fresh context
+- [x] `s17` Call Responses API for structured setup output inside the session Conversation
+- [x] `s18` Validate strict versioned JSON Schema
+- [x] `s19` Validate field and cross-field constraints in application code
+- [x] `s20` Discard rejected Conversation; retry same setup identity in fresh context
 - [ ] `s21` Mark setup failed; keep session inactive
-- [ ] `s23` Create one OpenAI Conversation before full-profile generation
-- [ ] `s24` Return validated profile and Conversation ID together to setup coordinator after prompt
-- [ ] `s22` Save profile · internal five-value projection · Conversation binding to Redis JSON; enqueue PostgreSQL persistence
-- [ ] `s26` Derive the five setup variables from the validated full profile in application code
-- [ ] `s25` Mark server setup ready; pin model · mode · policy versions
+- [x] `s23` Create one OpenAI Conversation before full-profile generation
+- [x] `s24` Return validated profile and Conversation ID together to setup coordinator after prompt
+- [x] `s22` Persist immutable scenario in PostgreSQL; seed RedisJSON active profile · projection · Conversation binding; return learner-safe values
+- [x] `s26` Derive the five setup variables from the validated full profile in application code
+- [x] `s25` Mark server setup ready; pin model · mode · policy versions (Transcript mode is the only supported mode)
 
 #### Patient identity reservation, client readiness, and turn continuity
 
-- [ ] `i09` Allocate opaque per-visit ppid; bind it to authenticated sid
-- [ ] `i10` Create Redis JSON session mapping and initializing patient-profile receptacle
-- [ ] `i11` Confirm client preflight and Redis reservation before setup-generation command
-- [ ] `i12` Resolve the same server-held Conversation ID from sid + ppid for every later turn
-- [ ] `i13` Return client-safe four-value profile sans diagnosis, if any, after Redis commit
+- [x] `i09` Allocate opaque per-visit ppid; bind it to authenticated sid
+- [x] `i10` Create Redis JSON session mapping and initializing patient-profile receptacle
+- [x] `i11` Confirm client preflight and Redis reservation before setup-generation command
+- [x] `i12` Resolve the same server-held Conversation ID from sid + ppid for every later turn
+- [x] `i13` Return client-safe four-value profile sans diagnosis, if any, after Redis commit
 - [ ] `i14` Select portrait folder from derived age band/body type and preload selected assets
 - [ ] `i15` Show amber while required work is pending; show green and enable Enter Room only when ready
 
@@ -211,64 +222,68 @@ Record download requests and outcomes by adding events to the background stream 
 
 #### Data records, authority boundaries and retention
 
-- [ ] `d01` PostgreSQL is the application system of record
+- [x] `d01` PostgreSQL is the application system of record for immutable scenarios and worker-persisted events
 - [ ] `d02` Tenant · user · role · entitlement · quota records
-- [ ] `d03` Immutable versioned PatientScenarioSeed and hidden answer key
-- [ ] `d04` Append-only PatientFactExpansion ledger with source and turn ID
-- [ ] `d05` Append-only disclosure ledger with disclosed fact IDs
-- [ ] `d06` Encounter snapshot: phase · mode · status · current turn
-- [ ] `d07` Coverage: pertinent topics asked · relevant · missing
+- [x] `d03` Immutable versioned PatientScenarioSeed and hidden answer key
+- [x] `d04` Append-only PatientFactExpansion ledger with source and turn ID (stored in append-only accepted-turn event payloads)
+- [x] `d05` Append-only disclosure ledger with disclosed fact IDs (stored in accepted-turn payloads; no separate disclosure event yet)
+- [x] `d06` Encounter snapshot: phase · mode · status · current turn (RedisJSON live state; PostgreSQL recovery rebuilds from accepted events)
+- [x] `d07` Coverage: pertinent topics asked · relevant · missing (history topics only)
 - [ ] `d08` Orders: order time · status · fixed result reference
 - [ ] `d09` Exams: consent · decline · chaperone · mode · completion
 - [ ] `d10` Assessment: learner summary · differential · rationale · plan
 - [ ] `d11` Event ledger: ordered append-only turns · actions · phase changes
 - [ ] `d12` Transcript: speaker · timestamp · phase · modality · turnId
-- [ ] `d13` Mark expansion epistemic source as patient-reported or seeded / verified
-- [ ] `d14` Patient-reported statement cannot become a lab or exam result
+- [x] `d13` Mark expansion epistemic source as patient-reported or seeded / verified
+- [x] `d14` Patient-reported statement cannot become a lab or exam result (patient facts and clinical actions use separate schemas; turn generation cannot create actions)
 - [ ] `d15` Results and findings resolve only from fixed scenario catalog
 - [ ] `d16` Record schema · prompt · model · rubric versions for replay
-- [ ] `d17` Keep answer key hidden until authorized instructor or debrief
+- [x] `d17` Keep answer key hidden until authorized instructor or debrief (no learner API exposes it; newly created setup Conversation items are cleared before turns; pre-safeguard persisted provider contexts are unaudited)
 
 #### One serialized text turn: authorize, validate, commit, then deliver
 
-- [ ] `t01` Learner types text or uses browser speech recognition
-- [ ] `t02` Generate client turnId / idempotency key
-- [ ] `t03` POST /api/sessions/:sessionId/turns { turnId, text }
-- [ ] `t04` Authenticate cookie · tenant · session owner · turn entitlement
-- [ ] `t05` Runtime-validate request body and text limits
-- [ ] `t06` Acquire per-session turn lock
-- [ ] `t07` Check committed turnId in idempotency ledger
-- [ ] `t08` Return same committed patient reply for duplicate turn
-- [ ] `t09` Validate current phase and selected interaction mode
-- [ ] `t10` Reject invalid phase or concurrent active turn
-- [ ] `t11` Keep clinician input in turn context until atomic commit
-- [ ] `t12` Load only this session's authorized model projection
-- [ ] `t13` Add phase · relevant seed facts · accepted expansions
-- [ ] `t14` Add disclosure boundaries · fixed personality · coverage state
-- [ ] `t15` Add pinned prompt · schema · model · policy versions
-- [ ] `t16` Call Responses with stored conversationId and current input
-- [ ] `t17` Do not also send previous_response_id
-- [ ] `t18` Inspect refusal · incomplete · timeout · provider error
-- [ ] `t19` Queue safe provider-failure audit asynchronously; do not invent reply
-- [ ] `t20` Validate structured patient utterance and proposed expansions
+- [ ] `t01` Build the basic voice conversation: there is no Send button in the main voice loop; automatically submit recognized learner speech after seven seconds of silence and carry it through one authenticated Responses API patient turn. The LED controls turn-taking: red means inactive, green means it is the learner’s turn to speak, yellow means the patient is processing or speaking. Wait for green before the next turn. “See you next time” ends voice conversation. Conversation is a volley: each speaker helps the other repair a breakdown so the exchange can continue. Coach the learner and patient through this ordered sequence, one step at a time: (1) ask for a repeat, repeating the request as many as three or four times when needed; (2) ask for louder, slower, or simpler speech; (3) ask for an unfamiliar word or phrase to be explained another way; (4) ask for spelling; and (5) if unresolved, ask for it to be written down in English. “Please write that down” shows the patient’s reply as a written English note in the transcript and offers a direct text-file download for take-home access. Preserve the original wording; translation is not part of this repair flow. This is voice conversation, not a text-entry flow. Cross-browser real-time STT is the target; standard browser recognition is only an optional editable single-question convenience. See [legacy flow audit](plangpt.md).
+
+  The normal interaction is spoken patient conversation with clear turns; do not listen for a new learner turn over patient playback. Conversation repair is a mutual, ordered volley: repeat first (up to three or four attempts if needed), then louder/slower/simpler, explain the word or phrase another way, spell it, and finally write it down in English. Address one repair request at a time and move on only while understanding remains unresolved. “Please write that down” is the specific text-interface exception: show the patient’s original English reply as a written note in the encounter transcript and offer a direct text-file download for take-home access. Translation is not part of this repair flow. A text Send control is not part of the main voice loop. Optional standard browser `SpeechRecognition` may provide editable, explicit single-question dictation where supported; never use `webkitSpeechRecognition`, and do not mistake that limited convenience for cross-browser STT.
+
+  The recommended target for consistent cross-browser, live short-question STT is OpenAI Realtime transcription over browser WebRTC, with a server-minted ephemeral session credential; send its finalized transcript through the existing serialized Responses API lane. Use file transcription for the occasional longer recording, and keep live audio active only during the encounter. Interim text must never trigger a patient turn. Acceptance evidence must show: no Send button in the primary voice loop; exactly one turn auto-submitted after seven seconds of silence; red → green → yellow → green LED turn sequence; no learner recognition while the patient is speaking; mutual use of repair strategies; stop phrase ends the loop; “Please write that down” displays the patient reply as a note. Reference: [Realtime transcription](https://developers.openai.com/api/docs/guides/realtime-transcription), [speech-to-text](https://developers.openai.com/api/docs/guides/speech-to-text), and [audio pricing](https://developers.openai.com/api/docs/pricing#transcription-and-speech).
+- [x] `t02` Generate client turnId / idempotency key
+- [x] `t03` POST /api/sessions/:sessionId/turns { turnId, text }
+- [x] `t04` Authenticate access token or cookie; check tenant · session owner · turn entitlement
+- [x] `t05` Runtime-validate request body and text limits
+- [x] `t06` Acquire per-session turn lock
+- [x] `t07` Check committed turnId in idempotency ledger
+- [x] `t08` Return same committed patient reply for duplicate turn
+- [x] `t09` Validate current phase and selected interaction mode (history + pinned Transcript only)
+- [x] `t10` Reject invalid phase or concurrent active turn
+- [x] `t11` Keep clinician input in turn context until atomic commit
+- [x] `t12` Load only this session's authorized model projection (new setup Conversation items are cleared and verified before the turn lane; each request then adds only cue-bounded data; pre-safeguard persisted contexts are unaudited)
+- [x] `t13` Add phase · cue-matched seed facts · accepted expansions
+- [x] `t14` Add disclosure boundaries · fixed personality · history coverage state
+- [x] `t15` Add pinned turn prompt · schema · model · policy versions (rubric not yet available)
+- [x] `t16` Call Responses with stored conversationId and current input
+- [x] `t17` Do not also send previous_response_id
+- [x] `t18` Inspect refusal · incomplete · timeout · provider error
+- [x] `t19` Queue safe provider-failure audit asynchronously; do not invent reply
+- [x] `t20` Validate structured patient utterance and proposed expansions
 - [ ] `t21` Check seed · prior facts · chronology · age plausibility
-- [ ] `t22` Check obstetric outcomes · parity · child count · complications
-- [ ] `t23` Protect diagnosis · deterministic results · rubric · disclosure rules
-- [ ] `t24` Retry against same saved patient profile
-- [ ] `t25` Queue validation-failure audit asynchronously after bounded retries
-- [ ] `t26` Prepare safe clarification when output remains invalid
-- [ ] `t27` Begin Redis live-state and event-stream transaction
-- [ ] `t28` Update accepted patient-reported facts in RedisJSON
+- [ ] `t22` Check obstetric outcomes · parity · child count · complications (implemented subset: non-negative count checks and completed-outcome totals account for an active pregnancy; chronology, age plausibility, child-count consistency, and complications remain open)
+- [ ] `t23` Protect diagnosis · deterministic results · rubric · disclosure rules (answer-key context is cleared and disclosure fields are checked; the fixed-result workflow and educator rubric remain open)
+- [x] `t24` Retry against same saved patient profile and Conversation
+- [x] `t25` Queue validation-failure audit asynchronously after bounded retries
+- [x] `t26` Prepare safe clarification when output remains invalid
+- [x] `t27` Begin Redis live-state and event-stream transaction
+- [x] `t28` Update accepted patient-reported facts in RedisJSON
 - [ ] `t29` Append disclosure events to Redis Stream
-- [ ] `t30` Append patient reply · input · turn-complete event
+- [x] `t30` Append patient reply · input · turn-complete event
 - [ ] `t31` Append phase and audit events for background workers
-- [ ] `t32` Commit live state · reply · retry key · recovery event together
-- [ ] `t33` On Redis commit failure, return no unjournaled reply
-- [ ] `t34` Return reply without waiting for PostgreSQL
+- [x] `t32` Commit live state · reply · retry key · recovery event together
+- [x] `t33` On Redis commit failure, return no unjournaled reply
+- [x] `t34` Return reply without waiting for PostgreSQL
 - [ ] `t35` Is optional TTS enabled?
 - [ ] `t36` Stream speech synthesis separately
 - [ ] `t37` Wait until reply and enabled playback complete
-- [ ] `t38` Release lock and allow next learner turn
+- [x] `t38` Release lock and allow next learner turn
 
 ### 3. History, coverage, assessment, and debrief
 
@@ -278,24 +293,24 @@ Record download requests and outcomes by adding events to the background stream 
 
 #### Natural, bounded expansion of history only when the learner asks a relevant question
 
-- [ ] `h01` Learner asks symptom or history question
-- [ ] `h02` Find matching seed cue and existing fact expansions
-- [ ] `h03` Is a bounded history cue relevant to this question?
-- [ ] `h04` Answer naturally in the fixed patient personality
-- [ ] `h05` Propose only details compatible with the seed and question
-- [ ] `h06` Send utterance and proposal through turn validation
-- [ ] `h07` Append accepted fact to the correct history section
-- [ ] `h08` Reuse accepted detail on later turns; never rewrite seed
-- [ ] `h09` No cue: answer from known facts without a profile dump
-- [ ] `h10` Record each detail as fictional patient-reported history
-- [ ] `h11` Keep sensitive questions patient-centered and case-relevant
+- [x] `h01` Learner asks symptom or history question
+- [x] `h02` Find matching seed cue and existing fact expansions
+- [x] `h03` Is a bounded history cue relevant to this question?
+- [x] `h04` Answer naturally in the fixed patient personality
+- [ ] `h05` Propose only details compatible with the seed and question (field eligibility and cue relevance are checked; free-text semantic consistency is not)
+- [x] `h06` Send utterance and proposal through turn validation
+- [ ] `h07` Append accepted fact to the correct history section (facts retain their field ID in the event ledger; grouped history sections are not modeled)
+- [x] `h08` Reuse accepted detail on later turns; never rewrite seed
+- [x] `h09` No cue: answer from known facts without a profile dump (setup context is cleared; no unrelated history fields are sent)
+- [x] `h10` Record each detail as fictional patient-reported history
+- [x] `h11` Keep sensitive questions patient-centered and case-relevant (the turn prompt requires respectful, nonjudgmental answers, permits refusal, and forbids pressure after a refusal; educator review of model behavior remains open)
 
 #### Coverage, assessment phase, post-session scoring, and debrief
 
-- [ ] `c01` Track pertinent symptoms · reproductive context · relevant history
+- [x] `c01` Track pertinent symptoms · reproductive context · relevant history in the history-only coverage state
 - [ ] `c02` Track exam / test findings · synthesis · differential · plan
-- [ ] `c03` Mark each topic asked · missing · sensitive · not relevant
-- [ ] `c04` Update encounter coverage state
+- [x] `c03` Mark each matched history topic asked · missing · sensitive · not relevant
+- [x] `c04` Update encounter coverage state in RedisJSON and accepted-turn events
 - [ ] `c05` Learner uses visible button or says begin assessment
 - [ ] `c06` Is the phase-change cue explicit and unambiguous?
 - [ ] `c07` Ask learner to confirm an ambiguous spoken cue
@@ -356,7 +371,7 @@ Record download requests and outcomes by adding events to the background stream 
 - [ ] `r06` Create provider Realtime session server-side
 - [ ] `r07` Store Realtime sessionId separately from Responses conversationId
 - [ ] `r08` Project only authorized case information; keep answer key private
-- [ ] `r09` Stream audio; support turn-taking and barge-in
+- [ ] `r09` Stream patient audio; preserve LED turn-taking
 - [ ] `r10` Authorize requested action against encounter state machine
 - [ ] `r11` Reconcile final learner and patient transcripts
 - [ ] `r12` Reconcile phase cues and authorized action events
@@ -385,17 +400,17 @@ Record download requests and outcomes by adding events to the background stream 
 - [ ] `m08` Select Transcript or Full Audio separately from model tier
 - [ ] `m09` Keep tier stable for entire patient encounter
 
-#### Transcript mode: auditable typed / transcribed turns and optional TTS
+#### Transcript mode: current prototype behavior (not the target voice-first experience)
 
-- [ ] `v01` Fix Transcript mode at session start
-- [ ] `v02` User gesture requests browser microphone permission
-- [ ] `v03` Browser speech recognition produces text
-- [ ] `v04` Typed text remains an alternate input
-- [ ] `v05` Display recognized or typed transcript
-- [ ] `v06` Send text over authenticated HTTPS
-- [ ] `v07` Process via serialized Responses turn lane
-- [ ] `v08` Return text; optionally stream TTS separately
-- [ ] `v09` Do not retain raw microphone audio by default
+- [x] `v01` Keep voice capture as a browser input to the existing Transcript turn lane; no full-audio session mode or audio service is opened
+- [x] `v02` User gesture starts browser microphone recognition
+- [x] `v03` The current browser-recognition path produces a finalized question; it is browser-dependent and does not establish cross-browser STT
+- [x] `v04` Typed text is available as an alternate path; it is not the primary encounter interaction
+- [x] `v05` Display recognized or typed transcript and patient response
+- [x] `v06` Send the recognized question over the authenticated session API
+- [x] `v07` Process via serialized Responses turn lane
+- [x] `v08` The current prototype speaks returned text with browser speech synthesis; legacy parity instead used OpenAI speech audio streamed over Socket.IO, so this implementation detail is not evidence that the target should replace legacy spoken replies
+- [x] `v09` Do not receive or retain raw microphone audio in GPTMD
 
 #### Optional modality switch: rebuild from canonical app state, not provider context IDs
 
@@ -509,7 +524,7 @@ Record download requests and outcomes by adding events to the background stream 
 - [ ] `g09` 5 · Build fixed results · consent-aware exams · assessment · debrief
 - [ ] `g10` Verify unsupported findings and results cannot be created
 - [ ] `g11` 6 · Ship Transcript; prototype private server-bridged Full Audio
-- [ ] `g12` Verify reconnect · barge-in · transcript reconciliation · privacy
+- [ ] `g12` Verify reconnect · LED turn-taking · transcript reconciliation · privacy
 - [ ] `g13` 7 · Ship Nuxt / API with PostgreSQL · Redis JSON · archive lifecycle
 - [ ] `g14` 8 · Educator evaluation · load tests · latency and cost budgets
 - [ ] `g15` Do quality and performance evidence meet release criteria?

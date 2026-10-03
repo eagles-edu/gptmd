@@ -8,6 +8,7 @@ TypeScript-built and currently exposes:
 - `POST /api/openai/responses` — authenticated, tenant-quota-limited Responses API integration
 - `POST /api/sessions` — create an opaque initializing application session
 - `POST /api/sessions/:sessionId/setup` — idempotently generate and persist the immutable scenario
+- `POST /api/sessions/:sessionId/turns` — serialize, validate, and accept a patient turn
 - `GET /api/sessions/:sessionId` — read a session owned by the authenticated user and tenant
 
 The private patient-scenario generator in `src/patient-profile.ts` creates a
@@ -56,6 +57,7 @@ Apply the schema as the application database owner after PostgreSQL is ready:
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/001_auth_sessions.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/002_patient_scenario_setup.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/003_patient_profile_binding.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/004_durable_session_history.sql
 ```
 
 Provision a tenant row in `tenants`, its active `(tenant_id, subject_id)` in
@@ -85,8 +87,79 @@ after PostgreSQL commits the accepted profile, its five-value private setup
 projection, digest, version, and Conversation ID are mirrored into Redis. A
 matching retry repairs a missing Redis mirror from the immutable PostgreSQL
 scenario without creating a new provider Conversation. Apply migration 003
-before starting this version of the API; `/readyz` checks that the binding
-column exists.
+and migration 004 before starting this API version; `/readyz` checks the
+session binding and durable-history tables.
+
+## Redis live state and PostgreSQL history
+
+Run the session-history worker as a separate process next to the API:
+
+```bash
+npm run api:worker
+```
+
+The API's Redis state store accepts an already generated `SessionTurn` with one
+Lua/EVAL transaction. It updates the session and patient JSON documents, saves
+the turn's retry reply, and appends the event to `gptmd:session-events` in that
+same atomic operation. A repeated turn ID returns its saved reply. Terminal
+events use the same stream and set an absolute 20-minute expiry on live JSON;
+the stream and retry group are retained independently.
+
+The worker consumes the `gptmd-session-history` consumer group in bounded
+batches. PostgreSQL locks each session row, checks the next event sequence,
+inserts the event and terminal outcome idempotently, and commits before the
+worker acknowledges the stream entry. A failed database write stays pending;
+the worker retries claimed entries after the database is available. Multiple
+worker processes cannot commit events for one session out of order because the
+session row lock and sequence check serialize their writes.
+
+The local Redis Stack is configured with AOF enabled and `appendfsync
+everysec`, so a sudden Redis failure can lose up to roughly one second of
+recent writes. Redis replays its AOF on restart. If an owned session's JSON is
+missing, `GET /api/sessions/:sessionId` rebuilds it from the immutable
+PostgreSQL scenario and committed session events, including saved retry replies.
+Events that Redis lost before the worker committed them to PostgreSQL are
+within the documented one-second loss window. The local recovery verifier
+exercises Redis turn retries, worker commit/ack ordering, terminal outcomes,
+and reconstruction after deleting the test session's Redis JSON:
+
+```bash
+npm run verify:phase2
+```
+
+The verifier uses a temporary PostgreSQL database, requires permission to
+create and drop that database, and refuses to run while the shared Redis event
+stream contains entries.
+
+## Patient turns
+
+The browser posts `{ "turnId": "...", "text": "..." }` to the authenticated
+session turn route. GPTMD checks tenant/session ownership and response quota,
+acquires a Redis per-session lock, and returns the saved patient reply for an
+accepted matching retry. A different message that reuses an accepted turn ID
+receives `409`; an overlapping new turn receives `409` and can retry after the
+active turn finishes.
+
+Redis JSON is the active copy of the private patient profile, accepted session
+state, transcript, coverage, disclosures, and fact expansions. The provider
+Conversation ID and prompt/model/schema/policy pins come from that session's
+saved Redis state and PostgreSQL session row. The patient response uses a
+structured Responses result with the session's stored Conversation. Proposed
+facts are accepted only for scenario history fields marked unknown, and cannot
+replace the seed or conflict with earlier accepted facts. Diagnosis stays out
+of the per-turn projection and the prompt prohibits disclosing private answer
+key data. The API retries invalid structured output once; if it remains
+invalid, it accepts a fixed clarification with no new facts. Failure audit logs
+contain only the event type, session ID, and turn ID.
+
+An accepted turn atomically updates the Redis JSON state, retry reply, and
+recovery event in `gptmd:session-events`. The existing worker persists the
+accepted turn to PostgreSQL asynchronously; the learner response does not wait
+for worker completion. The accepted event carries transcript text, patient
+reported fact expansions, history coverage, disclosed fact IDs, and any
+clinical actions for replay. This route currently implements the text history
+path; orders, exams, assessment submission, and modality transitions remain
+later phase work.
 
 ## Local development
 
@@ -143,7 +216,7 @@ reverse-proxy concern: Nginx terminates ACME-backed TLS for
 `ops/nginx/api.eaglesvn.club.conf.example`, DNS, certificate paths, and the
 existing OLSWS/Nginx port ownership before activating that configuration.
 
-Patient turns, Redis session state, clinical-data migrations, and identity
-provider account/login flows remain separate work. The API stays on loopback;
+Redis session state, clinical-data migrations, and identity provider
+account/login flows remain separate work. The API stays on loopback;
 TLS proxy activation and production identity-provider provisioning are not
 performed by this local implementation.

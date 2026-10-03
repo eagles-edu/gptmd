@@ -11,7 +11,8 @@ import {
   PatientScenarioSetupResponseSchema,
   SessionCreatedResponseSchema
 } from './session-contracts.ts'
-import type { ScenarioSetupResult, SessionStore, StoreResult } from './session-store.ts'
+import type { PatientTurnGenerationContext } from './patient-turn.ts'
+import type { PatientTurnResult, ScenarioSetupResult, SessionStore, StoreResult } from './session-store.ts'
 
 export interface RedisProbe {
   readonly isOpen: boolean
@@ -32,6 +33,7 @@ export interface ApiDependencies {
     versions: PatientScenarioVersionPins,
     asOf: Date
   ) => Promise<GeneratedPatientScenario>) | null
+  generatePatientTurn: ((context: PatientTurnGenerationContext) => Promise<{ responseId: string; output: unknown }>) | null
   model: string
   jwt: JwtConfiguration
   sessionStore: SessionStore | null
@@ -259,6 +261,47 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
   })
 
+  app.post('/api/sessions/:sessionId/turns', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    const turnId = request.body?.turnId
+    const learnerMessage = request.body?.text
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    if (typeof turnId !== 'string' || !/^[\x21-\x7e]{8,200}$/.test(turnId)) {
+      response.status(400).json({ error: 'A printable turnId of 8 to 200 characters is required' })
+      return
+    }
+    if (!validInput(learnerMessage) || learnerMessage.length > 8_000) {
+      response.status(400).json({ error: 'text must be a non-empty string of at most 8000 characters' })
+      return
+    }
+    if (!dependencies.generatePatientTurn) {
+      response.status(503).json({ error: 'Patient turn generation is not configured' })
+      return
+    }
+
+    try {
+      const result = await store.submitPatientTurn(
+        principal, sessionId, turnId, learnerMessage.trim(), dependencies.generatePatientTurn
+      )
+      if (typeof result === 'object') {
+        response.json({ turnId: result.turnId, text: result.patientResponse })
+        return
+      }
+      turnResultResponse(result, response)
+    } catch {
+      response.status(503).json({ error: 'Patient turn could not be completed' })
+    }
+  })
+
   app.get('/api/sessions/:sessionId', async (request, response) => {
     const principal = request.principal
     const store = dependencies.sessionStore
@@ -277,6 +320,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         response.status(404).json({ error: 'Session not found' })
         return
       }
+      await store.ensureLiveState?.(principal, sessionId ?? '')
       response.json(session)
     } catch {
       response.status(503).json({ error: 'Session service is unavailable' })
@@ -296,4 +340,17 @@ function quotaResponse(result: StoreResult, response: import('express').Response
     response.status(429).json({ error: 'Tenant usage quota exceeded' })
   }
   return true
+}
+
+function turnResultResponse(result: PatientTurnResult, response: import('express').Response): void {
+  if (result === 'not_found') response.status(404).json({ error: 'Session not found' })
+  else if (result === 'not_ready') response.status(409).json({ error: 'Session is not ready for another turn' })
+  else if (result === 'turn_in_progress') response.status(409).json({ error: 'Another turn is being processed for this session' })
+  else if (result === 'conflict') response.status(409).json({ error: 'Turn conflicts with the accepted session history' })
+  else if (result === 'membership_missing' || result === 'entitlement_denied') {
+    response.status(403).json({ error: 'Tenant membership or response entitlement is unavailable' })
+  } else if (result === 'quota_exceeded') response.status(429).json({ error: 'Tenant usage quota exceeded' })
+  else if (result === 'provider_error') response.status(502).json({ error: 'Patient turn generation failed' })
+  else if (result === 'validation_error') response.status(502).json({ error: 'Patient turn did not pass scenario validation' })
+  else response.status(503).json({ error: 'Patient session state is unavailable' })
 }

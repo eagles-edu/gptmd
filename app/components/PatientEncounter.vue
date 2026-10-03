@@ -13,24 +13,17 @@
             <legend>Choose how you will interact</legend>
             <label class="mode-option">
               <input v-model="interactionMode" type="radio" name="interaction-mode" value="transcript">
-              <span><strong>Transcript only</strong><small>Available now. Microphone access is not needed.</small></span>
+              <span><strong>Transcript</strong><small>Type each question and read the patient's replies.</small></span>
             </label>
             <label class="mode-option">
               <input v-model="interactionMode" type="radio" name="interaction-mode" value="audio">
-              <span><strong>Audio</strong><small>Audio conversations are not connected yet. You can check microphone permission, then continue by transcript.</small></span>
+              <span><strong>Voice conversation</strong><small>Speak one question at a time, hear the patient reply, and follow the readable transcript.</small></span>
             </label>
           </fieldset>
 
-          <div v-if="interactionMode === 'audio'" class="microphone-check">
-            <button type="button" class="permission-button" :disabled="microphoneStatus === 'requesting'" @click="requestMicrophoneAccess">
-              {{ microphoneStatus === 'requesting' ? 'Checking microphone…' : 'Allow microphone access' }}
-            </button>
-            <p class="permission-hint">This request happens only after you select audio and press the button. The check stops the microphone immediately and does not record.</p>
-          </div>
-          <p v-if="microphoneMessage" class="permission-message" role="status" aria-live="polite">{{ microphoneMessage }}</p>
-
           <div class="readiness-details">
-            <p><strong>Transcript readiness:</strong> available without microphone permission.</p>
+            <p v-if="interactionMode === 'audio'"><strong>Voice privacy:</strong> the browser may send speech to its recognition service. GPTpatient does not record or store raw audio. The recognized question and patient reply appear in the encounter transcript.</p>
+            <p v-else><strong>Typed transcript:</strong> microphone access is not needed. You can choose voice conversation before continuing.</p>
             <p><strong>Browser storage:</strong> local storage is not a secure session vault and has no permission prompt. GPTpatient does not save account or encounter data there. Any browser request for persistent storage would be separate; this app makes no such request.</p>
           </div>
 
@@ -39,8 +32,8 @@
               <input v-model="fictionalDetailsConfirmed" type="checkbox">
               <span>I understand this is a fictional training scenario and will use fictional details only.</span>
             </label>
-            <button type="button" class="continue-button" :disabled="!canContinue" @click="continueWithTranscript">
-              Continue with transcript
+            <button type="button" class="continue-button" :disabled="!canContinue" @click="continueWithMode">
+              Continue with {{ interactionMode === 'audio' ? 'voice' : 'transcript' }}
             </button>
           </div>
         </v-card-text>
@@ -60,8 +53,8 @@
         </div>
         <v-card-text>
           <div class="status-row">
-            <span class="status-dot" :class="`status-${status}`" aria-hidden="true" />
-            <span>{{ statusLabel }}</span>
+            <span class="status-dot" :class="`status-${turnLed}`" aria-hidden="true" />
+            <span role="status" aria-live="polite">{{ turnStatusLabel }}</span>
           </div>
           <ol class="setup-readiness" aria-label="Patient setup readiness">
             <li :data-ready="backendReady" :class="{ 'is-ready': backendReady }">
@@ -71,7 +64,7 @@
               Patient portrait loaded
             </li>
             <li :data-ready="inputReady" :class="{ 'is-ready': inputReady }">
-              Transcript input available
+              Interview input available
             </li>
           </ol>
           <h2>Patient profile</h2>
@@ -98,7 +91,7 @@
       <v-card class="conversation-card" rounded="xl" variant="flat">
         <div class="conversation-heading">
           <div>
-            <p class="eyebrow">Transcript mode</p>
+            <p class="eyebrow">{{ interactionMode === 'audio' ? 'Voice conversation' : 'Transcript mode' }}</p>
             <h2>Clinical interview</h2>
           </div>
           <span class="phase-chip">{{ phaseLabel }}</span>
@@ -109,13 +102,18 @@
             Start the session, then ask about the concern that brought the patient in. Let the history unfold through your questions.
           </p>
           <article v-for="(message, index) in messages" :key="`${message.turnId}-${message.role}-${index}`" class="message" :class="`message-${message.role}`">
-            <span class="message-label">{{ message.role === 'doctor' ? 'You' : 'Patient' }}</span>
+            <span class="message-label">
+              {{ message.role === 'doctor' ? 'You' : message.format === 'written' ? 'Patient · written note' : 'Patient' }}
+            </span>
             <p>{{ message.text }}</p>
+            <button v-if="message.role === 'patient' && message.format === 'written'" class="download-note-button" type="button" @click="downloadWrittenNote(message.text)">
+              Download note to take home
+            </button>
           </article>
           <p v-if="status === 'working' && profile" class="working-message">The patient is responding…</p>
         </div>
 
-        <form class="question-form" @submit.prevent="sendQuestion">
+        <form v-if="interactionMode === 'transcript'" class="question-form" @submit.prevent="sendQuestion">
           <label for="doctor-question">Your next question</label>
           <v-textarea
             id="doctor-question"
@@ -129,12 +127,33 @@
             variant="outlined"
           />
           <div class="form-actions">
-            <span class="mode-note">Voice capture and spoken replies follow after the API audio lane is connected.</span>
+            <span class="mode-note">Use voice conversation for spoken questions and replies.</span>
             <v-btn color="primary" type="submit" :disabled="!roomEntered || !question.trim() || pending" :loading="pending">
               Send question
             </v-btn>
           </div>
         </form>
+
+        <div v-else class="question-form voice-conversation-controls">
+          <p class="voice-input-note">Wait for the green light before speaking. Your final question sends automatically after seven seconds of silence; the patient replies aloud.</p>
+          <div class="voice-input-row">
+            <button type="button" class="voice-input-button" :disabled="!roomEntered" @click="toggleVoiceConversation">
+              {{ voiceConversationActive ? 'End voice conversation' : 'Start voice conversation' }}
+            </button>
+            <span v-if="speechListening" class="voice-listening-indicator">Listening</span>
+          </div>
+          <section class="repair-phrases" aria-label="Conversation repair sequence">
+            <p>Keep the conversation moving: volley one repair request at a time, and move on only if you still do not understand.</p>
+            <ol>
+              <li>Ask the patient to repeat it. Ask again as many as three or four times if needed.</li>
+              <li>Ask them to speak louder, slower, or more simply.</li>
+              <li>Ask what an unfamiliar word or phrase means, or ask them to explain it another way.</li>
+              <li>Ask them to spell the word or phrase.</li>
+              <li>If those steps do not work, ask them to write it down in English. Keep the original wording and download it to take home.</li>
+            </ol>
+          </section>
+          <p v-if="speechMessage" class="speech-message" role="status" aria-live="polite">{{ speechMessage }}</p>
+        </div>
 
         <v-alert v-if="errorMessage" class="api-error" type="warning" variant="tonal" role="status">
           {{ errorMessage }}
@@ -145,13 +164,32 @@
 </template>
 
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { usePatientApi, type PatientProfile } from '../composables/usePatientApi'
+import { classifyVoiceRepair, VoiceTurnBuffer } from '../utils/voice-turn'
 
 type EncounterStatus = 'idle' | 'creating' | 'preloading' | 'ready' | 'active' | 'working' | 'error'
-type Message = { turnId: string; role: 'doctor' | 'patient'; text: string }
+type Message = { turnId: string; role: 'doctor' | 'patient'; text: string; format?: 'written' }
 type InteractionMode = 'transcript' | 'audio'
-type MicrophoneStatus = 'not-requested' | 'requesting' | 'granted' | 'denied' | 'unavailable'
+type SpeechResultLike = ArrayLike<{ transcript: string }> & { isFinal: boolean }
+type SpeechRecognitionResultEventLike = { resultIndex: number; results: ArrayLike<SpeechResultLike> }
+type SpeechRecognitionErrorEventLike = { error: string }
+type SpeechRecognitionLike = {
+  lang: string
+  interimResults: boolean
+  continuous: boolean
+  onstart: (() => void) | null
+  onresult: ((event: SpeechRecognitionResultEventLike) => void) | null
+  onerror: ((event: SpeechRecognitionErrorEventLike) => void) | null
+  onend: (() => void) | null
+  start(): void
+  stop(): void
+  abort(): void
+}
+type SpeechRecognitionConstructor = new() => SpeechRecognitionLike
+type SpeechRecognitionWindow = Window & {
+  SpeechRecognition?: SpeechRecognitionConstructor
+}
 
 const api = usePatientApi()
 const sessionId = ref<string | null>(null)
@@ -164,13 +202,24 @@ const messages = ref<Message[]>([])
 const status = ref<EncounterStatus>('idle')
 const errorMessage = ref('')
 const preflightOpen = ref(true)
-const interactionMode = ref<InteractionMode>('transcript')
+const interactionMode = ref<InteractionMode>('audio')
 const fictionalDetailsConfirmed = ref(false)
-const microphoneStatus = ref<MicrophoneStatus>('not-requested')
-const microphoneMessage = ref('')
+const speechRecognition = shallowRef<SpeechRecognitionLike | null>(null)
+const speechListening = ref(false)
+const speechMessage = ref('')
+const voiceConversationActive = ref(false)
+const patientSpeaking = ref(false)
+const lastPatientReply = ref('')
+const speechVolume = ref(0.78)
+const speechRate = ref(1)
+let restartVoiceTimer: ReturnType<typeof setTimeout> | undefined
+const voiceTurnBuffer = new VoiceTurnBuffer((text) => {
+  stopRecognition()
+  void handleVoiceUtterance(text)
+})
 const pending = computed(() => ['creating', 'preloading', 'working'].includes(status.value))
-const canContinue = computed(() => fictionalDetailsConfirmed.value && interactionMode.value === 'transcript')
-const inputReady = computed(() => interactionMode.value === 'transcript')
+const canContinue = computed(() => fictionalDetailsConfirmed.value)
+const inputReady = computed(() => true)
 const canEnterRoom = computed(() =>
   status.value === 'ready' && backendReady.value && imageReady.value && inputReady.value
 )
@@ -185,6 +234,26 @@ const statusLabel = computed(() => ({
   error: 'Session needs attention'
 })[status.value])
 
+const turnLed = computed(() => {
+  if (status.value === 'error' || !roomEntered.value) return 'inactive'
+  if (pending.value || patientSpeaking.value) return 'processing'
+  if (interactionMode.value === 'transcript' || voiceConversationActive.value) return 'listening'
+  return 'inactive'
+})
+
+const turnStatusLabel = computed(() => {
+  if (turnLed.value === 'processing') {
+    return patientSpeaking.value ? 'Patient speaking · please wait for the green light' : statusLabel.value
+  }
+  if (turnLed.value === 'listening') {
+    return voiceConversationActive.value ? 'Green light · your turn; questions send after seven seconds of silence' : 'Green light · your turn to ask a question'
+  }
+  if (status.value === 'ready') return 'Red light · enter the room when ready'
+  if (status.value === 'error') return 'Red light · session needs attention'
+  if (roomEntered.value) return 'Red light · voice conversation inactive'
+  return statusLabel.value
+})
+
 const phaseLabel = computed(() => profile.value ? 'History taking' : 'Intake')
 
 const patientImage = computed(() => {
@@ -194,33 +263,190 @@ const patientImage = computed(() => {
   return `/assets/images/${decade}-${profile.value.bodyType}/01.png`
 })
 
-function continueWithTranscript(): void {
+function continueWithMode(): void {
   if (!canContinue.value) return
   preflightOpen.value = false
 }
 
-async function requestMicrophoneAccess(): Promise<void> {
-  if (interactionMode.value !== 'audio' || microphoneStatus.value === 'requesting') return
-  microphoneMessage.value = ''
-  if (!navigator.mediaDevices?.getUserMedia) {
-    microphoneStatus.value = 'unavailable'
-    microphoneMessage.value = 'Microphone access is unavailable in this browser or page context. Transcript mode remains available without it.'
+function toggleVoiceConversation(): void {
+  if (voiceConversationActive.value) {
+    stopVoiceConversation()
+    return
+  }
+  if (!(window as SpeechRecognitionWindow).SpeechRecognition) {
     interactionMode.value = 'transcript'
+    errorMessage.value = 'Voice recognition is unavailable in this browser, so the transcript input is available instead.'
+    return
+  }
+  speechMessage.value = ''
+  voiceConversationActive.value = true
+  startVoiceRecognition()
+}
+
+function startVoiceRecognition(): void {
+  if (!voiceConversationActive.value || pending.value || patientSpeaking.value) return
+  const Recognition = (window as SpeechRecognitionWindow).SpeechRecognition
+  if (!Recognition) {
+    stopVoiceConversation()
+    speechMessage.value = 'Voice recognition is unavailable. Choose Transcript mode to continue.'
     return
   }
 
-  microphoneStatus.value = 'requesting'
-  try {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
-    for (const track of stream.getTracks()) track.stop()
-    microphoneStatus.value = 'granted'
-    microphoneMessage.value = 'Permission granted. Audio conversations are not connected yet, so continue with transcript; the microphone check has stopped.'
-  } catch {
-    microphoneStatus.value = 'denied'
-    microphoneMessage.value = 'Microphone permission was denied. No microphone is needed for transcript mode; you can continue without it.'
+  const recognition = new Recognition()
+  recognition.lang = 'en-US'
+  recognition.interimResults = false
+  recognition.continuous = false
+  recognition.onstart = () => {
+    speechListening.value = true
+    speechMessage.value = 'Listening. Your question sends after seven seconds of silence.'
   }
-  interactionMode.value = 'transcript'
+  recognition.onresult = (event) => {
+    let completedSegment = ''
+    for (let index = event.resultIndex; index < event.results.length; index += 1) {
+      const result = event.results[index]
+      if (result?.isFinal) completedSegment += ` ${result[0]?.transcript ?? ''}`
+    }
+    if (completedSegment.trim() && voiceConversationActive.value) voiceTurnBuffer.add(completedSegment)
+  }
+  recognition.onerror = (event) => {
+    speechListening.value = false
+    speechRecognition.value = null
+    if (event.error === 'no-speech') {
+      scheduleVoiceRecognition()
+      return
+    }
+    const message = event.error === 'not-allowed' || event.error === 'service-not-allowed'
+      ? 'Microphone or speech permission was denied. Transcript input is available instead.'
+      : event.error === 'audio-capture'
+        ? 'No usable microphone was found. Transcript input is available instead.'
+        : 'Voice conversation stopped. Transcript input is available instead.'
+    stopVoiceConversation()
+    interactionMode.value = 'transcript'
+    errorMessage.value = message
+  }
+  recognition.onend = () => {
+    speechListening.value = false
+    speechRecognition.value = null
+    scheduleVoiceRecognition()
+  }
+
+  speechRecognition.value = recognition
+  try {
+    recognition.start()
+  } catch {
+    speechRecognition.value = null
+    speechListening.value = false
+    stopVoiceConversation()
+    interactionMode.value = 'transcript'
+    errorMessage.value = 'Voice recognition could not start. Transcript input is available instead.'
+  }
 }
+
+function scheduleVoiceRecognition(): void {
+  if (!voiceConversationActive.value || patientSpeaking.value || pending.value) return
+  if (restartVoiceTimer) clearTimeout(restartVoiceTimer)
+  restartVoiceTimer = setTimeout(() => {
+    restartVoiceTimer = undefined
+    startVoiceRecognition()
+  }, 350)
+}
+
+function stopRecognition(): void {
+  const recognition = speechRecognition.value
+  if (recognition) {
+    recognition.onstart = null
+    recognition.onresult = null
+    recognition.onend = null
+    recognition.onerror = null
+    recognition.abort()
+  }
+  speechRecognition.value = null
+  speechListening.value = false
+}
+
+function stopVoiceConversation(): void {
+  voiceConversationActive.value = false
+  if (restartVoiceTimer) clearTimeout(restartVoiceTimer)
+  restartVoiceTimer = undefined
+  voiceTurnBuffer.cancel()
+  stopRecognition()
+  window.speechSynthesis?.cancel()
+  patientSpeaking.value = false
+  speechMessage.value = 'Voice conversation ended.'
+}
+
+function speakPatientReply(text: string): void {
+  if (!voiceConversationActive.value) return
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+    speechMessage.value = 'The reply is in the transcript. Spoken replies are unavailable in this browser.'
+    status.value = 'active'
+    scheduleVoiceRecognition()
+    return
+  }
+  if (restartVoiceTimer) clearTimeout(restartVoiceTimer)
+  restartVoiceTimer = undefined
+  stopRecognition()
+  window.speechSynthesis.cancel()
+  const utterance = new SpeechSynthesisUtterance(text)
+  utterance.lang = 'en-US'
+  utterance.volume = speechVolume.value
+  utterance.rate = speechRate.value
+  patientSpeaking.value = true
+  utterance.onend = () => {
+    patientSpeaking.value = false
+    status.value = 'active'
+    scheduleVoiceRecognition()
+  }
+  utterance.onerror = () => {
+    if (patientSpeaking.value) speechMessage.value = 'The reply is in the transcript. Spoken playback could not start.'
+    patientSpeaking.value = false
+    status.value = 'active'
+    scheduleVoiceRecognition()
+  }
+  status.value = 'working'
+  speechMessage.value = 'The patient is speaking. Wait for the green light before your next turn.'
+  window.speechSynthesis.speak(utterance)
+}
+
+async function handleVoiceUtterance(text: string): Promise<void> {
+  const action = classifyVoiceRepair(text)
+  if (/\bsee you next time\b/i.test(text)) {
+    messages.value.push({ turnId: createTurnId(), role: 'doctor', text })
+    stopVoiceConversation()
+    return
+  }
+  if (action === 'repeat' || action === 'louder' || action === 'slower') {
+    messages.value.push({ turnId: createTurnId(), role: 'doctor', text })
+    if (action === 'louder') speechVolume.value = 1
+    if (action === 'slower') speechRate.value = 0.78
+    repeatLastReply(action === 'repeat' ? 'Repeating the last reply.' : action === 'louder' ? 'I’ll speak louder.' : 'I’ll speak more slowly.')
+    return
+  }
+  await submitQuestion(text, true, action === 'write-note')
+}
+
+function repeatLastReply(statusText = 'Repeating the last reply.'): void {
+  if (!lastPatientReply.value) {
+    speechMessage.value = 'There is no patient reply to repeat yet.'
+    status.value = 'active'
+    scheduleVoiceRecognition()
+    return
+  }
+  if (!voiceConversationActive.value) {
+    speechMessage.value = 'Start the voice conversation to hear the reply again.'
+    return
+  }
+  speechMessage.value = statusText
+  speakPatientReply(lastPatientReply.value)
+}
+
+onBeforeUnmount(() => {
+  voiceConversationActive.value = false
+  voiceTurnBuffer.cancel()
+  if (restartVoiceTimer) clearTimeout(restartVoiceTimer)
+  stopRecognition()
+  window.speechSynthesis?.cancel()
+})
 
 async function beginSession(): Promise<void> {
   errorMessage.value = ''
@@ -250,6 +476,16 @@ function enterRoom(): void {
   status.value = 'active'
 }
 
+function downloadWrittenNote(text: string): void {
+  const file = new Blob([text], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(file)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = 'gptmd-patient-note.txt'
+  link.click()
+  window.setTimeout(() => URL.revokeObjectURL(url), 0)
+}
+
 function preloadImage(source: string): Promise<void> {
   return new Promise((resolve, reject) => {
     const image = new Image()
@@ -260,7 +496,11 @@ function preloadImage(source: string): Promise<void> {
 }
 
 async function sendQuestion(): Promise<void> {
-  const text = question.value.trim()
+  await submitQuestion(question.value, false)
+}
+
+async function submitQuestion(input: string, voiceReply: boolean, writtenReply = false): Promise<void> {
+  const text = input.trim()
   if (!sessionId.value || !profile.value || !roomEntered.value || !text || pending.value) return
 
   const turnId = createTurnId()
@@ -271,12 +511,19 @@ async function sendQuestion(): Promise<void> {
 
   try {
     const result = await api.sendTurn(sessionId.value, turnId, text)
-    messages.value.push({ turnId, role: 'patient', text: result.text })
-    status.value = 'ready'
+    lastPatientReply.value = result.text
+    messages.value.push({ turnId, role: 'patient', text: result.text, ...(writtenReply ? { format: 'written' as const } : {}) })
+    if (voiceReply && writtenReply) {
+      status.value = 'active'
+      speechMessage.value = 'The patient wrote a note. Listening will resume.'
+      scheduleVoiceRecognition()
+    } else if (voiceReply) speakPatientReply(result.text)
+    else status.value = 'active'
   } catch (error) {
     question.value = text
     status.value = 'error'
     errorMessage.value = readableError(error)
+    if (voiceReply) stopVoiceConversation()
   }
 }
 
@@ -325,9 +572,7 @@ function readableError(error: unknown): string {
 }
 
 .preflight-intro,
-.readiness-details p,
-.permission-hint,
-.permission-message {
+.readiness-details p {
   color: var(--app-muted-text, #59696a);
   line-height: 1.55;
 }
@@ -375,11 +620,6 @@ function readableError(error: unknown): string {
   line-height: 1.45;
 }
 
-.microphone-check {
-  margin: 0.9rem 0 1.1rem;
-}
-
-.permission-button,
 .continue-button {
   background: #176d70;
   border: 0;
@@ -392,16 +632,9 @@ function readableError(error: unknown): string {
   padding: 0.7rem 1rem;
 }
 
-.permission-button:disabled,
 .continue-button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
-}
-
-.permission-hint,
-.permission-message {
-  font-size: 0.9rem;
-  margin: 0.65rem 0 0;
 }
 
 .readiness-details {
@@ -437,7 +670,6 @@ function readableError(error: unknown): string {
   justify-self: end;
 }
 
-.permission-button:focus-visible,
 .continue-button:focus-visible,
 .mode-option:focus-within,
 .fictional-confirmation:focus-within {
@@ -539,22 +771,17 @@ function readableError(error: unknown): string {
   width: 0.66rem;
 }
 
-.status-ready {
+.status-listening {
   background: var(--app-success);
   box-shadow: 0 0 0 4px var(--app-success-soft);
 }
 
-.status-active {
-  background: var(--app-success);
-  box-shadow: 0 0 0 4px var(--app-success-soft);
-}
-
-.status-creating, .status-preloading, .status-working {
+.status-processing {
   background: var(--app-warning);
   box-shadow: 0 0 0 4px var(--app-warning-soft);
 }
 
-.status-error {
+.status-inactive, .status-error {
   background: var(--app-error);
   box-shadow: 0 0 0 4px var(--app-error-soft);
 }
@@ -672,6 +899,25 @@ function readableError(error: unknown): string {
   white-space: pre-wrap;
 }
 
+.download-note-button {
+  background: transparent;
+  border: 1px solid var(--app-border);
+  border-radius: 0.45rem;
+  color: var(--app-accent);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.82rem;
+  font-weight: 700;
+  margin-top: 0.55rem;
+  min-height: 2.4rem;
+  padding: 0.4rem 0.65rem;
+}
+
+.download-note-button:focus-visible {
+  outline: 3px solid #c27b43;
+  outline-offset: 2px;
+}
+
 .working-message {
   color: var(--app-text-subtle);
   font-size: 0.9rem;
@@ -689,6 +935,74 @@ function readableError(error: unknown): string {
   font-size: 0.9rem;
   font-weight: 700;
   margin-bottom: 0.45rem;
+}
+
+.voice-input-row {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin-top: 0.65rem;
+}
+
+.voice-input-button {
+  background: var(--app-surface-accent);
+  border: 1px solid var(--app-border);
+  border-radius: 0.55rem;
+  color: var(--app-accent);
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+  min-height: 2.75rem;
+  padding: 0.6rem 0.9rem;
+}
+
+.voice-input-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
+}
+
+.voice-input-button:focus-visible {
+  outline: 3px solid #c27b43;
+  outline-offset: 3px;
+}
+
+.voice-listening-indicator {
+  color: var(--app-accent);
+  font-size: 0.9rem;
+  font-weight: 750;
+}
+
+.repair-phrases {
+  border-top: 1px solid var(--app-border-soft);
+  margin: 0.9rem 0 0;
+  padding-top: 0.75rem;
+  color: var(--app-text-subtle);
+  font-size: 0.9rem;
+  line-height: 1.45;
+}
+
+.repair-phrases p {
+  margin: 0;
+}
+
+.repair-phrases ol {
+  display: grid;
+  gap: 0.3rem;
+  margin: 0.45rem 0 0;
+  padding-left: 1.35rem;
+}
+
+.voice-input-note,
+.speech-message {
+  color: var(--app-text-subtle);
+  font-size: 0.82rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.speech-message {
+  margin-top: 0.45rem;
 }
 
 .form-actions {

@@ -1,8 +1,9 @@
 import type { Pool, PoolClient } from 'pg'
 import { createHash } from 'node:crypto'
+import { canonicalJsonStringify } from '../../services/api/src/canonical-json.ts'
 import { describe, expect, it, vi } from 'vitest'
 import type { AuthenticatedPrincipal } from '../../services/api/src/auth.ts'
-import type { PatientStateStore, ReadyPatientState } from '../../services/api/src/patient-state-store.ts'
+import type { LivePatientState, PatientStateStore, ReadyPatientState } from '../../services/api/src/patient-state-store.ts'
 import { createPostgresSessionStore } from '../../services/api/src/session-store.ts'
 import type { GeneratedPatientScenario } from '../../services/api/src/patient-profile.ts'
 
@@ -40,7 +41,13 @@ describe('patient setup persistence coordination', () => {
       saveReady: vi.fn(async (state) => {
         savedState.push(state)
         order.push('redis-ready')
-      })
+      }),
+      read: vi.fn(async () => null),
+      acquireTurnLock: vi.fn(async () => true),
+      releaseTurnLock: vi.fn(async () => undefined),
+      acceptTurn: vi.fn(async () => ({ status: 'missing_state' as const })),
+      recordTerminal: vi.fn(async () => 'missing_state' as const),
+      restore: vi.fn(async () => 'restored' as const)
     }
     const client = {
       query: vi.fn(async (sql: string) => {
@@ -107,7 +114,13 @@ describe('patient setup persistence coordination', () => {
     const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool
     const stateStore: PatientStateStore = {
       initialize: vi.fn().mockRejectedValue(new Error('Redis unavailable')),
-      saveReady: vi.fn()
+      saveReady: vi.fn(),
+      read: vi.fn(async () => null),
+      acquireTurnLock: vi.fn(async () => true),
+      releaseTurnLock: vi.fn(async () => undefined),
+      acceptTurn: vi.fn(async () => ({ status: 'missing_state' as const })),
+      recordTerminal: vi.fn(async () => 'missing_state' as const),
+      restore: vi.fn(async () => 'restored' as const)
     }
     const generate = vi.fn().mockResolvedValue(generated)
     const store = createPostgresSessionStore(pool, stateStore)
@@ -118,12 +131,18 @@ describe('patient setup persistence coordination', () => {
   })
 
   it('repairs Redis from the same saved scenario and Conversation on an idempotent retry', async () => {
-    const profileDigest = createHash('sha256').update(JSON.stringify(generated.profile)).digest('hex')
+    const profileDigest = createHash('sha256').update(canonicalJsonStringify(generated.profile)).digest('hex')
     const idempotencyHash = createHash('sha256').update('setup-key').digest('hex')
     const savedState: ReadyPatientState[] = []
     const stateStore: PatientStateStore = {
       initialize: vi.fn(),
-      saveReady: vi.fn(async (state) => { savedState.push(state) })
+      saveReady: vi.fn(async (state) => { savedState.push(state) }),
+      read: vi.fn(async () => null),
+      acquireTurnLock: vi.fn(async () => true),
+      releaseTurnLock: vi.fn(async () => undefined),
+      acceptTurn: vi.fn(async () => ({ status: 'missing_state' as const })),
+      recordTerminal: vi.fn(async () => 'missing_state' as const),
+      restore: vi.fn(async () => 'restored' as const)
     }
     const client = {
       query: vi.fn(async (sql: string) => {
@@ -160,5 +179,211 @@ describe('patient setup persistence coordination', () => {
       profile: { diagnosis: 'Endometriosis' }
     })
     expect(result).not.toHaveProperty('scenarioId')
+  })
+})
+
+describe('serialized patient turns', () => {
+  it('does not read Redis or generate a response for another tenant session', async () => {
+    const stateStore = {
+      initialize: vi.fn(), saveReady: vi.fn(), read: vi.fn(), acquireTurnLock: vi.fn(),
+      releaseTurnLock: vi.fn(), acceptTurn: vi.fn(), recordTerminal: vi.fn(), restore: vi.fn()
+    } as unknown as PatientStateStore
+    const pool = {
+      query: vi.fn(async () => ({ rows: [], rowCount: 0 })),
+      connect: vi.fn()
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+    const generateTurn = vi.fn()
+
+    expect(await store.submitPatientTurn(
+      { subjectId: 'other-user', tenantId: 'other-tenant' }, sessionId,
+      'turn-0001', 'Where does it hurt?', generateTurn
+    )).toBe('not_found')
+    expect(stateStore.read).not.toHaveBeenCalled()
+    expect(stateStore.acquireTurnLock).not.toHaveBeenCalled()
+    expect(generateTurn).not.toHaveBeenCalled()
+  })
+
+  it('rejects a history turn after the session leaves the history phase', async () => {
+    const live: LivePatientState = {
+      sessionId, patientProfileId, openedAt: createdAt.toISOString(),
+      profile: generated.profile,
+      setupProjection: {
+        fullName: generated.profile.fullName, dateOfBirth: generated.profile.dateOfBirth,
+        bodyType: generated.profile.bodyType, reasonForVisit: generated.profile.reasonForVisit,
+        diagnosis: generated.profile.diagnosis
+      },
+      conversationId: generated.conversationId,
+      profileDigest: 'a'.repeat(64), schemaVersion: 1,
+      state: {
+        sessionId, scenarioId: patientProfileId, status: 'active', phase: 'assessment',
+        interactionMode: 'transcript', openedAt: createdAt.toISOString(), updatedAt: createdAt.toISOString(),
+        currentTurnSequence: 0, terminalEventId: null
+      },
+      acceptedTurns: [], terminalEvent: null
+    }
+    const stateStore = {
+      initialize: vi.fn(), saveReady: vi.fn(), read: vi.fn(async () => live),
+      acquireTurnLock: vi.fn(async () => true), releaseTurnLock: vi.fn(), acceptTurn: vi.fn(),
+      recordTerminal: vi.fn(), restore: vi.fn()
+    } as unknown as PatientStateStore
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{ status: 'active' }], rowCount: 1 })),
+      connect: vi.fn()
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+    const generateTurn = vi.fn()
+
+    expect(await store.submitPatientTurn(
+      principal, sessionId, 'turn-0001', 'Where does it hurt?', generateTurn
+    )).toBe('not_ready')
+    expect(generateTurn).not.toHaveBeenCalled()
+    expect(pool.connect).not.toHaveBeenCalled()
+    expect(stateStore.releaseTurnLock).toHaveBeenCalledOnce()
+  })
+
+  it('serializes generation, commits once, and returns the saved reply on retry', async () => {
+    let live: LivePatientState = {
+      sessionId, patientProfileId, openedAt: createdAt.toISOString(),
+      profile: generated.profile,
+      setupProjection: {
+        fullName: generated.profile.fullName, dateOfBirth: generated.profile.dateOfBirth,
+        bodyType: generated.profile.bodyType, reasonForVisit: generated.profile.reasonForVisit,
+        diagnosis: generated.profile.diagnosis
+      },
+      conversationId: generated.conversationId,
+      profileDigest: 'a'.repeat(64), schemaVersion: 1,
+      state: {
+        sessionId, scenarioId: patientProfileId, status: 'ready', phase: 'history',
+        interactionMode: 'transcript',
+        openedAt: createdAt.toISOString(), updatedAt: createdAt.toISOString(),
+        currentTurnSequence: 0, terminalEventId: null
+      },
+      acceptedTurns: [], terminalEvent: null
+    }
+    let locked = false
+    const stateStore: PatientStateStore = {
+      initialize: vi.fn(), saveReady: vi.fn(),
+      read: vi.fn(async () => live),
+      acquireTurnLock: vi.fn(async () => {
+        if (locked) return false
+        locked = true
+        return true
+      }),
+      releaseTurnLock: vi.fn(async () => { locked = false }),
+      acceptTurn: vi.fn(async (turn, phase = 'history') => {
+        live = {
+          ...live,
+          state: { ...live.state, status: 'active', phase, updatedAt: turn.acceptedAt, currentTurnSequence: turn.sequence },
+          acceptedTurns: [...live.acceptedTurns, turn]
+        }
+        return { status: 'accepted' as const, turnId: turn.turnId, sequence: turn.sequence, patientResponse: turn.patientResponse }
+      }),
+      recordTerminal: vi.fn(async () => 'missing_state' as const),
+      restore: vi.fn(async () => 'restored' as const)
+    }
+    const quotaClient = {
+      query: vi.fn(async (sql: string) => sql.includes('responses_enabled')
+        ? { rows: [{ enabled: true, monthly_quota: null }], rowCount: 1 }
+        : { rows: [{ used: 1 }], rowCount: 1 }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v1', model_version: 'gpt-6-luna',
+        schema_version: 1, policy_version: 'patient-scenario-policy-v1'
+      }], rowCount: 1 })),
+      connect: vi.fn().mockResolvedValue(quotaClient)
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+    let finishGeneration!: (value: { responseId: string; output: unknown }) => void
+    const generationWait = new Promise<{ responseId: string; output: unknown }>((resolve) => {
+      finishGeneration = resolve
+    })
+    const generateTurn = vi.fn(() => generationWait)
+    const submitting = store.submitPatientTurn(principal, sessionId, 'turn-0001', 'Where does it hurt?', generateTurn)
+    await vi.waitFor(() => expect(generateTurn).toHaveBeenCalledOnce())
+
+    expect(await store.submitPatientTurn(
+      principal, sessionId, 'turn-0002', 'Any other symptoms?', generateTurn
+    )).toBe('turn_in_progress')
+    finishGeneration({
+      responseId: 'resp-private',
+      output: {
+        patientResponse: 'Mostly on my left side.', proposedFacts: [], historyCoverage: ['anyPain'], disclosedHistoryFields: []
+      }
+    })
+    expect(await submitting).toMatchObject({
+      status: 'accepted', turnId: 'turn-0001', sequence: 1, patientResponse: 'Mostly on my left side.'
+    })
+
+    expect(await store.submitPatientTurn(
+      principal, sessionId, 'turn-0001', 'Where does it hurt?', generateTurn
+    )).toMatchObject({
+      status: 'duplicate', turnId: 'turn-0001', sequence: 1, patientResponse: 'Mostly on my left side.'
+    })
+    expect(await store.submitPatientTurn(
+      principal, sessionId, 'turn-0001', 'A different message', generateTurn
+    )).toBe('conflict')
+    expect(generateTurn).toHaveBeenCalledOnce()
+    expect(pool.connect).toHaveBeenCalledOnce()
+    expect(stateStore.acceptTurn).toHaveBeenCalledOnce()
+    expect(stateStore.releaseTurnLock).toHaveBeenCalledTimes(3)
+  })
+
+  it('retries invalid model facts and commits only a safe clarification after bounded failure', async () => {
+    const stateStore = {
+      initialize: vi.fn(), saveReady: vi.fn(),
+      read: vi.fn(async () => ({
+        sessionId, patientProfileId, openedAt: createdAt.toISOString(),
+        profile: generated.profile,
+        setupProjection: { ...generated.profile },
+        conversationId: generated.conversationId, profileDigest: 'a'.repeat(64), schemaVersion: 1,
+        state: {
+          sessionId, scenarioId: patientProfileId, status: 'ready', phase: 'history',
+          interactionMode: 'transcript',
+          openedAt: createdAt.toISOString(), updatedAt: createdAt.toISOString(),
+          currentTurnSequence: 0, terminalEventId: null
+        }, acceptedTurns: [], terminalEvent: null
+      })),
+      acquireTurnLock: vi.fn(async () => true), releaseTurnLock: vi.fn(),
+      acceptTurn: vi.fn(async (turn) => ({
+        status: 'accepted' as const, turnId: turn.turnId, sequence: turn.sequence,
+        patientResponse: turn.patientResponse
+      })),
+      recordTerminal: vi.fn(), restore: vi.fn()
+    } as unknown as PatientStateStore
+    const quotaClient = {
+      query: vi.fn(async (sql: string) => sql.includes('responses_enabled')
+        ? { rows: [{ enabled: true, monthly_quota: null }], rowCount: 1 }
+        : { rows: [{ used: 1 }], rowCount: 1 }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v1', model_version: 'gpt-6-luna',
+        schema_version: 1, policy_version: 'patient-scenario-policy-v1'
+      }], rowCount: 1 })),
+      connect: vi.fn().mockResolvedValue(quotaClient)
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+    const generateTurn = vi.fn().mockResolvedValue({
+      responseId: 'resp-private',
+      output: {
+        patientResponse: 'I have a fever.', proposedFacts: [{ field: 'anyPain', value: 'No pain' }],
+        historyCoverage: ['anyPain'], disclosedHistoryFields: ['anyPain']
+      }
+    })
+
+    expect(await store.submitPatientTurn(principal, sessionId, 'turn-0001', 'Do you have a fever?', generateTurn))
+      .toMatchObject({
+        status: 'accepted', patientResponse: 'Sorry, could you please repeat or clarify that?'
+      })
+    expect(generateTurn).toHaveBeenCalledTimes(2)
+    expect(stateStore.acceptTurn).toHaveBeenCalledWith(expect.objectContaining({
+      patientResponse: 'Sorry, could you please repeat or clarify that?', patientReportedFacts: [],
+      historyCoverage: [], disclosedHistoryFields: [], disclosedFactIds: []
+    }), 'history')
+    expect(stateStore.releaseTurnLock).toHaveBeenCalledOnce()
   })
 })

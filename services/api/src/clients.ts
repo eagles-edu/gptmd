@@ -3,6 +3,7 @@ import { Pool } from 'pg'
 import { createClient } from 'redis'
 import type { ApiDependencies, PostgresProbe, RedisProbe } from './app.js'
 import { generatePatientScenario } from './patient-profile.js'
+import { generatePatientTurn } from './patient-turn.js'
 import { createPostgresSessionStore } from './session-store.ts'
 import { createRedisPatientStateStore } from './patient-state-store.ts'
 
@@ -56,6 +57,10 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
                to_regclass('public.tenant_entitlements') IS NOT NULL AND
                to_regclass('public.tenant_monthly_usage') IS NOT NULL AND
                to_regclass('public.app_sessions') IS NOT NULL AND
+               to_regclass('public.session_events') IS NOT NULL AND
+               to_regclass('public.provider_usage') IS NOT NULL AND
+               to_regclass('public.download_engagement') IS NOT NULL AND
+               to_regclass('public.session_outcomes') IS NOT NULL AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'app_sessions'
@@ -88,6 +93,13 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
             promptVersion: versions.promptVersion,
             policyVersion: versions.policyVersion
           })
+        : null,
+      generatePatientTurn: openaiClient
+        ? (context) => generatePatientTurn(
+            openaiClient,
+            env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
+            context
+          )
         : null,
       model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
       allowedOrigins: (env.API_CORS_ORIGINS ?? '').split(',').map((origin) => origin.trim()).filter(Boolean),

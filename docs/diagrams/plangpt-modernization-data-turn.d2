@@ -25,10 +25,10 @@ d13 -> d14: patient-reported history
 d13 -> d15: seeded / verified
 
 // One serialized text turn: authorize, validate, commit, then deliver.
-t01: Learner types text or uses browser speech recognition { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+t01: Voice-first turn: 7-second pause auto-sends STT; LED guides speakers { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 t02: Generate client turnId / idempotency key { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 t03: "POST /api/sessions/:sessionId/turns { turnId, text }" { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
-t04: Authenticate cookie · tenant · session owner · turn entitlement { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+t04: Authenticate access token or cookie; check tenant · session owner · turn entitlement { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 t05: Runtime-validate request body and text limits { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 t06: Acquire per-session turn lock { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 t07: Check committed turnId in idempotency ledger { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }

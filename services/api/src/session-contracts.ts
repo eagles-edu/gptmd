@@ -14,6 +14,10 @@ export const SessionVersionPinsSchema = z.object({
   policyVersion: z.string().trim().min(1).max(100)
 }).strict()
 export type SessionVersionPins = z.infer<typeof SessionVersionPinsSchema>
+export const SessionTurnVersionPinsSchema = SessionVersionPinsSchema.extend({
+  rubricVersion: z.string().trim().min(1).max(100).nullable()
+}).strict()
+export type SessionTurnVersionPins = z.infer<typeof SessionTurnVersionPinsSchema>
 const HistoryFieldSchema = z.enum(PATIENT_HISTORY_FIELDS)
 const PatientReportedValueSchema = z.union([
   z.string().trim().min(1).max(4_000),
@@ -46,6 +50,9 @@ export const PatientReportedFactExpansionSchema = z.object({
 export type PatientReportedFactExpansion = z.infer<typeof PatientReportedFactExpansionSchema>
 
 export const EncounterPhaseSchema = z.enum(['history', 'assessment', 'debrief'])
+export type EncounterPhase = z.infer<typeof EncounterPhaseSchema>
+export const InteractionModeSchema = z.literal('transcript')
+export type InteractionMode = z.infer<typeof InteractionModeSchema>
 export const SessionStatusSchema = z.enum([
   'initializing',
   'ready',
@@ -60,6 +67,7 @@ export const SessionStateSchema = z.object({
   scenarioId: OpaqueIdSchema.nullable(),
   status: SessionStatusSchema,
   phase: EncounterPhaseSchema.nullable(),
+  interactionMode: InteractionModeSchema.default('transcript'),
   openedAt: UtcTimestampSchema,
   updatedAt: UtcTimestampSchema,
   currentTurnSequence: z.number().int().nonnegative(),
@@ -100,13 +108,27 @@ export const SessionTurnSchema = z.object({
   sessionId: ApplicationSessionIdSchema,
   sequence: z.number().int().positive(),
   acceptedAt: UtcTimestampSchema,
+  phase: EncounterPhaseSchema.default('history'),
+  versions: SessionTurnVersionPinsSchema.optional(),
   learnerMessage: z.string().trim().min(1).max(8_000),
   patientResponse: z.string().trim().min(1).max(8_000),
   patientReportedFacts: z.array(PatientReportedFactExpansionSchema).max(100),
+  historyCoverage: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length).default([]),
+  disclosedHistoryFields: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length).default([]),
+  disclosedFactIds: z.array(OpaqueIdSchema).max(100).default([]),
+  historyCoverageState: z.array(z.object({
+    field: HistoryFieldSchema,
+    asked: z.boolean(),
+    relevant: z.boolean(),
+    missing: z.boolean(),
+    sensitive: z.boolean(),
+    notRelevant: z.boolean()
+  }).strict()).max(PATIENT_HISTORY_FIELDS.length).default([]),
   clinicalActions: z.array(z.lazy(() => ClinicalActionSchema)).max(100)
 }).strict()
 
 export type SessionTurn = z.infer<typeof SessionTurnSchema>
+export type HistoryCoverageState = SessionTurn['historyCoverageState'][number]
 
 const ClinicalActionBase = z.object({
   actionId: OpaqueIdSchema,
@@ -148,6 +170,37 @@ export const TerminalEventSchema = z.object({
 }).strict()
 
 export type TerminalEvent = z.infer<typeof TerminalEventSchema>
+
+export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
+  z.object({
+    eventId: OpaqueIdSchema,
+    sessionId: ApplicationSessionIdSchema,
+    sequence: z.number().int().positive(),
+    eventType: z.literal('accepted_turn'),
+    occurredAt: UtcTimestampSchema,
+    payload: SessionTurnSchema
+  }).strict().superRefine((event, context) => {
+    if (event.eventId !== event.payload.turnId || event.sessionId !== event.payload.sessionId ||
+        event.sequence !== event.payload.sequence || event.occurredAt !== event.payload.acceptedAt) {
+      context.addIssue({ code: 'custom', message: 'Accepted-turn envelope does not match its payload' })
+    }
+  }),
+  z.object({
+    eventId: OpaqueIdSchema,
+    sessionId: ApplicationSessionIdSchema,
+    sequence: z.number().int().positive(),
+    eventType: z.literal('terminal'),
+    occurredAt: UtcTimestampSchema,
+    payload: TerminalEventSchema
+  }).strict().superRefine((event, context) => {
+    if (event.eventId !== event.payload.eventId || event.sessionId !== event.payload.sessionId ||
+        event.sequence !== event.payload.finalTurnSequence + 1 || event.occurredAt !== event.payload.occurredAt) {
+      context.addIssue({ code: 'custom', message: 'Terminal-event envelope does not match its payload' })
+    }
+  })
+])
+
+export type SessionHistoryEvent = z.infer<typeof SessionHistoryEventSchema>
 
 const ArchiveStatusBase = z.object({
   archiveId: OpaqueIdSchema,

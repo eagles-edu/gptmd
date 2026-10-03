@@ -44,6 +44,11 @@
         }
       ]
     },
+    "interactionMode": {
+      "default": "transcript",
+      "type": "string",
+      "const": "transcript"
+    },
     "openedAt": {
       "type": "string",
       "format": "date-time",
@@ -77,6 +82,7 @@
     "scenarioId",
     "status",
     "phase",
+    "interactionMode",
     "openedAt",
     "updatedAt",
     "currentTurnSequence",

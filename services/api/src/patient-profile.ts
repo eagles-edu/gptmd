@@ -20,6 +20,7 @@ export const PATIENT_HISTORY_FIELDS = [
   'currentMedications',
   'pastMedications',
   'nutraceuticalUse',
+  'cannabisUse',
   'supplementVitaminUse',
   'tradChineseMedicine',
   'homeopathicTreatmentsMeds',
@@ -27,12 +28,12 @@ export const PATIENT_HISTORY_FIELDS = [
   'surgicalHistory',
   'obstetricalHistory',
   'numberPregnancies',
-  'numberLiveBirths',
-  'numberChildren',
   'numberMiscarriage',
   'numberStillbirths',
   'numberAbortions',
   'numberEctopicPregnancies',
+  'numberLiveBirths',
+  'numberChildren',
   'tubalLigation',
   'hysterectomyHistory',
   'perimenopauseStatus',
@@ -48,7 +49,6 @@ export const PATIENT_HISTORY_FIELDS = [
   'familyMedicalHistory',
   'illicitDrugUse',
   'methadoneTreatment',
-  'cannabisUse',
   'alcoholUse',
   'nutritionHabits',
   'sleepQualityQuantity',
@@ -67,6 +67,17 @@ export const PATIENT_HISTORY_FIELDS = [
   'miscellaneousDetailsNos'
 ] as const
 export const PATIENT_PROFILE_FIELDS = ['reasonForVisit', ...PATIENT_HISTORY_FIELDS] as const
+
+export const OBSTETRIC_COUNT_FIELDS = [
+  'numberPregnancies', 'numberMiscarriage', 'numberStillbirths', 'numberAbortions',
+  'numberEctopicPregnancies', 'numberLiveBirths', 'numberChildren'
+] as const
+export type ObstetricCountField = typeof OBSTETRIC_COUNT_FIELDS[number]
+
+const COMPLETED_PREGNANCY_OUTCOME_FIELDS = [
+  'numberMiscarriage', 'numberStillbirths', 'numberAbortions',
+  'numberEctopicPregnancies', 'numberLiveBirths'
+] as const satisfies readonly ObstetricCountField[]
 
 const HistoryValueSchema = z.union([
   z.string().trim().min(1).max(4_000),
@@ -161,6 +172,22 @@ export class PatientScenarioProviderError extends Error {
   }
 }
 
+/** Remove setup items, including the hidden answer key, before this Conversation enters the turn lane. */
+export async function clearPatientSetupConversation(client: OpenAI, conversationId: string): Promise<void> {
+  const itemIds: string[] = []
+  for await (const item of client.conversations.items.list(conversationId, { limit: 100, order: 'asc' })) {
+    if (!item.id) throw new Error('Conversation setup item has no deletable ID')
+    itemIds.push(item.id)
+  }
+  for (const itemId of itemIds.reverse()) {
+    await client.conversations.items.delete(itemId, { conversation_id: conversationId })
+  }
+
+  for await (const remaining of client.conversations.items.list(conversationId, { limit: 1, order: 'asc' })) {
+    throw new Error(`Conversation setup item ${remaining.id ?? 'with no ID'} remains in the patient turn context`)
+  }
+}
+
 function ageOnDate(dateOfBirth: string, asOf: Date): number | null {
   const match = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateOfBirth)
   if (!match) return null
@@ -185,15 +212,7 @@ function ageOnDate(dateOfBirth: string, asOf: Date): number | null {
 
 function hasValidHistory(profile: PatientScenarioProfile): boolean {
   const seen = new Set<string>()
-  const countFields = new Set([
-    'numberChildren',
-    'numberMiscarriage',
-    'numberPregnancies',
-    'numberStillbirths',
-    'numberLiveBirths',
-    'numberAbortions',
-    'numberEctopicPregnancies'
-  ])
+  const countFields = new Set<string>(OBSTETRIC_COUNT_FIELDS)
   for (const entry of profile.history) {
     if (seen.has(entry.field)) return false
     seen.add(entry.field)
@@ -222,6 +241,31 @@ function hasValidHistory(profile: PatientScenarioProfile): boolean {
   return true
 }
 
+/** Check reported pregnancy outcomes against gravida, accounting for an active pregnancy. */
+export function isObstetricHistoryConsistent(
+  counts: Partial<Record<ObstetricCountField, number>>,
+  currentPregnancyStatus: PatientScenarioProfile['currentPregnancyStatus']
+): boolean {
+  if (Object.values(counts).some((value) => !Number.isSafeInteger(value) || value < 0)) return false
+
+  const pregnancies = counts.numberPregnancies
+  if (pregnancies === undefined) return true
+  if (currentPregnancyStatus === 'pregnant' && pregnancies < 1) return false
+
+  const knownOutcomes = COMPLETED_PREGNANCY_OUTCOME_FIELDS
+    .map((field) => counts[field])
+    .filter((value): value is number => value !== undefined)
+  const outcomeTotal = knownOutcomes.reduce((total, value) => total + value, 0)
+  const expectedOutcomes = currentPregnancyStatus === 'pregnant' ? pregnancies - 1 : pregnancies
+  if (outcomeTotal > expectedOutcomes) return false
+
+  const everyOutcomeKnown = COMPLETED_PREGNANCY_OUTCOME_FIELDS.every((field) => counts[field] !== undefined)
+  if (everyOutcomeKnown && currentPregnancyStatus !== 'unknown') {
+    return outcomeTotal === expectedOutcomes
+  }
+  return true
+}
+
 export function isPatientScenarioConsistent(profile: PatientScenarioProfile, asOf: Date): boolean {
   if (!Number.isFinite(asOf.getTime())) return false
   const age = ageOnDate(profile.dateOfBirth, asOf)
@@ -232,7 +276,13 @@ export function isPatientScenarioConsistent(profile: PatientScenarioProfile, asO
     profile.currentPregnancyStatus === 'pregnant' &&
     profile.currentMenopausalStatus === 'menopausal'
   ) return false
-  return true
+  const counts: Partial<Record<ObstetricCountField, number>> = {}
+  for (const entry of profile.history) {
+    if (OBSTETRIC_COUNT_FIELDS.includes(entry.field as ObstetricCountField) && typeof entry.value === 'number') {
+      counts[entry.field as ObstetricCountField] = entry.value
+    }
+  }
+  return isObstetricHistoryConsistent(counts, profile.currentPregnancyStatus)
 }
 
 function validationFailure(response: OpenAI.Responses.Response): boolean {
@@ -297,6 +347,12 @@ export async function generatePatientScenario(
     }
 
     if (profile) {
+      try {
+        await clearPatientSetupConversation(client, conversation.id)
+      } catch {
+        abandonedConversationIds.push(conversation.id)
+        continue
+      }
       return {
         conversationId: conversation.id,
         responseId: response.id,

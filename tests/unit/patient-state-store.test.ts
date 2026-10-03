@@ -3,7 +3,17 @@ import { createRedisPatientStateStore, type RedisJsonClient } from '../../servic
 
 function createJsonRedis(isOpen = true): RedisJsonClient & { documents: Map<string, unknown>; sendCommand: ReturnType<typeof vi.fn> } {
   const documents = new Map<string, unknown>()
+  const locks = new Map<string, string>()
   const sendCommand = vi.fn(async (command: string[]) => {
+    if (command[0] === 'SET' && command[3] === 'NX') {
+      if (locks.has(command[1]!)) return null
+      locks.set(command[1]!, command[2]!)
+      return 'OK'
+    }
+    if (command[0] === 'EVAL' && command[2] === '1') {
+      if (locks.get(command[3]!) === command[4]) locks.delete(command[3]!)
+      return 1
+    }
     if (command[0] === 'JSON.SET') {
       const [, key, , serialized, condition] = command
       if (condition === 'NX' && documents.has(key!)) return null
@@ -14,12 +24,62 @@ function createJsonRedis(isOpen = true): RedisJsonClient & { documents: Map<stri
       const stored = documents.get(command[1]!)
       return stored === undefined ? null : JSON.stringify(stored)
     }
+    if (command[0] === 'EVAL' && command[1]?.includes("redis.call('JSON.SET', KEYS[1], '$', ARGV[3])")) {
+      documents.set(command[3]!, JSON.parse(command[7]!))
+      documents.set(command[4]!, JSON.parse(command[8]!))
+      return 'OK'
+    }
     throw new Error(`Unexpected Redis command: ${command[0]}`)
   })
   return { isOpen, connect: vi.fn(), sendCommand, documents }
 }
 
+function createAtomicJsonRedis(): ReturnType<typeof createJsonRedis> & {
+  retryRecords: Map<string, string>
+  events: string[]
+} {
+  const redis = createJsonRedis()
+  const handleJson = redis.sendCommand.getMockImplementation()!
+  const retryRecords = new Map<string, string>()
+  const events: string[] = []
+  redis.sendCommand.mockImplementation(async (command: string[]) => {
+    if (command[0] === 'EVAL' && command[2] === '2') {
+      redis.documents.set(command[3]!, JSON.parse(command[7]!))
+      redis.documents.set(command[4]!, JSON.parse(command[8]!))
+      return 'OK'
+    }
+    if (command[0] === 'EVAL' && command[2] === '4') {
+      const session = redis.documents.get(command[3]!) as { state: { currentTurnSequence: number } }
+      const retryMapKey = command[5]!
+      const retryField = `${retryMapKey}:${command[13]}`
+      const prior = retryRecords.get(retryField)
+      if (prior) return ['duplicate', prior]
+      if (session.state.currentTurnSequence !== Number(command[7])) return ['conflict']
+      redis.documents.set(command[3]!, JSON.parse(command[11]!))
+      redis.documents.set(command[4]!, JSON.parse(command[12]!))
+      retryRecords.set(retryField, command[14]!)
+      events.push(command[10]!)
+      return ['accepted', command[14]!]
+    }
+    return handleJson(command)
+  })
+  return { ...redis, retryRecords, events }
+}
+
 describe('Redis patient state store', () => {
+  it('serializes a session turn with an owner checked Redis lock', async () => {
+    const redis = createJsonRedis()
+    const store = createRedisPatientStateStore(redis)
+    const sessionId = 's'.repeat(43)
+
+    expect(await store.acquireTurnLock(sessionId, 'owner-a')).toBe(true)
+    expect(await store.acquireTurnLock(sessionId, 'owner-b')).toBe(false)
+    await store.releaseTurnLock(sessionId, 'owner-b')
+    expect(await store.acquireTurnLock(sessionId, 'owner-b')).toBe(false)
+    await store.releaseTurnLock(sessionId, 'owner-a')
+    expect(await store.acquireTurnLock(sessionId, 'owner-b')).toBe(true)
+  })
+
   it('initializes both opaque bindings idempotently and stores the complete private profile', async () => {
     const redis = createJsonRedis()
     const store = createRedisPatientStateStore(redis)
@@ -31,6 +91,7 @@ describe('Redis patient state store', () => {
     await store.saveReady({
       sessionId,
       patientProfileId,
+      openedAt: '2026-10-01T00:00:00.000Z',
       profile: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
         reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
@@ -51,16 +112,16 @@ describe('Redis patient state store', () => {
     })
 
     expect(redis.connect).not.toHaveBeenCalled()
-    expect(redis.documents.get(`gptmd:session:${sessionId}`)).toEqual({
-      sessionId, patientProfileId, status: 'ready'
+    expect(redis.documents.get(`gptmd:session:${sessionId}`)).toMatchObject({
+      sessionId, patientProfileId, status: 'ready', state: { currentTurnSequence: 0 }
     })
     expect(redis.documents.get(`gptmd:patient:${patientProfileId}`)).toMatchObject({
-      sessionId, patientProfileId, status: 'ready',
+      sessionId, patientProfileId, state: { status: 'ready' }, acceptedTurns: [],
       profile: { diagnosis: 'Endometriosis' },
       setupProjection: { diagnosis: 'Endometriosis' },
       conversationId: 'conv_private', profileDigest: 'digest_private', schemaVersion: 1
     })
-    expect(redis.sendCommand).toHaveBeenCalledWith(expect.arrayContaining(['JSON.SET', `gptmd:session:${sessionId}`, '$', expect.any(String), 'NX']))
+    expect(redis.sendCommand).toHaveBeenCalledWith(expect.arrayContaining(['EVAL', expect.any(String), '2', `gptmd:session:${sessionId}`]))
   })
 
   it('rejects a Redis key already bound to another session or profile', async () => {
@@ -81,5 +142,50 @@ describe('Redis patient state store', () => {
 
     expect(redis.connect).toHaveBeenCalledOnce()
     expect(redis.sendCommand).toHaveBeenCalled()
+  })
+
+  it('commits an accepted reply and recovery event once and returns the saved reply to a racing retry', async () => {
+    const redis = createAtomicJsonRedis()
+    const store = createRedisPatientStateStore(redis)
+    const sessionId = 's'.repeat(43)
+    const patientProfileId = 'p'.repeat(43)
+    const openedAt = '2026-10-01T00:00:00.000Z'
+    await store.initialize(sessionId, patientProfileId)
+    await store.saveReady({
+      sessionId, patientProfileId, openedAt,
+      profile: {
+        fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+        currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
+        patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
+        persona: {
+          mood: 'concerned', maturity: 'adult', verbosity: 'moderate',
+          educationLevel: 'college', willingnessToDisclose: 'gradual'
+        }
+      },
+      setupProjection: {
+        fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
+      },
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 1
+    })
+    const turn = {
+      turnId: 'turn-1', sessionId, sequence: 1, acceptedAt: '2026-10-01T00:01:00.000Z',
+      phase: 'history',
+      learnerMessage: 'What brings you in?', patientResponse: 'I have pelvic pain.',
+      patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: [], clinicalActions: []
+    }
+
+    const results = await Promise.all([store.acceptTurn(turn), store.acceptTurn(turn)])
+
+    expect(results).toEqual([
+      { status: 'accepted', turnId: 'turn-1', sequence: 1, patientResponse: 'I have pelvic pain.' },
+      { status: 'duplicate', turnId: 'turn-1', sequence: 1, patientResponse: 'I have pelvic pain.' }
+    ])
+    expect(redis.events).toHaveLength(1)
+    expect(JSON.parse(redis.events[0]!).eventType).toBe('accepted_turn')
+    expect(await store.read(sessionId)).toMatchObject({
+      state: { status: 'active', currentTurnSequence: 1 }, acceptedTurns: [turn]
+    })
   })
 })

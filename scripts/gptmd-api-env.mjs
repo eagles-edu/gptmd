@@ -4,8 +4,8 @@ import { fileURLToPath } from 'node:url'
 import { parseEnv } from 'node:util'
 
 const mode = process.argv[2]
-if (!['dev', 'start'].includes(mode)) {
-  process.stderr.write('Usage: gptmd-api-env.mjs <dev|start>\n')
+if (!['dev', 'start', 'worker:dev', 'worker'].includes(mode)) {
+  process.stderr.write('Usage: gptmd-api-env.mjs <dev|start|worker:dev|worker>\n')
   process.exit(2)
 }
 
@@ -31,9 +31,12 @@ for (const key of ['PATH', 'HOME', 'LANG', 'TMPDIR', 'NODE_ENV']) {
   if (process.env[key]) env[key] = process.env[key]
 }
 
-const args = mode === 'dev'
-  ? ['--import', 'tsx', '--watch', 'src/server.ts']
-  : ['dist/server.js']
+const workerMode = mode.startsWith('worker')
+const devMode = mode.endsWith(':dev') || mode === 'dev'
+const entry = workerMode ? 'worker' : 'server'
+const args = devMode
+  ? ['--import', 'tsx', '--watch', `src/${entry}.ts`]
+  : [`dist/${entry}.js`]
 const child = spawn(process.execPath, args, {
   cwd: apiRoot,
   env,

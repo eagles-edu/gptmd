@@ -1,8 +1,11 @@
-import { createHash, randomBytes } from 'node:crypto'
+import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { AuthenticatedPrincipal } from './auth.ts'
 import {
-  ImmutablePatientScenarioSchema
+  ImmutablePatientScenarioSchema,
+  SessionStateSchema,
+  SessionTurnSchema,
+  TerminalEventSchema
 } from './session-contracts.ts'
 import {
   PATIENT_SCENARIO_POLICY_VERSION,
@@ -14,7 +17,17 @@ import {
   type PatientScenarioVersionPins
 } from './patient-profile.ts'
 import { derivePatientSetup, toLearnerPatientProfile } from './patient-setup.ts'
-import type { PatientStateStore } from './patient-state-store.ts'
+import { canonicalJsonStringify } from './canonical-json.ts'
+import type { LivePatientState, PatientStateStore } from './patient-state-store.ts'
+import type { SessionTurn, TerminalEvent } from './session-contracts.ts'
+import {
+  validatePatientTurnOutput,
+  PATIENT_TURN_POLICY_VERSION,
+  PATIENT_TURN_PROMPT_VERSION,
+  PATIENT_TURN_SCHEMA_VERSION,
+  type AcceptedPatientTurnContent,
+  type PatientTurnGenerationContext
+} from './patient-turn.ts'
 
 export type QuotaFeature = 'sessions' | 'responses'
 export type SessionStatus = 'initializing' | 'ready' | 'active' | 'completed' | 'cancelled'
@@ -44,6 +57,18 @@ export type ScenarioSetupResult =
   | 'state_unavailable'
 
 export type StoreResult = 'allowed' | 'membership_missing' | 'entitlement_denied' | 'quota_exceeded'
+export type PatientTurnResult =
+  | { status: 'accepted' | 'duplicate'; turnId: string; sequence: number; patientResponse: string }
+  | 'not_found'
+  | 'not_ready'
+  | 'turn_in_progress'
+  | 'conflict'
+  | 'missing_state'
+  | 'provider_error'
+  | 'validation_error'
+  | 'membership_missing'
+  | 'entitlement_denied'
+  | 'quota_exceeded'
 
 export interface SessionStore {
   getActiveTenantIds(subjectId: string): Promise<string[]>
@@ -62,10 +87,18 @@ export interface SessionStore {
       asOf: Date
     ) => Promise<GeneratedPatientScenario>
   ): Promise<ScenarioSetupResult>
+  submitPatientTurn(
+    principal: AuthenticatedPrincipal,
+    sessionId: string,
+    turnId: string,
+    learnerMessage: string,
+    generateTurn: (context: PatientTurnGenerationContext) => Promise<{ responseId: string; output: unknown }>
+  ): Promise<PatientTurnResult>
   getOwnedSession(
     principal: AuthenticatedPrincipal,
     sessionId: string
   ): Promise<SessionRecord | null>
+  ensureLiveState?(principal: AuthenticatedPrincipal, sessionId: string): Promise<void>
 }
 
 type EntitlementRow = {
@@ -124,6 +157,10 @@ async function rollback(client: PoolClient): Promise<void> {
   } catch {
     // Preserve the original transaction error.
   }
+}
+
+function queueTurnAudit(event: string, sessionId: string, turnId: string): void {
+  setImmediate(() => console.warn(JSON.stringify({ event, sessionId, turnId })))
 }
 
 export function createPostgresSessionStore(
@@ -316,7 +353,7 @@ export function createPostgresSessionStore(
             profileDigest: savedRow.profile_digest,
             profile
           })
-          const digest = createHash('sha256').update(JSON.stringify(scenario.profile)).digest('hex')
+          const digest = createHash('sha256').update(canonicalJsonStringify(scenario.profile)).digest('hex')
           if (digest !== scenario.profileDigest) {
             await client.query('ROLLBACK')
             throw new Error('Stored patient scenario digest does not match its profile')
@@ -330,6 +367,7 @@ export function createPostgresSessionStore(
           await patientStateStore.saveReady({
             sessionId,
             patientProfileId: scenario.scenarioId,
+            openedAt: session.created_at.toISOString(),
             profile: scenario.profile,
             setupProjection: derivePatientSetup(scenario.profile),
             conversationId: savedRow.provider_conversation_id,
@@ -370,7 +408,7 @@ export function createPostgresSessionStore(
           scenarioId: patientProfileId,
           schemaVersion: versions.schemaVersion,
           createdAt: new Date().toISOString(),
-          profileDigest: createHash('sha256').update(JSON.stringify(profile)).digest('hex'),
+          profileDigest: createHash('sha256').update(canonicalJsonStringify(profile)).digest('hex'),
           profile
         })
         derivePatientSetup(scenario.profile)
@@ -402,6 +440,7 @@ export function createPostgresSessionStore(
         await patientStateStore.saveReady({
           sessionId,
           patientProfileId,
+          openedAt: session.created_at.toISOString(),
           profile: scenario.profile,
           setupProjection: derivePatientSetup(scenario.profile),
           conversationId: generated.conversationId,
@@ -414,6 +453,126 @@ export function createPostgresSessionStore(
         throw error
       } finally {
         client.release()
+      }
+    },
+
+    async submitPatientTurn(principal, sessionId, turnId, learnerMessage, generateTurn) {
+      const owner = await pool.query(
+        `SELECT status, prompt_version, model_version, schema_version, policy_version
+         FROM app_sessions
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      const ownerRow = owner.rows[0] as (Pick<SetupSessionRow,
+        'status' | 'prompt_version' | 'model_version' | 'schema_version' | 'policy_version'
+      >) | undefined
+      if (!ownerRow) return 'not_found'
+      if (!['ready', 'active'].includes(ownerRow.status ?? '')) return 'not_ready'
+      if (!patientStateStore) return 'missing_state'
+
+      await this.ensureLiveState?.(principal, sessionId)
+      const lockToken = randomUUID()
+      if (!await patientStateStore.acquireTurnLock(sessionId, lockToken)) return 'turn_in_progress'
+
+      try {
+        const current = await patientStateStore.read(sessionId)
+        if (!current) return 'missing_state'
+        const prior = current.acceptedTurns.find((turn) => turn.turnId === turnId)
+        if (prior) {
+          return prior.learnerMessage === learnerMessage
+            ? {
+                status: 'duplicate', turnId: prior.turnId, sequence: prior.sequence,
+                patientResponse: prior.patientResponse
+              }
+            : 'conflict'
+        }
+        if (current.state.status === 'completed' || current.state.status === 'cancelled') return 'not_ready'
+        if (current.state.status !== 'ready' && current.state.status !== 'active') return 'not_ready'
+        if (current.state.phase !== 'history' || current.state.interactionMode !== 'transcript') return 'not_ready'
+
+        const quota = await this.consumeQuota(principal, 'responses')
+        if (quota !== 'allowed') return quota
+
+        const acceptedAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
+        const sequence = current.state.currentTurnSequence + 1
+        const context: PatientTurnGenerationContext = {
+          scenarioId: current.patientProfileId,
+          profile: current.profile,
+          conversationId: current.conversationId,
+          versions: {
+            promptVersion: PATIENT_TURN_PROMPT_VERSION,
+            modelVersion: ownerRow.model_version,
+            schemaVersion: PATIENT_TURN_SCHEMA_VERSION,
+            policyVersion: PATIENT_TURN_POLICY_VERSION,
+            rubricVersion: null
+          },
+          acceptedTurns: current.acceptedTurns,
+          phase: current.state.phase ?? 'history',
+          learnerMessage
+        }
+
+        let acceptedContent: AcceptedPatientTurnContent | undefined
+        let validationFailed = false
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          let generated: { responseId: string; output: unknown }
+          try {
+            generated = await generateTurn({ ...context, retryAfterValidationFailure: attempt > 0 })
+          } catch {
+            queueTurnAudit('patient_turn_model_failure', sessionId, turnId)
+            return 'provider_error'
+          }
+          try {
+            acceptedContent = validatePatientTurnOutput(
+              generated.output, context, turnId, sequence, acceptedAt
+            )
+            break
+          } catch {
+            validationFailed = true
+          }
+        }
+        if (!acceptedContent) {
+          queueTurnAudit('patient_turn_validation_failure', sessionId, turnId)
+          acceptedContent = {
+            patientResponse: 'Sorry, could you please repeat or clarify that?',
+            patientReportedFacts: [],
+            historyCoverage: [],
+            disclosedHistoryFields: [],
+            disclosedFactIds: [],
+            historyCoverageState: []
+          }
+        }
+
+        const turn = SessionTurnSchema.parse({
+          turnId,
+          sessionId,
+          sequence,
+          acceptedAt,
+          phase: context.phase,
+          versions: context.versions,
+          learnerMessage,
+          patientResponse: acceptedContent.patientResponse,
+          patientReportedFacts: acceptedContent.patientReportedFacts,
+          historyCoverage: acceptedContent.historyCoverage,
+          disclosedHistoryFields: acceptedContent.disclosedHistoryFields,
+          disclosedFactIds: acceptedContent.disclosedFactIds,
+          historyCoverageState: acceptedContent.historyCoverageState,
+          clinicalActions: []
+        })
+        if (validationFailed && acceptedContent.patientResponse !== 'Sorry, could you please repeat or clarify that?') {
+          queueTurnAudit('patient_turn_recovered_after_validation_retry', sessionId, turnId)
+        }
+        const committed = await patientStateStore.acceptTurn(turn, context.phase)
+        if (committed.status === 'accepted' || committed.status === 'duplicate') return committed
+        if (committed.status === 'terminal') return 'not_ready'
+        if (committed.status === 'not_ready') return 'not_ready'
+        if (committed.status === 'conflict') return 'conflict'
+        return 'missing_state'
+      } finally {
+        try {
+          await patientStateStore.releaseTurnLock(sessionId, lockToken)
+        } catch {
+          queueTurnAudit('patient_turn_lock_release_failure', sessionId, turnId)
+        }
       }
     },
 
@@ -442,6 +601,84 @@ export function createPostgresSessionStore(
         updatedAt: row.updated_at.toISOString(),
         versions: toVersionPins(row)
       } : null
+    },
+
+    async ensureLiveState(principal, sessionId) {
+      if (!patientStateStore) return
+      if (await patientStateStore.read(sessionId)) return
+      const selected = await pool.query<{
+        session_id: string
+        patient_profile_id: string | null
+        status: SessionStatus
+        created_at: Date
+        updated_at: Date
+        schema_version: number
+        profile_digest: string | null
+        profile_json: unknown | null
+        provider_conversation_id: string | null
+      }>(
+        `SELECT s.session_id, s.patient_profile_id, s.status, s.created_at, s.updated_at,
+                s.schema_version, p.profile_digest, p.profile_json, p.provider_conversation_id
+         FROM app_sessions s
+         LEFT JOIN patient_scenarios p ON p.session_id = s.session_id
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      const session = selected.rows[0]
+      if (!session || !session.patient_profile_id || !session.profile_json ||
+          !session.profile_digest || !session.provider_conversation_id) return
+
+      const profile = PatientScenarioProfileSchema.parse(session.profile_json)
+      const profileDigest = createHash('sha256').update(canonicalJsonStringify(profile)).digest('hex')
+      if (profileDigest !== session.profile_digest) {
+        throw new Error('Stored patient scenario digest does not match its profile during Redis recovery')
+      }
+      const eventRows = await pool.query<{
+        event_id: string
+        sequence: string | number
+        event_type: 'accepted_turn' | 'terminal'
+        occurred_at: Date
+        payload: unknown
+      }>(
+        `SELECT event_id, sequence, event_type, occurred_at, payload
+         FROM session_events WHERE session_id = $1 ORDER BY sequence`,
+        [sessionId]
+      )
+      const acceptedTurns: SessionTurn[] = []
+      let terminalEvent: TerminalEvent | null = null
+      for (const row of eventRows.rows) {
+        if (row.event_type === 'accepted_turn') {
+          acceptedTurns.push(SessionTurnSchema.parse(row.payload))
+        } else {
+          terminalEvent = TerminalEventSchema.parse(row.payload)
+        }
+      }
+      const lastTurn = acceptedTurns.at(-1)
+      const state = SessionStateSchema.parse({
+        sessionId,
+        scenarioId: session.patient_profile_id,
+        status: terminalEvent?.outcome ?? (lastTurn ? 'active' : session.status),
+        phase: terminalEvent ? 'debrief' : 'history',
+        interactionMode: 'transcript',
+        openedAt: session.created_at.toISOString(),
+        updatedAt: terminalEvent?.occurredAt ?? lastTurn?.acceptedAt ?? session.updated_at.toISOString(),
+        currentTurnSequence: lastTurn?.sequence ?? 0,
+        terminalEventId: terminalEvent?.eventId ?? null
+      })
+      const liveState: LivePatientState = {
+        sessionId,
+        patientProfileId: session.patient_profile_id,
+        openedAt: session.created_at.toISOString(),
+        profile,
+        setupProjection: derivePatientSetup(profile),
+        conversationId: session.provider_conversation_id,
+        profileDigest,
+        schemaVersion: session.schema_version,
+        state,
+        acceptedTurns,
+        terminalEvent
+      }
+      await patientStateStore.restore(liveState)
     }
   }
 }

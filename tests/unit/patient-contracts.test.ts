@@ -137,6 +137,25 @@ describe('shared patient API schemas', () => {
       currentPregnancyStatus: 'pregnant',
       currentMenopausalStatus: 'menopausal'
     }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    const currentPregnancyHistory = [
+      { field: 'numberPregnancies', status: 'known', value: 3 },
+      { field: 'numberMiscarriage', status: 'known', value: 1 },
+      { field: 'numberStillbirths', status: 'known', value: 0 },
+      { field: 'numberAbortions', status: 'known', value: 0 },
+      { field: 'numberEctopicPregnancies', status: 'known', value: 0 },
+      { field: 'numberLiveBirths', status: 'known', value: 1 },
+      { field: 'numberChildren', status: 'known', value: 1 }
+    ] as const
+    expect(isPatientScenarioConsistent({
+      ...profile, currentPregnancyStatus: 'pregnant', history: [...currentPregnancyHistory]
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isPatientScenarioConsistent({
+      ...profile,
+      currentPregnancyStatus: 'pregnant',
+      history: currentPregnancyHistory.map((entry) => entry.field === 'numberMiscarriage'
+        ? { ...entry, value: 2 }
+        : entry)
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(toLearnerPatientProfile(PatientSetupProjectionSchema.parse({
       fullName: 'Ari Nguyen',
       dateOfBirth: '1990-01-01',
@@ -194,7 +213,8 @@ describe('shared patient API schemas', () => {
     const turn = {
       turnId: 'turn-1', sessionId, sequence: 1,
       acceptedAt: '2026-10-01T00:01:00Z', learnerMessage: 'What brings you in?',
-      patientResponse: 'I have pelvic pain.', patientReportedFacts: [], clinicalActions: [action]
+      patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
+      disclosedHistoryFields: [], disclosedFactIds: [], clinicalActions: [action]
     }
     expect(SessionTurnSchema.safeParse(turn).success).toBe(true)
     expect(SessionTurnSchema.safeParse({ ...turn, sequence: 0 }).success).toBe(false)
@@ -215,11 +235,22 @@ describe('shared patient API schemas', () => {
     expect(ArchiveStatusSchema.safeParse({ ...archive, artifactId: null }).success).toBe(false)
   })
 
-  it('keeps the documented patient example valid JSON that matches the runtime contract', async () => {
+  it('keeps the documented patient profile as a clearly marked template', async () => {
     const path = resolve(process.cwd(), 'docs/gpt-patient-obgyn.json')
-    const example = JSON.parse(await readFile(path, 'utf8')) as unknown
+    const template = JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
 
-    expect(PatientSetupProjectionSchema.parse(example)).toEqual(example)
+    expect(template).toMatchObject({
+      templateNote: expect.stringContaining('Template only'),
+      fullName: '<full name>',
+      dateOfBirth: '<YYYY-MM-DD>',
+      bodyType: '<average|heavy>',
+      reasonForVisit: '<reason for visit/chief complaint>',
+      diagnosis: null
+    })
+    expect(Object.keys(template)).toEqual([
+      'templateNote', 'fullName', 'dateOfBirth', 'bodyType', 'reasonForVisit', 'diagnosis'
+    ])
+    expect(PatientSetupProjectionSchema.safeParse(template).success).toBe(false)
   })
 
   it('keeps every JSON document under docs syntactically valid', async () => {

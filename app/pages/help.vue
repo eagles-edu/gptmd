@@ -5,7 +5,7 @@
     <h2>The patient session does not start</h2>
     <p>Session creation and patient setup require the GPTMD API, authentication, PostgreSQL, Redis JSON, and configured patient generation. If setup is unavailable, check the API service and confirm that all database migrations are applied.</p>
     <h2>Microphone or audio is unavailable</h2>
-    <p>Transcript mode is the first migration target. Browser speech recognition and spoken replies will be connected after the authenticated turn and audio services are in place.</p>
+    <p>Voice conversation uses the browser's standard speech recognition and speech synthesis APIs. Support and audio processing vary by browser; if recognition is unavailable or denied, switch to Transcript mode. Never use real patient information.</p>
     <h2>Training data</h2>
     <p>Cases are fictional. Do not enter real patient identifiers, private health information, or other sensitive personal data.</p>
   </article>
