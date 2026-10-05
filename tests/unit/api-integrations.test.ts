@@ -249,6 +249,29 @@ describe('GPTMD API integrations', () => {
     })
   })
 
+  it('rate-limits API requests before performing authentication and tenant lookups', async () => {
+    const getActiveTenantIds = vi.fn().mockResolvedValue(['tenant-a', 'tenant-b'])
+    const sessionStore = createSessionStore({ getActiveTenantIds })
+    await withApi(createDependencies({
+      sessionStore,
+      rateLimitOptions: { maxRequests: 2, windowMs: 60_000 }
+    }), async (baseUrl) => {
+      const sendRequest = () => fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: authHeaders()
+      })
+
+      expect((await sendRequest()).status).toBe(201)
+      expect((await sendRequest()).status).toBe(201)
+      const limited = await sendRequest()
+
+      expect(limited.status).toBe(429)
+      expect(limited.headers.get('retry-after')).toBeTruthy()
+      expect(await limited.json()).toEqual({ error: 'Too many API requests; retry later.' })
+      expect(getActiveTenantIds).toHaveBeenCalledTimes(2)
+    })
+  })
+
   it('loads the active tenant role and denies non-learners from encounter routes', async () => {
     const getActiveMembershipRole = vi.fn().mockResolvedValue('instructor')
     const sessionStore = createSessionStore({ getActiveMembershipRole })
