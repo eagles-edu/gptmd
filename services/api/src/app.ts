@@ -7,6 +7,7 @@ import {
   SetupQueueTimeoutError,
   type SetupQueueLimits
 } from './bounded-setup-queue.ts'
+import { createApiRateLimiter, type ApiRateLimitOptions } from './rate-limit.ts'
 import {
   PATIENT_SCENARIO_POLICY_VERSION,
   PATIENT_SCENARIO_PROMPT_VERSION,
@@ -53,6 +54,7 @@ export interface ApiDependencies {
   jwt: JwtConfiguration
   sessionStore: SessionStore | null
   setupQueueLimits?: SetupQueueLimits
+  rateLimitOptions?: Partial<ApiRateLimitOptions>
   allowedOrigins?: string[]
 }
 
@@ -62,9 +64,9 @@ const validInput = (value: unknown): value is string =>
 export function createApiApp(dependencies: ApiDependencies): Express {
   const app = express()
   const setupQueue = new BoundedSetupQueue(dependencies.setupQueueLimits ?? DEFAULT_SETUP_QUEUE_LIMITS)
+  const apiRateLimiter = createApiRateLimiter(dependencies.rateLimitOptions)
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
-  app.use(express.json({ limit: '1mb' }))
   app.use((request, response, next) => {
     const origin = request.header('origin')
     const allowed = origin && dependencies.allowedOrigins?.includes(origin)
@@ -81,6 +83,8 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     next()
   })
 
+  app.use('/api', apiRateLimiter)
+  app.use(express.json({ limit: '1mb' }))
   app.use('/api', async (request, response, next) => {
     if (!dependencies.sessionStore || !isJwtConfigurationReady(dependencies.jwt)) {
       response.status(503).json({ error: 'Authentication and session storage are not configured' })
