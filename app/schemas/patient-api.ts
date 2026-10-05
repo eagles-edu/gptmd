@@ -42,6 +42,33 @@ export const TurnResponseSchema = z.object({
   text: z.string().min(1)
 }).strict()
 
+export const AudioTranscriptionGrantSchema = z.object({
+  clientSecret: z.string().min(1),
+  expiresAt: z.number().int().positive(),
+  maxDurationSeconds: z.number().int().positive().max(900)
+}).strict()
+
+export const AssessmentFieldsSchema = z.object({
+  summary: z.string().max(4_000),
+  differential: z.string().max(4_000),
+  rationale: z.string().max(8_000),
+  plan: z.string().max(4_000)
+}).strict()
+
+export const BeginAssessmentResponseSchema = z.object({
+  sessionId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  phase: z.literal('assessment')
+}).strict()
+
+export const AssessmentSubmittedResponseSchema = z.object({
+  assessmentId: z.string().min(1),
+  status: z.literal('unscored'),
+  submittedAt: z.iso.datetime({ offset: true })
+}).strict()
+
 export type CreateSessionResult = z.infer<typeof CreateSessionResponseSchema>
 export type PatientProfile = z.infer<typeof PatientProfileSchema>
 export type TurnResult = z.infer<typeof TurnResponseSchema>
+export type AudioTranscriptionGrant = z.infer<typeof AudioTranscriptionGrantSchema>
+export type AssessmentFields = z.infer<typeof AssessmentFieldsSchema>
+export type AssessmentSubmittedResult = z.infer<typeof AssessmentSubmittedResponseSchema>

@@ -3,7 +3,11 @@ import { createRemoteJWKSet, decodeProtectedHeader, jwtVerify, type JWTPayload }
 export interface AuthenticatedPrincipal {
   subjectId: string
   tenantId: string
+  role: TenantRole
 }
+
+export const TENANT_ROLES = ['learner', 'instructor', 'customer_admin'] as const
+export type TenantRole = typeof TENANT_ROLES[number]
 
 export interface AuthenticatedIdentity {
   subjectId: string

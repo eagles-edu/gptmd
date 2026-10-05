@@ -95,7 +95,7 @@ test('login navigates to Supabase to start Google OAuth', async ({ page }) => {
   await expect(page).toHaveTitle('Supabase OAuth endpoint reached')
   expect(authorizationUrl).toContain('/auth/v1/authorize?')
   expect(new URL(authorizationUrl).searchParams.get('provider')).toBe('google')
-  expect(new URL(authorizationUrl).searchParams.get('redirect_to')).toBe('http://127.0.0.1:3001/confirm')
+  expect(new URL(authorizationUrl).searchParams.get('redirect_to')).toBe('https://localhost:3001/confirm')
 })
 
 test('signed-in account workspace context carries through the home into Begin Visit', async ({ page }) => {
@@ -126,7 +126,7 @@ test('signed-in account workspace context carries through the home into Begin Vi
   }))
   const sessionId = 's'.repeat(43)
   const versionPins = {
-    promptVersion: 'patient-scenario-prompt-v1',
+    promptVersion: 'patient-scenario-prompt-v2',
     modelVersion: 'gpt-6-luna',
     schemaVersion: 1,
     policyVersion: 'patient-scenario-policy-v1'
@@ -165,7 +165,7 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await page.context().addCookies([{
     name: 'sb-localhost-auth-token',
     value: makeAuthCookie(),
-    url: 'http://127.0.0.1:3001',
+    url: 'https://localhost:3001',
     sameSite: 'Lax'
   }])
 
@@ -192,6 +192,7 @@ test('signed-in account workspace context carries through the home into Begin Vi
   const preflight = page.getByRole('dialog', { name: 'Before you begin' })
   await expect(preflight).toBeVisible()
   await preflight.getByRole('checkbox', { name: /use fictional details only/i }).check()
+  await preflight.getByRole('checkbox', { name: /send my microphone audio to OpenAI/i }).check()
   await preflight.getByRole('button', { name: 'Continue with voice' }).click()
   await page.getByRole('button', { name: 'Create patient session' }).click()
   await expect(page.getByText('Ari Nguyen')).toBeVisible()

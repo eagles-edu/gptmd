@@ -1,6 +1,11 @@
 import type { Pool, PoolClient } from 'pg'
 import type { RedisJsonClient } from './patient-state-store.ts'
-import { SessionHistoryEventSchema, type SessionHistoryEvent } from './session-contracts.ts'
+import {
+  SessionAuditEventSchema,
+  SessionHistoryEventSchema,
+  type SessionAuditEvent,
+  type SessionHistoryEvent
+} from './session-contracts.ts'
 
 const STREAM_KEY = 'gptmd:session-events'
 const CONSUMER_GROUP = 'gptmd-session-history'
@@ -51,8 +56,10 @@ export function createSessionEventWorker(
       for (const entry of entries) {
         const eventText = entry.fields.event
         if (!eventText) throw new Error('Redis session event is missing its event payload')
-        const event = SessionHistoryEventSchema.parse(JSON.parse(eventText) as unknown)
-        await persistEvent(pool, event)
+        const rawEvent: unknown = JSON.parse(eventText)
+        const auditEvent = SessionAuditEventSchema.safeParse(rawEvent)
+        if (auditEvent.success) await persistAuditEvent(pool, auditEvent.data)
+        else await persistEvent(pool, SessionHistoryEventSchema.parse(rawEvent))
         await redis.sendCommand(['XACK', STREAM_KEY, CONSUMER_GROUP, entry.id])
         completed += 1
       }
@@ -73,6 +80,47 @@ export function createSessionEventWorker(
   }
 }
 
+async function persistAuditEvent(pool: Pool, event: SessionAuditEvent): Promise<void> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const existing = await client.query<{
+      session_id: string
+      turn_id_hash: string
+      event_type: string
+      attempt_count: number
+      occurred_at: Date
+    }>(
+      `SELECT session_id, turn_id_hash, event_type, attempt_count, occurred_at
+       FROM session_turn_audits WHERE audit_id = $1`,
+      [event.eventId]
+    )
+    const row = existing.rows[0]
+    if (row) {
+      const matches = row.session_id === event.sessionId && row.turn_id_hash === event.payload.turnIdHash &&
+        row.event_type === event.eventType && row.attempt_count === event.payload.attemptCount &&
+        row.occurred_at.getTime() === Date.parse(event.occurredAt)
+      if (!matches) throw new Error('A durable audit ID was reused with different content')
+      await client.query('COMMIT')
+      return
+    }
+
+    await client.query(
+      `INSERT INTO session_turn_audits
+         (audit_id, session_id, turn_id_hash, event_type, attempt_count, occurred_at)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [event.eventId, event.sessionId, event.payload.turnIdHash, event.eventType,
+        event.payload.attemptCount, event.occurredAt]
+    )
+    await client.query('COMMIT')
+  } catch (error) {
+    await rollback(client)
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<void> {
   const client = await pool.connect()
   try {
@@ -85,17 +133,19 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
 
     const duplicate = await client.query<{
       sequence: string | number
+      event_ordinal: number
       event_type: string
       occurred_at: Date
       payload_matches: boolean
     }>(
-      `SELECT sequence, event_type, occurred_at, payload = $3::jsonb AS payload_matches
+      `SELECT sequence, event_ordinal, event_type, occurred_at, payload = $3::jsonb AS payload_matches
        FROM session_events WHERE session_id = $1 AND event_id = $2`,
       [event.sessionId, event.eventId, event.payload]
     )
     const existing = duplicate.rows[0]
     if (existing) {
       const matches = Number(existing.sequence) === event.sequence &&
+        existing.event_ordinal === event.eventOrdinal &&
         existing.event_type === event.eventType && existing.payload_matches &&
         existing.occurred_at.getTime() === Date.parse(event.occurredAt)
       if (!matches) throw new Error('A durable event ID was reused with different content')
@@ -103,26 +153,33 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
       return
     }
 
-    if (event.eventType === 'accepted_turn' && !['ready', 'active'].includes(session.rows[0].status)) {
-      throw new Error('Accepted turn arrived for a non-active session')
+    if (['accepted_turn', 'disclosure', 'phase_changed', 'assessment_submitted'].includes(event.eventType) &&
+        !['ready', 'active'].includes(session.rows[0].status)) {
+      throw new Error(`${event.eventType} arrived for a non-active session`)
     }
     if (event.eventType === 'terminal' && !['ready', 'active'].includes(session.rows[0].status)) {
       throw new Error('Terminal event arrived for an already terminal session')
     }
 
-    const latest = await client.query<{ sequence: string | number | null }>(
-      `SELECT sequence FROM session_events WHERE session_id = $1 ORDER BY sequence DESC LIMIT 1`,
+    const latest = await client.query<{ sequence: string | number | null; event_ordinal: number | null }>(
+      `SELECT sequence, event_ordinal FROM session_events
+       WHERE session_id = $1 ORDER BY sequence DESC, event_ordinal DESC LIMIT 1`,
       [event.sessionId]
     )
-    const expectedSequence = Number(latest.rows[0]?.sequence ?? 0) + 1
-    if (event.sequence !== expectedSequence) {
-      throw new Error(`Session history is out of order: expected ${expectedSequence}`)
+    const latestSequence = Number(latest.rows[0]?.sequence ?? 0)
+    const latestOrdinal = Number(latest.rows[0]?.event_ordinal ?? 0)
+    const orderedAtCurrentTurn = ['disclosure', 'phase_changed', 'assessment_submitted'].includes(event.eventType)
+    const expectedSequence = orderedAtCurrentTurn ? latestSequence : latestSequence + 1
+    const expectedOrdinal = orderedAtCurrentTurn ? latestOrdinal + 1 : 0
+    if (event.sequence !== expectedSequence || event.eventOrdinal !== expectedOrdinal) {
+      throw new Error(`Session history is out of order: expected ${expectedSequence}.${expectedOrdinal}`)
     }
 
     await client.query(
-      `INSERT INTO session_events (event_id, session_id, sequence, event_type, occurred_at, payload)
-       VALUES ($1, $2, $3, $4, $5, $6::jsonb)`,
-      [event.eventId, event.sessionId, event.sequence, event.eventType, event.occurredAt, JSON.stringify(event.payload)]
+      `INSERT INTO session_events (event_id, session_id, sequence, event_ordinal, event_type, occurred_at, payload)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)`,
+      [event.eventId, event.sessionId, event.sequence, event.eventOrdinal,
+        event.eventType, event.occurredAt, JSON.stringify(event.payload)]
     )
 
     if (event.eventType === 'accepted_turn') {
@@ -131,7 +188,7 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
            AND status IN ('ready', 'active')`,
         [event.sessionId, event.occurredAt]
       )
-    } else {
+    } else if (event.eventType === 'terminal') {
       await persistTerminalOutcome(client, event)
     }
     await client.query('COMMIT')

@@ -45,7 +45,6 @@
       ]
     },
     "interactionMode": {
-      "default": "transcript",
       "type": "string",
       "const": "transcript"
     },

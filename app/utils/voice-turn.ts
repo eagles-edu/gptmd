@@ -1,12 +1,26 @@
 export const VOICE_TURN_SILENCE_MS = 7_000
 
 export type VoiceRepairAction = 'repeat' | 'louder' | 'slower' | 'simpler' | 'explain' | 'spell' | 'write-note' | 'question'
+export type VoiceInteractionMode = 'transcript' | 'audio'
+
+/** Browser TTS is enabled only during an explicitly started voice conversation. */
+export function shouldSpeakPatientReply(mode: VoiceInteractionMode, voiceConversationActive: boolean): boolean {
+  return mode === 'audio' && voiceConversationActive
+}
 
 const normalizeSpeech = (text: string): string => text
   .toLocaleLowerCase('en-US')
   .replace(/[^a-z\s']/g, ' ')
   .replace(/\s+/g, ' ')
   .trim()
+
+/** Identify spoken requests that may change the encounter phase and need confirmation. */
+export function isAssessmentTransitionCue(text: string): boolean {
+  const normalized = normalizeSpeech(text)
+  return /\b(?:begin|start) (?:the )?(?:written )?assessment\b/.test(normalized) ||
+    /\bmove on to (?:the )?(?:written )?assessment\b/.test(normalized) ||
+    /\b(?:ready|time) for (?:the )?(?:written )?assessment\b/.test(normalized)
+}
 
 export function classifyVoiceRepair(text: string): VoiceRepairAction {
   const normalized = normalizeSpeech(text)

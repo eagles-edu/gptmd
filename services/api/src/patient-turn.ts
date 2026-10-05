@@ -4,7 +4,13 @@ import { zodTextFormat } from 'openai/helpers/zod'
 import { z } from 'zod'
 import { canonicalJsonStringify } from './canonical-json.ts'
 import {
+  PATIENT_PROFILE_RESPONSE_GUIDANCE,
+  PATIENT_PROFILE_RESPONSE_POLICY
+} from './patient-profile-response-guidance.generated.ts'
+import { PATIENT_PROFILE_FIELD_SECTIONS } from './patient-profile-sections.generated.ts'
+import {
   isObstetricHistoryConsistent,
+  isHistoryDatePlausible,
   OBSTETRIC_COUNT_FIELDS,
   PATIENT_HISTORY_FIELDS,
   type ObstetricCountField,
@@ -19,8 +25,8 @@ import {
   type SessionTurnVersionPins
 } from './session-contracts.ts'
 
-export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v2'
-export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v2'
+export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v5'
+export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v4'
 export const PATIENT_TURN_SCHEMA_VERSION = 1
 
 const ProposedFactSchema = z.object({
@@ -61,8 +67,15 @@ const HISTORY_CUES: Record<PatientScenarioProfile['history'][number]['field'], s
   lastMenstrualPeriod: ['last menstrual period', 'lmp', 'last period', 'period date'],
   typicalMenstrualPeriodDescription: ['menstrual cycle', 'period cycle', 'regular periods', 'period usually', 'menstrual period'],
   dysmenorrheaHistory: ['painful periods', 'period cramps', 'menstrual cramps', 'dysmenorrhea'],
-  anyPain: ['pain', 'hurt', 'ache', 'sore', 'cramp', 'symptom', 'symptoms'],
-  pqrstResult: ['pain quality', 'pain severity', 'pain timing', 'pain radiation', 'pqrst'],
+  anyPain: ['do you have pain', 'are you having pain', 'any pain', 'have you had pain', 'pain right now'],
+  whatProvokesPalliatesPain: ['what makes the pain worse', 'what makes it worse', 'what makes the pain better', 'what helps the pain', 'what relieves the pain', 'aggravating factors', 'relieving factors'],
+  painQuality: ['pain quality', 'quality of the pain', 'what does the pain feel like', 'describe the pain'],
+  painLocationRadiationWhere: ['where is the pain', 'where does it hurt', 'where is it located', 'does the pain travel', 'does it radiate', 'pain location', 'pain radiation'],
+  'painSeverity0-10': ['pain severity', 'how severe is the pain', 'how bad is the pain', 'rate the pain', 'pain scale', 'out of 10'],
+  timePainOnset: ['when did the pain start', 'when did it start', 'when did the pain begin', 'when did it begin', 'pain onset', 'when did symptoms start', 'onset'],
+  constantIntermittentPain: ['constant or intermittent', 'constant or does it come and go', 'does it come and go', 'comes and goes', 'intermittent pain', 'constant pain', 'how often does the pain occur'],
+  durationPain: ['how long have you had the pain', 'how long have you had it', 'how long does each episode last', 'duration of pain', 'how long does it last'],
+  patientConcern: ['concern', 'worry', 'worries', 'worried', 'afraid', 'scared', 'what bothers you most'],
   medicalHistory: ['medical history', 'medical condition', 'health condition', 'illness'],
   lastPelvicExam: ['pelvic exam', 'pelvic examination'],
   lastPapSmear: ['pap smear', 'pap test', 'cervical screening'],
@@ -70,6 +83,7 @@ const HISTORY_CUES: Record<PatientScenarioProfile['history'][number]['field'], s
   lastMammogram: ['mammogram', 'breast screening'],
   comorbidity: ['other conditions', 'chronic condition', 'comorbidity'],
   currentMedications: ['current medication', 'medications', 'medicine', 'medicines', 'prescriptions', 'taking anything'],
+  allergies: ['allergy', 'allergies', 'allergic to', 'drug allergy', 'medication allergy'],
   pastMedications: ['past medication', 'previous medication', 'medication history'],
   nutraceuticalUse: ['nutraceutical', 'natural products'],
   cannabisUse: ['cannabis', 'marijuana', 'weed'],
@@ -116,7 +130,12 @@ const HISTORY_CUES: Record<PatientScenarioProfile['history'][number]['field'], s
   educationalHistory: ['education history', 'schooling'],
   exerciseCurrent: ['exercise', 'physical activity'],
   dnaStudies: ['genetic testing', 'dna test', 'genetic study'],
-  miscellaneousDetailsNos: ['other history', 'anything else about your health']
+  miscellaneousDetailsNos: [
+    'other history', 'anything else about your health', 'anything else about your symptoms',
+    'any other symptoms', 'associated symptoms', 'other symptoms', 'relevant negatives',
+    'fever', 'chills', 'nausea', 'vomiting', 'dizziness', 'vaginal discharge', 'vaginal bleeding',
+    'painful urination', 'burning when urinating', 'dysuria', 'bowel changes'
+  ]
 }
 
 const SENSITIVE_HISTORY_FIELDS = new Set<PatientScenarioProfile['history'][number]['field']>([
@@ -137,18 +156,21 @@ const patientTurnInstructions = [
   'You are roleplaying the fictional patient in a medical training encounter.',
   'Use only the supplied patient-known scenario details and the accepted encounter transcript.',
   'Do not reveal or rely on any private diagnosis, answer key, rubric, or clinician-only interpretation, including information already present in this session Conversation.',
-  'Do not invent symptoms, history, chronology, examination findings, orders, or test results.',
+  'Do not invent or volunteer details for history fields that are not directly matched to the learner’s question. When a directly matched scenario history field is marked unknown, you may provide a concise, case-consistent patient-reported answer to the asked topic and record it as a proposed fact so it remains stable. Do not create a fact if the patient hesitates or declines to answer.',
+  'The unknown miscellaneousDetailsNos history field is an expandable patient-reported catchall: when the learner asks about other or associated symptoms, relevant negatives, or a specific related symptom, create details only for what was asked. If an accepted catchall fact exists, use only its recorded detail and do not add contradictory or unrecorded facts.',
+  'For an unknown timePainOnset field, answer an onset question with a plausible, internally consistent patient-reported timeframe and record it as a proposed fact. Keep it stable in later turns; never derive onset from the encounter date or invent a precise date unless the scenario supports one.',
+  'Use matchedFieldResponseGuidance only for fields matched to the latest question. Common patient wording is illustrative, not a required answer. Treat clinician-assisted guidance as an internal fidelity constraint: preserve only the details actually present in the scenario or patient answer, do not infer missing details, and do not speak clinician wording as the patient.',
   'Answer naturally in the patient’s voice and disclose relevant information only in response to the learner.',
   'Conversation repair is mutual and follows a volley: answer the other speaker’s repair request so they can hit the conversation back. When you do not understand the learner, use one repair step at a time in this order: first ask them to repeat; they may repeat up to three or four times if needed. If you still do not understand, ask them to speak louder, slower, or more simply. Next ask them to explain an unfamiliar word or phrase another way. Then ask them to spell it. If the conversation still cannot be repaired, ask them to write it down in English. When the learner asks you for repair, respond to that specific request first: repeat the last patient reply, clarify it in simpler or different words, spell the requested word, or provide the patient’s answer as a written English note when asked to write it down. Preserve the original English wording; do not translate it. Do not skip ahead, stack several repair requests together, or pretend to understand; advance only when the current step has not resolved understanding.',
   'For sexual, reproductive, substance-use, mental-health, relationship, home-safety, or abuse history, be respectful, nonjudgmental, and patient-centered.',
-  'Do not pressure the patient to answer a sensitive question, repeat it after a refusal, imply blame, or assume consent; accept a refusal briefly and continue without the declined detail.',
+  'Do not pressure the patient to answer a sensitive question, imply blame, or assume consent. If the patient initially hesitates about a clinically important question, acknowledge that, briefly explain its relevance, and offer the choice to answer now, partly, or later. If they continue to decline, respect that and continue without the declined detail.',
   'If a sensitive question causes discomfort, acknowledge it calmly and let the patient choose whether to share only the relevant scenario-supported detail.',
   'historyCoverage lists only scenario history fields directly addressed by the latest learner message.',
   'disclosedHistoryFields lists only scenario history fields whose supported details you actually disclosed in the patientResponse.',
   'The proposedFacts list may contain only new patient-reported details that directly answer the latest learner message and are supported by a scenario history field marked unknown; every proposed fact must also appear in disclosedHistoryFields.',
   'Do not repeat already accepted facts in proposedFacts. Do not report exam findings or test results as patient-reported facts.',
   'Use the current encounter phase to guide the reply. Return the required structured output.'
-].join(' ')
+].join(' ') + `\n\nPatient-profile response policy:\n${PATIENT_PROFILE_RESPONSE_POLICY}`
 
 /** Generate a turn in the session's pinned provider Conversation from GPTMD-owned state. */
 export async function generatePatientTurn(
@@ -157,6 +179,7 @@ export async function generatePatientTurn(
   context: PatientTurnGenerationContext
 ): Promise<{ responseId: string; output: unknown }> {
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
+  const scenarioFields = new Set(context.profile.history.map((entry) => entry.field))
   const acceptedFacts = context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts)
     .filter((fact) => matchedFields.has(fact.field))
   const relevantHistory = context.profile.history
@@ -187,10 +210,14 @@ export async function generatePatientTurn(
             }))),
           establishedCoverageState: context.acceptedTurns.flatMap((turn) => turn.historyCoverageState)
             .filter((coverage) => matchedFields.has(coverage.field)),
+          matchedFieldResponseGuidance: Object.fromEntries([...matchedFields]
+            .filter((field) => scenarioFields.has(field))
+            .map((field) => [
+            field, PATIENT_PROFILE_RESPONSE_GUIDANCE[field]
+            ])),
           patientScenario: {
             fullName: context.profile.fullName,
             dateOfBirth: context.profile.dateOfBirth,
-            bodyType: context.profile.bodyType,
             reasonForVisit: context.profile.reasonForVisit,
             currentPregnancyStatus: context.profile.currentPregnancyStatus,
             currentMenopausalStatus: context.profile.currentMenopausalStatus,
@@ -270,6 +297,7 @@ export function validatePatientTurnOutput(
     patientReportedFacts.push(PatientReportedFactExpansionSchema.parse({
       factId: randomUUID(),
       field: proposed.field,
+      section: PATIENT_PROFILE_FIELD_SECTIONS[proposed.field],
       value: proposed.value,
       source: 'patient_reported',
       turnId,
@@ -306,6 +334,13 @@ export function validatePatientTurnOutput(
   })
 
   validateObstetricCounts(context.profile, context.acceptedTurns, patientReportedFacts)
+  const lastMenstrualPeriod = patientReportedFacts.find((fact) => fact.field === 'lastMenstrualPeriod')?.value ??
+    context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts).reverse()
+      .find((fact) => fact.field === 'lastMenstrualPeriod')?.value ??
+    context.profile.history.find((entry) => entry.field === 'lastMenstrualPeriod')?.value
+  if (!isHistoryDatePlausible(context.profile.dateOfBirth, lastMenstrualPeriod, new Date(acceptedAt))) {
+    throw new Error('Last menstrual period date must fall between the patient birth date and encounter date')
+  }
 
   return {
     patientResponse: output.patientResponse,

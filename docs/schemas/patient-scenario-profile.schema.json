@@ -38,7 +38,7 @@
       ]
     },
     "history": {
-      "maxItems": 59,
+      "maxItems": 67,
       "type": "array",
       "items": {
         "type": "object",
@@ -50,7 +50,14 @@
               "typicalMenstrualPeriodDescription",
               "dysmenorrheaHistory",
               "anyPain",
-              "pqrstResult",
+              "whatProvokesPalliatesPain",
+              "painQuality",
+              "painLocationRadiationWhere",
+              "painSeverity0-10",
+              "timePainOnset",
+              "constantIntermittentPain",
+              "durationPain",
+              "patientConcern",
               "medicalHistory",
               "lastPelvicExam",
               "lastPapSmear",
@@ -58,6 +65,7 @@
               "lastMammogram",
               "comorbidity",
               "currentMedications",
+              "allergies",
               "pastMedications",
               "nutraceuticalUse",
               "cannabisUse",

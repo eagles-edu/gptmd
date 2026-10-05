@@ -26,7 +26,7 @@ describe('patient API response contracts', () => {
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v1',
+        promptVersion: 'patient-scenario-prompt-v3',
         modelVersion: 'gpt-6-luna',
         schemaVersion: 1,
         policyVersion: 'patient-scenario-policy-v1'
@@ -74,7 +74,7 @@ describe('patient API response contracts', () => {
         reasonForVisit: 'Pelvic pain'
       },
       versions: {
-        promptVersion: 'patient-scenario-prompt-v1',
+        promptVersion: 'patient-scenario-prompt-v3',
         modelVersion: 'gpt-6-luna',
         schemaVersion: 1,
         policyVersion: 'patient-scenario-policy-v1'
@@ -104,7 +104,7 @@ describe('patient API response contracts', () => {
       {
         method: 'POST',
         headers: apiAuthHeaders,
-        body: { turnId: 'turn-1', text: 'Question' }
+        body: { turnId: 'turn-1', text: 'Question', modality: 'typed' }
       }
     )
   })

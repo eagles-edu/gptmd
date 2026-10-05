@@ -9,6 +9,7 @@ TypeScript-built and currently exposes:
 - `POST /api/sessions` — create an opaque initializing application session
 - `POST /api/sessions/:sessionId/setup` — idempotently generate and persist the immutable scenario
 - `POST /api/sessions/:sessionId/turns` — serialize, validate, and accept a patient turn
+- `POST /api/sessions/:sessionId/audio-transcription` — consent- and entitlement-gated Realtime STT credential
 - `GET /api/sessions/:sessionId` — read a session owned by the authenticated user and tenant
 
 The private patient-scenario generator in `src/patient-profile.ts` creates a
@@ -58,13 +59,26 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/001_auth_sess
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/002_patient_scenario_setup.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/003_patient_profile_binding.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/004_durable_session_history.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/005_setup_failure_status.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/006_tenant_membership_roles.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/007_user_and_session_quotas.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/008_scope_session_usage_to_owner.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/009_audio_transcription_policy.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/010_disclosure_event_ordinals.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/011_persist_scenario_seed.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/012_patient_concern_history_field.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/013_assessment_events.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/014_session_turn_audits.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/015_session_transcript_view.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/016_strict_session_transcript_view.sql
 ```
 
 Provision a tenant row in `tenants`, its active `(tenant_id, subject_id)` in
 `tenant_memberships`, and its flags and limits in `tenant_entitlements` before
 allowing a user to call the API. Entitlements default to disabled. A `NULL`
 monthly quota or active-session limit means unlimited; zero means no use. The
-API rechecks active membership, atomically reserves monthly usage, and returns
+API rechecks active membership, atomically reserves tenant and configured
+user/session usage, and returns
 `403` for missing capability or `429` for exhausted limits. Usage is counted
 when the API accepts work, including a provider request that later fails.
 
@@ -86,9 +100,62 @@ per-visit patient JSON documents in Redis before calling the profile generator;
 after PostgreSQL commits the accepted profile, its five-value private setup
 projection, digest, version, and Conversation ID are mirrored into Redis. A
 matching retry repairs a missing Redis mirror from the immutable PostgreSQL
-scenario without creating a new provider Conversation. Apply migration 003
-and migration 004 before starting this API version; `/readyz` checks the
-session binding and durable-history tables.
+scenario without creating a new provider Conversation. Apply migrations 003
+through 009 before starting this API version; `/readyz` checks membership
+roles, scoped usage tables, session binding, durable-history tables, and audio
+consent/quota schema. If
+setup generation or validation fails before the scenario commits, the owning session transitions from
+`initializing` to `failed` and cannot enter the encounter. A Redis mirror error
+after the PostgreSQL commit leaves the session `ready`, so an idempotent retry
+can restore the mirror from the saved scenario.
+
+Active tenant memberships carry one of `learner`, `instructor`, or
+`customer_admin`. Migration 006 defaults existing memberships to `learner`;
+the current encounter endpoints authorize only that role. Instructor and
+customer-administrator workflows are not exposed yet, and privileged roles
+must be assigned explicitly by the database owner.
+
+Optional monthly per-user session and response quotas and per-session response
+quotas are configured on `tenant_entitlements`; `NULL` leaves that dimension
+unlimited. Reservations for tenant, user, and encounter dimensions commit or
+roll back together. The generic Responses endpoint has user and tenant limits;
+patient turns additionally reserve the owning encounter's response budget.
+
+Cross-browser STT uses an authenticated `POST /api/sessions/:id/audio-transcription`
+to mint an OpenAI Realtime transcription client secret. The long-lived API key
+stays on the server; the browser receives only a short-lived client secret.
+Tenant owners must explicitly set `audio_transcription_enabled` and
+`audio_transcription_privacy_approved` after reviewing the user-facing consent
+text. `monthly_audio_transcription_session_quota` must be set to a finite value
+before audio can be used; `NULL` leaves the audio grant gate closed, and zero
+disables use. Each grant records the consent version,
+timestamp, and provider session ID. Learners must accept the visit-level consent
+before a grant is issued. Raw microphone audio is not stored by GPTMD. Current
+voice sessions stop at 15 minutes in the browser; this client-side cutoff is a
+product safeguard, not a server-observed audio-duration meter. Realtime billing
+and provider-side retention remain subject to the configured OpenAI project
+terms and settings.
+
+Accepted-turn events include a learner input modality (`typed` or
+`realtime_transcription`) and remain the durable source for the
+`session_transcript` view. The modality comes from the client request and is
+not provider-attested. The view projects one learner utterance and one patient
+text response per accepted turn; both use the accepted-turn timestamp. Local
+voice repair/stop phrases and actual browser speech-synthesis playback are not
+currently recorded.
+
+Patient setup uses a bounded in-process queue. `API_SETUP_MAX_CONCURRENT`
+(default `2`, range `1`–`16`) sets active generation slots;
+`API_SETUP_MAX_QUEUED` (default `4`, range `0`–`100`) sets waiting requests;
+`API_SETUP_QUEUE_TIMEOUT_MS` (default `15000`, range `1000`–`120000`) limits
+how long a queued request waits for a slot. A full queue or expired wait
+returns `503` with `Retry-After: 1`; retry with the same `Idempotency-Key`.
+The API does not invoke scenario generation for a rejected or expired queued
+request. The session remains `initializing` so the same idempotent setup request
+can be retried. These limits are per API process and currently assume one API
+replica; they are not a distributed queue. Active generation is additionally
+bounded by the OpenAI client request timeout/retry settings and the scenario
+generator's single validation retry.
 
 ## Redis live state and PostgreSQL history
 
@@ -152,14 +219,17 @@ key data. The API retries invalid structured output once; if it remains
 invalid, it accepts a fixed clarification with no new facts. Failure audit logs
 contain only the event type, session ID, and turn ID.
 
-An accepted turn atomically updates the Redis JSON state, retry reply, and
-recovery event in `gptmd:session-events`. The existing worker persists the
-accepted turn to PostgreSQL asynchronously; the learner response does not wait
-for worker completion. The accepted event carries transcript text, patient
-reported fact expansions, history coverage, disclosed fact IDs, and any
-clinical actions for replay. This route currently implements the text history
-path; orders, exams, assessment submission, and modality transitions remain
-later phase work.
+An accepted turn atomically updates the Redis JSON state and retry reply, then
+appends the accepted turn plus one disclosure event per disclosed history fact
+to `gptmd:session-events`. Disclosure event IDs are deterministic from the
+turn, field, and fact, and their ordinal preserves order within that turn. The
+worker persists both event types to PostgreSQL asynchronously and acknowledges
+only after commit; the learner response does not wait for worker completion.
+The accepted event remains a complete replay snapshot with transcript text,
+patient-reported fact expansions, history coverage, disclosed fact IDs, and any
+clinical actions. This route currently implements the text history path;
+orders, exams, assessment submission, phase changes, and modality transitions
+remain later phase work.
 
 ## Local development
 

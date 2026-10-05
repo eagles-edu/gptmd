@@ -150,3 +150,69 @@
 
 <!-- curatormd:record_id=f4ad2d48c0ed3bf03632f4f03bfaeb55;content_sha256=331deb8d1a7424c3f10b4edffa8355aaf1f56aa7820df1b9a3ee6ba32837b3fd -->
 <!-- curatormd:fingerprint=94d934c55ba20c47257b8577b2df4a4a56dc073ae460af1e674051915e603b1d -->
+
+- ## Add ordered voice repair and written take-home notes
+
+**Beginning — trigger and context:** The voice encounter needed to preserve GPTMD's clear LED-controlled speaking turns while giving the learner and patient a practical sequence for repairing misunderstandings.
+
+**Middle — decisions and work:** Implemented a voice-turn buffer that submits finalized speech after seven seconds of silence, stops recognition during patient playback, and reopens the learner turn when playback ends. The red, green, and yellow LED communicates inactive, learner, and patient-processing states. Both sides use the ordered repair sequence: repeat, louder/slower/simpler, explain another way, spell, then write it down in English. The patient's written reply stays in the transcript and can be downloaded. Added respectful, nonjudgmental handling for sensitive history questions and acceptance of learner refusals.
+
+**End — outcome and verification:** `npm run check` passed with 85 unit tests and 15 browser tests; desktop and mobile captures were reviewed, and the browser test verified the downloadable note contents. The flow still uses standard browser speech recognition; cross-browser Realtime transcription and a real-microphone smoke test remained open.
+
+**Future utility:** Preserves the agreed turn timing, LED state meanings, reciprocal repair sequence, and take-home note behavior for later transcription-provider work without changing the learner's encounter rhythm.
+
+**Project impact:** Observed: mocked browser coverage verified seven-second auto-send, playback turn-taking, repair behavior, and downloaded note content. Expected: the ordered repair flow supports communication recovery and leaves the learner with the patient's exact English note.
+  - **Why:** Preserves the agreed turn timing, LED state meanings, reciprocal repair sequence, and take-home note behavior for later transcription-provider work without changing the learner's encounter rhythm.
+
+<!-- curatormd:record_id=47ab9016befc54e005c150019a4cbcac;content_sha256=1790d87f5496fdb45d15b1a4e666660f8d2071069a39b2c86d86aebc4eccd3f2 -->
+<!-- curatormd:fingerprint=b8fcaaea76e7264fd4c810da9b35caf8db587de1078741107d87a0c07d212584 -->
+
+- ## Persist ordered session events through Redis streams
+
+**Beginning — trigger and context:** Phase 2 required durable session records and a safe path from Redis live state to PostgreSQL history, including retry handling and recovery when live Redis JSON was missing.
+
+**Middle — decisions and work:** Added migration 004 for ordered append-only session events, provider usage, owner-bound download engagement, and terminal outcomes. Implemented an atomic Redis transaction that commits live JSON, the accepted reply and retry key, and the recovery stream event. A separate PostgreSQL worker persists events in order and idempotently, acknowledging only after commit. Missing Redis state can be rebuilt from PostgreSQL history; the README records the roughly one-second AOF loss window.
+
+**End — outcome and verification:** `npm run verify:phase2` passed retries, worker persistence, terminal outcomes, and reconstruction after deleting test state. `npm run check` passed with 57 unit tests, 14 browser tests, and the production build. The stream was empty after verification. Redis process-restart and live PostgreSQL outage exercises were still open at the end of this thread.
+
+**Future utility:** Records the two-store ownership boundary, atomic handoff, idempotent worker rule, and recovery path needed for later session, archive, and retention features.
+
+**Project impact:** Observed: local verification covered retry, persistence, terminal, and missing-state recovery paths. Expected: stream-based persistence avoids waiting on PostgreSQL in the learner response path while preserving ordered durable events.
+  - **Why:** Records the two-store ownership boundary, atomic handoff, idempotent worker rule, and recovery path needed for later session, archive, and retention features.
+
+<!-- curatormd:record_id=58c32ff3fbb651767a22cec5d7a6f075;content_sha256=9cd39f8a97fdf896cf684c307c3de28f86c65db2e93d63379ae4bad2b419e7b2 -->
+<!-- curatormd:fingerprint=f0d16b2ca556b95cf749ec21bfbcda49d702344f95bba916ea91ae74dd1ec090 -->
+
+- ## Coordinate patient setup and portrait readiness
+
+**Beginning — trigger and context:** The 1F setup work needed one stable application session and patient-profile identity across PostgreSQL, Redis, and the provider Conversation, while keeping the room unavailable until setup and portrait loading finished.
+
+**Middle — decisions and work:** Allocated a distinct per-visit patient-profile ID and initialized its Redis bindings before generation. PostgreSQL stores the immutable profile and Conversation ID; after commit, Redis receives the profile, private setup projection, digest, schema version, and Conversation binding. Matching retries restore the Redis mirror from the saved scenario. The browser receives learner-safe fields and waits for backend, transcript, and selected portrait readiness before enabling Enter Room.
+
+**End — outcome and verification:** The task list marks 1F complete. `npm run check` passed with 52 unit tests, API and production builds, schema and diagram checks, and 14 browser tests; desktop and mobile screenshots were reviewed. Live PostgreSQL, Redis, and OpenAI setup was not exercised in this thread, and migration 003 was still required in the configured database.
+
+**Future utility:** Preserves the session/profile ownership boundary and the retry/readiness sequence so later encounter work does not activate a partial profile or expose diagnosis and provider identifiers.
+
+**Project impact:** Observed: configured checks and desktop/mobile review passed. Expected: the shared IDs and readiness gate reduce setup mismatches and prevent entry before required data and assets are ready.
+
+**Follow-up:** Apply migration 003 to the target database and verify setup against the configured PostgreSQL, Redis, and OpenAI services.
+  - **Why:** Preserves the session/profile ownership boundary and the retry/readiness sequence so later encounter work does not activate a partial profile or expose diagnosis and provider identifiers.
+
+<!-- curatormd:record_id=e47d8231e000942925f950a8e917eccf;content_sha256=017f06364e4d799df2611a0e9ed68915f2e201c75ecb979189c02547587ddb51 -->
+<!-- curatormd:fingerprint=3dc91bda6d7be440f582d80b12826c82e880fb56b32544a620c3a72dcd687100 -->
+
+- ## Validate obstetric outcome totals against gravidity
+
+**Beginning — trigger and context:** Phase 3 work exposed a gap in generated scenario and accepted history validation: pregnancy outcome totals could conflict with gravidity and current pregnancy status.
+
+**Middle — decisions and work:** Added consistency checks so generated profiles and accepted history expansions reconcile completed outcomes with gravidity, leaving the active pregnancy without a completed outcome when the patient is currently pregnant. Impossible partial totals are rejected. Updated the detailed task list, companion checklist, and modernization plan; the broader Phase 3 checklist audit kept chronology, semantic fact checks, fixed results, rubric, and assessment work open.
+
+**End — outcome and verification:** Regression tests reproduced the former invalid totals and passed after the repair. `npm run check` passed with 75 unit tests, production build, and 14 browser tests; `git diff --check` was clean. The Phase 3 gate remained open for chronology, age plausibility, child-count consistency, complications, and other unfinished workflow items.
+
+**Future utility:** Gives future scenario and history validation a single rule for completed obstetric outcomes and the active pregnancy, and records which neighboring consistency checks still need implementation.
+
+**Project impact:** Observed: invalid partial totals were rejected by regression coverage and the configured project checks passed. Expected: consistent gravidity and outcome counts reduce contradictory patient histories.
+  - **Why:** Gives future scenario and history validation a single rule for completed obstetric outcomes and the active pregnancy, and records which neighboring consistency checks still need implementation.
+
+<!-- curatormd:record_id=e6e8856abdc547e5485c41fa9630723e;content_sha256=526338f3efd1953dacecc0f003d83317f0cae8f3059ec50ead69b819ba094af3 -->
+<!-- curatormd:fingerprint=db280bcb10dde5addcedd003c6ae96406667351bba5248e8e88cef7728964609 -->

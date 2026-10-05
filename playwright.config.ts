@@ -6,22 +6,28 @@ export default defineConfig({
   fullyParallel: true,
   reporter: 'list',
   use: {
-    baseURL: 'http://127.0.0.1:3001',
+    baseURL: 'https://localhost:3001',
+    ignoreHTTPSErrors: true,
     trace: 'on-first-retry'
   },
   projects: [
     {
       name: 'chromium',
       use: { ...devices['Desktop Chrome'] }
+    },
+    {
+      name: 'firefox',
+      use: { ...devices['Desktop Firefox'] }
+    },
+    {
+      name: 'webkit',
+      use: { ...devices['Desktop Safari'] }
     }
   ],
   webServer: {
-    command: 'env -u NO_COLOR PORT=3001 node .output/server/index.mjs',
+    command: 'env -u NO_COLOR NUXT_PUBLIC_SUPABASE_URL=https://localhost:3001 NUXT_PUBLIC_SUPABASE_KEY=test-publishable-key node scripts/playwright-https-server.mjs 3001 3011',
     reuseExistingServer: false,
-    url: 'http://127.0.0.1:3001',
-    env: {
-      NUXT_PUBLIC_SUPABASE_URL: 'http://127.0.0.1:3001',
-      NUXT_PUBLIC_SUPABASE_KEY: 'test-publishable-key'
-    }
+    ignoreHTTPSErrors: true,
+    url: 'https://localhost:3001'
   }
 })

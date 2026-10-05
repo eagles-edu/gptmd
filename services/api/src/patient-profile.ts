@@ -10,7 +10,14 @@ export const PATIENT_HISTORY_FIELDS = [
   'typicalMenstrualPeriodDescription',
   'dysmenorrheaHistory',
   'anyPain',
-  'pqrstResult',
+  'whatProvokesPalliatesPain',
+  'painQuality',
+  'painLocationRadiationWhere',
+  'painSeverity0-10',
+  'timePainOnset',
+  'constantIntermittentPain',
+  'durationPain',
+  'patientConcern',
   'medicalHistory',
   'lastPelvicExam',
   'lastPapSmear',
@@ -18,6 +25,7 @@ export const PATIENT_HISTORY_FIELDS = [
   'lastMammogram',
   'comorbidity',
   'currentMedications',
+  'allergies',
   'pastMedications',
   'nutraceuticalUse',
   'cannabisUse',
@@ -118,9 +126,9 @@ export const PatientScenarioProfileSchema = z.object({
 export type PatientScenarioProfile = z.infer<typeof PatientScenarioProfileSchema>
 
 // Bump the prompt or policy version when their corresponding behavior changes.
-export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v1'
+export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v3'
 export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v1'
-export const PATIENT_SCENARIO_SCHEMA_VERSION = 1 as const
+export const PATIENT_SCENARIO_SCHEMA_VERSION = 3 as const
 
 export interface PatientScenarioVersionPins {
   promptVersion: string
@@ -133,11 +141,15 @@ const setupInstructions = [
   'Create one fictional OB-GYN training patient as a complete private scenario profile.',
   'Use the supplied structured schema. Include only profile history fields relevant to this case; do not fill every available field.',
   'For each included history entry, use known for a patient-reported or established detail, negative for an explicit negative, unknown when relevant but not known, and not_applicable only when the field does not apply. Unknown and not_applicable values must be null. Do not turn missing information into a negative.',
+  'When pain is relevant, include dedicated history entries for known details and mark relevant details that should be elicited during the interview unknown. Use the dedicated fields for quality, location and radiation, severity, onset, pattern, duration, and provoking or relieving factors. Keep symptom onset in timePainOnset rather than learner-visible reasonForVisit.',
+  'When case-relevant associated symptoms or negatives are not already represented by a dedicated field, include miscellaneousDetailsNos as unknown so the patient can answer on demand. Do not seed blanket negatives or expose these details in reasonForVisit.',
   'Use currentMenopausalStatus for the scenario’s present-state truth. Keep the separate menopauseStatus history entry for the applicable patient-reported/history detail; do not use it as a substitute for currentMenopausalStatus.',
   'Make the current reason, history, diagnosis if any, patient beliefs, examination findings, and test results internally consistent. Invent no unsupported test result.',
+  'Include a concise, patient-voiced primary concern as the patientConcern history field when one is relevant to the case. Keep it distinct from the clinician-only diagnosis and disclose it only when asked about worries or concerns.',
   'Use dateOfBirth in YYYY-MM-DD format. A 16-year-old must not have currentMenopausalStatus menopausal. A 75-year-old must not currently be pregnant; a coherent history of past pregnancies is allowed.',
   'Keep diagnosis private in this profile. The later learner-facing profile is a separate projection.',
-  'Vary the persona traits once for this scenario and keep them stable for the session.'
+  'Vary the persona traits once for this scenario and keep them stable for the session.',
+  'Use the supplied scenario variation seed to make consistent choices among compatible scenario details. This seed is a stable variation hint, not a guarantee of identical generated text.'
 ].join(' ')
 
 export interface GeneratedPatientScenario {
@@ -210,6 +222,55 @@ function ageOnDate(dateOfBirth: string, asOf: Date): number | null {
   return age
 }
 
+const MONTH_NUMBERS: Record<string, number> = {
+  jan: 1, january: 1, feb: 2, february: 2, mar: 3, march: 3, apr: 4, april: 4,
+  may: 5, jun: 6, june: 6, jul: 7, july: 7, aug: 8, august: 8,
+  sep: 9, sept: 9, september: 9, oct: 10, october: 10, nov: 11, november: 11,
+  dec: 12, december: 12
+}
+
+/** Return a validated ISO date, null for an invalid recognized date, or undefined for unsupported prose. */
+function parseHistoryCalendarDate(value: string): string | null | undefined {
+  let year: number
+  let month: number
+  let day: number
+  if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    const parts = value.split('-').map(Number)
+    year = parts[0]!
+    month = parts[1]!
+    day = parts[2]!
+  } else {
+    const monthFirst = value.match(/^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?,?\s+(\d{4})$/i)
+    const dayFirst = value.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+),?\s+(\d{4})$/i)
+    const match = monthFirst ?? dayFirst
+    if (!match) return undefined
+    const monthName = (monthFirst ? match[1] : match[2])!.toLowerCase()
+    const monthValue = MONTH_NUMBERS[monthName]
+    if (monthValue === undefined) return undefined
+    month = monthValue
+    day = Number(monthFirst ? match[2] : match[1])
+    year = Number(match[3])
+  }
+
+  const date = new Date(Date.UTC(year, month - 1, day))
+  if (
+    !Number.isFinite(date.getTime()) || date.getUTCFullYear() !== year ||
+    date.getUTCMonth() !== month - 1 || date.getUTCDate() !== day
+  ) return null
+  return date.toISOString().slice(0, 10)
+}
+
+/** Validate chronology for ISO and unambiguous English month-name history dates. */
+export function isHistoryDatePlausible(dateOfBirth: string, value: unknown, asOf: Date): boolean {
+  if (typeof value !== 'string') return true
+  const normalizedDate = parseHistoryCalendarDate(value.trim())
+  if (normalizedDate === undefined) return true
+  if (normalizedDate === null) return false
+  if (!Number.isFinite(asOf.getTime())) return false
+  const asOfDate = asOf.toISOString().slice(0, 10)
+  return normalizedDate >= dateOfBirth && normalizedDate <= asOfDate
+}
+
 function hasValidHistory(profile: PatientScenarioProfile): boolean {
   const seen = new Set<string>()
   const countFields = new Set<string>(OBSTETRIC_COUNT_FIELDS)
@@ -270,6 +331,8 @@ export function isPatientScenarioConsistent(profile: PatientScenarioProfile, asO
   if (!Number.isFinite(asOf.getTime())) return false
   const age = ageOnDate(profile.dateOfBirth, asOf)
   if (age === null || age < 0 || age > 120 || !hasValidHistory(profile)) return false
+  const lastMenstrualPeriod = profile.history.find((entry) => entry.field === 'lastMenstrualPeriod')
+  if (lastMenstrualPeriod && !isHistoryDatePlausible(profile.dateOfBirth, lastMenstrualPeriod.value, asOf)) return false
   if (age === 16 && profile.currentMenopausalStatus === 'menopausal') return false
   if (age === 75 && profile.currentPregnancyStatus === 'pregnant') return false
   if (
@@ -297,7 +360,8 @@ export async function generatePatientScenario(
     maxAttempts?: number
     promptVersion?: string
     policyVersion?: string
-  } = {}
+    scenarioSeed: string
+  }
 ): Promise<GeneratedPatientScenario> {
   const promptVersion = options.promptVersion ?? PATIENT_SCENARIO_PROMPT_VERSION
   const policyVersion = options.policyVersion ?? PATIENT_SCENARIO_POLICY_VERSION
@@ -307,6 +371,9 @@ export async function generatePatientScenario(
   ) throw new Error('The pinned patient scenario prompt or policy version is unavailable.')
 
   const asOf = options.asOf ?? new Date()
+  if (!/^[A-Za-z0-9_-]{43}$/.test(options.scenarioSeed)) {
+    throw new Error('A valid persisted scenario variation seed is required.')
+  }
   const requestedAttempts = options.maxAttempts ?? 2
   const maxAttempts = Number.isFinite(requestedAttempts)
     ? Math.min(Math.max(Math.trunc(requestedAttempts), 1), 2)
@@ -326,7 +393,7 @@ export async function generatePatientScenario(
         model,
         conversation: conversation.id,
         instructions: setupInstructions,
-        input: 'Generate one coherent fictional patient scenario profile for an OB-GYN history-taking simulation.',
+        input: `Generate one coherent fictional patient scenario profile for an OB-GYN history-taking simulation. Stable scenario variation seed: ${options.scenarioSeed}`,
         text: {
           format: zodTextFormat(PatientScenarioProfileSchema, 'patient_scenario_profile')
         }

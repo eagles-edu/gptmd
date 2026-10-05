@@ -12,6 +12,7 @@ import {
 import {
   PATIENT_PROFILE_FIELDS,
   PatientScenarioProfileSchema,
+  isHistoryDatePlausible,
   isPatientScenarioConsistent
 } from '../../services/api/src/patient-profile'
 import {
@@ -106,13 +107,28 @@ describe('shared patient API schemas', () => {
     } as const
     const scenario = {
       scenarioId: 'scenario-1',
-      schemaVersion: 1,
+      schemaVersion: 3,
       createdAt: '2026-10-01T00:00:00Z',
       profileDigest: 'a'.repeat(64),
       profile
     }
     expect(ImmutablePatientScenarioSchema.safeParse(scenario).success).toBe(true)
+    expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion: 1 }).success).toBe(false)
+    expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion: 2 }).success).toBe(false)
+    expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion: 4 }).success).toBe(false)
     expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, profileDigest: 'bad' }).success).toBe(false)
+    expect(PatientScenarioProfileSchema.safeParse({
+      ...profile,
+      history: [{ field: 'allergies', status: 'negative', value: 'No known allergies' }]
+    }).success).toBe(true)
+    expect(PatientScenarioProfileSchema.safeParse({
+      ...profile,
+      history: [{ field: 'patientConcern', status: 'known', value: 'I am worried this pain could affect my chance of having children.' }]
+    }).success).toBe(true)
+    expect(PatientScenarioProfileSchema.safeParse({
+      ...profile,
+      persona: { ...profile.persona, mood: 'm'.repeat(81) }
+    }).success).toBe(false)
     expect(PatientScenarioProfileSchema.safeParse({
       ...profile,
       history: [
@@ -137,6 +153,22 @@ describe('shared patient API schemas', () => {
       currentPregnancyStatus: 'pregnant',
       currentMenopausalStatus: 'menopausal'
     }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isPatientScenarioConsistent({
+      ...profile,
+      history: [{ field: 'lastMenstrualPeriod', status: 'known', value: '2026-10-02' }]
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isPatientScenarioConsistent({
+      ...profile,
+      history: [{ field: 'lastMenstrualPeriod', status: 'known', value: '1989-12-31' }]
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isPatientScenarioConsistent({
+      ...profile,
+      history: [{ field: 'lastMenstrualPeriod', status: 'known', value: '2026-09-20' }]
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('1990-01-01', 'October 2, 2026', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', '20 September 1989', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'September 31, 2026', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'about three weeks ago', new Date('2026-10-01T00:00:00Z'))).toBe(true)
     const currentPregnancyHistory = [
       { field: 'numberPregnancies', status: 'known', value: 3 },
       { field: 'numberMiscarriage', status: 'known', value: 1 },
@@ -172,6 +204,7 @@ describe('shared patient API schemas', () => {
     const expansion = {
       factId: 'fact-1',
       field: 'medicalHistory',
+      section: 'Medical history',
       value: 'No significant medical history',
       source: 'patient_reported',
       turnId: 'turn-1',
@@ -179,6 +212,8 @@ describe('shared patient API schemas', () => {
       recordedAt: '2026-10-01T00:01:00Z'
     }
     expect(PatientReportedFactExpansionSchema.safeParse(expansion).success).toBe(true)
+    const { section: _section, ...expansionWithoutSection } = expansion
+    expect(PatientReportedFactExpansionSchema.safeParse(expansionWithoutSection).success).toBe(false)
     expect(PatientReportedFactExpansionSchema.safeParse({ ...expansion, source: 'verified' }).success).toBe(false)
     expect(PatientReportedFactExpansionSchema.safeParse({ ...expansion, field: 'unsupported' }).success).toBe(false)
   })
@@ -190,11 +225,17 @@ describe('shared patient API schemas', () => {
       scenarioId: null,
       status: 'initializing',
       phase: null,
+      interactionMode: 'transcript',
       openedAt: '2026-10-01T00:00:00Z',
       updatedAt: '2026-10-01T00:00:00Z',
       currentTurnSequence: 0,
       terminalEventId: null
     }).success).toBe(true)
+    expect(SessionStateSchema.safeParse({
+      sessionId, scenarioId: null, status: 'initializing', phase: null,
+      openedAt: '2026-10-01T00:00:00Z', updatedAt: '2026-10-01T00:00:00Z',
+      currentTurnSequence: 0, terminalEventId: null
+    }).success).toBe(false)
     expect(SessionStateSchema.safeParse({
       sessionId, scenarioId: null, status: 'active', phase: 'history',
       openedAt: 'not-a-date', updatedAt: '2026-10-01T00:00:00Z',
@@ -212,11 +253,22 @@ describe('shared patient API schemas', () => {
 
     const turn = {
       turnId: 'turn-1', sessionId, sequence: 1,
-      acceptedAt: '2026-10-01T00:01:00Z', learnerMessage: 'What brings you in?',
+      acceptedAt: '2026-10-01T00:01:00Z', phase: 'history', learnerModality: 'typed',
+      learnerMessage: 'What brings you in?',
+      versions: {
+        promptVersion: 'patient-turn-prompt-v5', modelVersion: 'gpt-6-luna',
+        schemaVersion: 1, policyVersion: 'patient-turn-policy-v4', rubricVersion: null
+      },
       patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
-      disclosedHistoryFields: [], disclosedFactIds: [], clinicalActions: [action]
+      disclosedHistoryFields: [], disclosedFactIds: [], historyCoverageState: [], clinicalActions: [action]
     }
     expect(SessionTurnSchema.safeParse(turn).success).toBe(true)
+    expect(SessionTurnSchema.parse(turn).versions).toEqual(turn.versions)
+    expect(SessionTurnSchema.parse({ ...turn, learnerModality: 'realtime_transcription' }).learnerModality)
+      .toBe('realtime_transcription')
+    const { learnerModality: _modality, ...turnWithoutModality } = turn
+    expect(SessionTurnSchema.safeParse(turnWithoutModality).success).toBe(false)
+    expect(SessionTurnSchema.safeParse({ ...turn, learnerModality: 'unverified_audio' }).success).toBe(false)
     expect(SessionTurnSchema.safeParse({ ...turn, sequence: 0 }).success).toBe(false)
 
     const terminal = {

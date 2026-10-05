@@ -8,11 +8,13 @@ import {
   TurnResponseSchema
 } from '../app/schemas/patient-api.ts'
 import {
+  PATIENT_HISTORY_FIELDS,
   PATIENT_PROFILE_FIELDS,
   PatientScenarioProfileSchema
 } from '../services/api/src/patient-profile.ts'
 import {
   ArchiveStatusSchema,
+  AssessmentSubmissionSchema,
   ClinicalActionSchema,
   ImmutablePatientScenarioSchema,
   PatientScenarioSetupResponseSchema,
@@ -35,6 +37,7 @@ const schemas = [
   ['patient-reported-fact-expansion', 'PatientReportedFactExpansion', PatientReportedFactExpansionSchema],
   ['session-state', 'SessionState', SessionStateSchema],
   ['session-turn', 'SessionTurn', SessionTurnSchema],
+  ['assessment-submission', 'AssessmentSubmission', AssessmentSubmissionSchema],
   ['clinical-action', 'ClinicalAction', ClinicalActionSchema],
   ['terminal-event', 'TerminalEvent', TerminalEventSchema],
   ['archive-status', 'ArchiveStatus', ArchiveStatusSchema],
@@ -73,6 +76,77 @@ if (
 }
 
 let stale = false
+const ppResponseExamples = await readFile(new URL('../docs/schemas/pp-possible-values.md', import.meta.url), 'utf8')
+const ppPreface = ppResponseExamples.split(/^## /m, 1)[0]
+  .split('\n')
+  .filter((line, index) => index > 0 || !line.startsWith('# '))
+  .join('\n')
+  .trim()
+if (!ppPreface) throw new Error('docs/schemas/pp-possible-values.md must include the shared patient-response policy before its field sections.')
+const responseGuidance = {}
+const historyFieldSections = {}
+let currentHistorySection = null
+for (const line of ppResponseExamples.split('\n')) {
+  const sectionMatch = /^## (.+)$/.exec(line)
+  if (sectionMatch) {
+    currentHistorySection = sectionMatch[1].trim()
+    continue
+  }
+  if (!line.startsWith('| `')) continue
+  const cells = line.slice(1, -1).split('|').map((cell) => cell.trim())
+  const fieldMatch = /^`([^`]+)`$/.exec(cells[0] ?? '')
+  if (!fieldMatch || cells.length !== 3 || !cells[1] || !cells[2]) continue
+  const field = fieldMatch[1]
+  if (!currentHistorySection) throw new Error(`PP response field ${field} appears before a history section heading.`)
+  if (responseGuidance[field]) throw new Error(`Duplicate PP response examples for ${field}.`)
+  historyFieldSections[field] = currentHistorySection
+  responseGuidance[field] = {
+    commonPatientWording: cells[1],
+    clinicianAssistedGuidance: cells[2]
+  }
+}
+if (
+  JSON.stringify(Object.keys(responseGuidance).sort()) !==
+  JSON.stringify([...PATIENT_HISTORY_FIELDS].sort())
+) {
+  throw new Error('docs/schemas/pp-possible-values.md must include exactly one response-guidance row per canonical patient history field.')
+}
+if (JSON.stringify(Object.keys(historyFieldSections).sort()) !== JSON.stringify([...PATIENT_HISTORY_FIELDS].sort())) {
+  throw new Error('docs/schemas/pp-possible-values.md must assign exactly one history section to every canonical patient history field.')
+}
+const guidanceSource = `// Generated from docs/schemas/pp-possible-values.md; edit the Markdown source instead.\nexport const PATIENT_PROFILE_RESPONSE_POLICY = ${JSON.stringify(ppPreface)}\nexport const PATIENT_PROFILE_RESPONSE_GUIDANCE = ${JSON.stringify(responseGuidance, null, 2)} as const\n`
+const guidancePath = fileURLToPath(new URL('../services/api/src/patient-profile-response-guidance.generated.ts', import.meta.url))
+const sectionNames = [...new Set(Object.values(historyFieldSections))]
+const sectionSource = `// Generated from docs/schemas/pp-possible-values.md; edit the Markdown source instead.\nexport const PATIENT_PROFILE_HISTORY_SECTIONS = ${JSON.stringify(sectionNames, null, 2)} as const\nexport const PATIENT_PROFILE_FIELD_SECTIONS = ${JSON.stringify(historyFieldSections, null, 2)} as const\n`
+const sectionPath = fileURLToPath(new URL('../services/api/src/patient-profile-sections.generated.ts', import.meta.url))
+if (checkOnly) {
+  let existing
+  try {
+    existing = await readFile(guidancePath, 'utf8')
+  } catch {
+    existing = ''
+  }
+  if (existing !== guidanceSource) {
+    console.error('services/api/src/patient-profile-response-guidance.generated.ts is missing or out of date; run npm run schemas:build.')
+    stale = true
+  }
+  let existingSections
+  try {
+    existingSections = await readFile(sectionPath, 'utf8')
+  } catch {
+    existingSections = ''
+  }
+  if (existingSections !== sectionSource) {
+    console.error('services/api/src/patient-profile-sections.generated.ts is missing or out of date; run npm run schemas:build.')
+    stale = true
+  }
+} else {
+  await writeFile(guidancePath, guidanceSource)
+  await writeFile(sectionPath, sectionSource)
+  console.log('Generated services/api/src/patient-profile-response-guidance.generated.ts')
+  console.log('Generated services/api/src/patient-profile-sections.generated.ts')
+}
+
 for (const [name, title, source] of schemas) {
   const outputPath = fileURLToPath(new URL(`${name}.schema.json`, outputDirectory))
   const schema = {

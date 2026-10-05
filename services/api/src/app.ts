@@ -1,6 +1,13 @@
 import express, { type Express } from 'express'
 import { isJwtConfigurationReady, verifyAccessToken, type JwtConfiguration } from './auth.ts'
 import {
+  BoundedSetupQueue,
+  DEFAULT_SETUP_QUEUE_LIMITS,
+  SetupQueueFullError,
+  SetupQueueTimeoutError,
+  type SetupQueueLimits
+} from './bounded-setup-queue.ts'
+import {
   PATIENT_SCENARIO_POLICY_VERSION,
   PATIENT_SCENARIO_PROMPT_VERSION,
   PATIENT_SCENARIO_SCHEMA_VERSION,
@@ -8,6 +15,8 @@ import {
   type PatientScenarioVersionPins
 } from './patient-profile.ts'
 import {
+  AssessmentFieldsSchema,
+  LearnerInputModalitySchema,
   PatientScenarioSetupResponseSchema,
   SessionCreatedResponseSchema
 } from './session-contracts.ts'
@@ -31,12 +40,19 @@ export interface ApiDependencies {
   generateResponse: ((input: string) => Promise<{ id: string; outputText: string }>) | null
   generatePatientScenario: ((
     versions: PatientScenarioVersionPins,
-    asOf: Date
+    asOf: Date,
+    scenarioSeed: string
   ) => Promise<GeneratedPatientScenario>) | null
   generatePatientTurn: ((context: PatientTurnGenerationContext) => Promise<{ responseId: string; output: unknown }>) | null
+  createTranscriptionCredential: (() => Promise<{
+    clientSecret: string
+    expiresAt: number
+    providerSessionId: string
+  }>) | null
   model: string
   jwt: JwtConfiguration
   sessionStore: SessionStore | null
+  setupQueueLimits?: SetupQueueLimits
   allowedOrigins?: string[]
 }
 
@@ -45,6 +61,7 @@ const validInput = (value: unknown): value is string =>
 
 export function createApiApp(dependencies: ApiDependencies): Express {
   const app = express()
+  const setupQueue = new BoundedSetupQueue(dependencies.setupQueueLimits ?? DEFAULT_SETUP_QUEUE_LIMITS)
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
   app.use(express.json({ limit: '1mb' }))
@@ -97,9 +114,14 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         response.status(403).json({ error: 'Active tenant membership is required' })
         return
       }
-      const principal = { subjectId: identity.subjectId, tenantId }
-      if (!await dependencies.sessionStore.hasActiveMembership(principal)) {
+      const role = await dependencies.sessionStore.getActiveMembershipRole(identity.subjectId, tenantId)
+      if (!role) {
         response.status(403).json({ error: 'Active tenant membership is required' })
+        return
+      }
+      const principal = { subjectId: identity.subjectId, tenantId, role }
+      if (role !== 'learner') {
+        response.status(403).json({ error: 'Learner role is required for encounter API routes' })
         return
       }
       request.principal = principal
@@ -123,6 +145,48 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.json({ tenantIds: await dependencies.sessionStore.getActiveTenantIds(identity.subjectId) })
     } catch {
       response.status(503).json({ error: 'Account service is unavailable' })
+    }
+  })
+
+  app.post('/api/sessions/:sessionId/audio-transcription', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    if (request.body?.consentVersion !== 'gptmd-audio-transcription-v1') {
+      response.status(400).json({ error: 'Current explicit audio-transcription consent is required' })
+      return
+    }
+    if (!dependencies.createTranscriptionCredential) {
+      response.status(503).json({ error: 'Cross-browser speech transcription is not configured' })
+      return
+    }
+    try {
+      const grant = await store.createAudioTranscriptionGrant(
+        principal, sessionId, 'gptmd-audio-transcription-v1'
+      )
+      if (typeof grant === 'string') {
+        if (grant === 'membership_missing') response.status(403).json({ error: 'Active tenant membership is required' })
+        else if (grant === 'entitlement_denied') response.status(403).json({ error: 'Tenant plan or audio privacy approval does not allow voice transcription' })
+        else response.status(429).json({ error: 'Monthly voice transcription allowance is exhausted' })
+        return
+      }
+      const credential = await dependencies.createTranscriptionCredential()
+      await store.recordAudioProviderSession(grant.grantId, credential.providerSessionId)
+      response.json({
+        clientSecret: credential.clientSecret,
+        expiresAt: credential.expiresAt,
+        maxDurationSeconds: 900
+      })
+    } catch {
+      response.status(503).json({ error: 'Voice transcription could not be authorized or initialized' })
     }
   })
 
@@ -238,12 +302,12 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
 
     try {
-      const result: ScenarioSetupResult = await store.setupScenario(
+      const result: ScenarioSetupResult = await setupQueue.run(() => store.setupScenario(
         principal,
         sessionId,
         idempotencyKey,
-        dependencies.generatePatientScenario
-      )
+        dependencies.generatePatientScenario!
+      ))
       if (typeof result === 'string') {
         if (result === 'not_found') response.status(404).json({ error: 'Session not found' })
         else if (result === 'idempotency_conflict') {
@@ -252,11 +316,20 @@ export function createApiApp(dependencies: ApiDependencies): Express {
           response.status(503).json({ error: 'Pinned patient scenario versions are unavailable' })
         } else if (result === 'state_unavailable') {
           response.status(503).json({ error: 'Patient state storage is unavailable' })
+        } else if (result === 'entitlement_denied') {
+          response.status(403).json({ error: 'Tenant plan does not include this capability' })
         } else response.status(409).json({ error: 'Session is not available for setup' })
         return
       }
       response.json(PatientScenarioSetupResponseSchema.parse(result))
-    } catch {
+    } catch (error) {
+      if (error instanceof SetupQueueFullError || error instanceof SetupQueueTimeoutError) {
+        response.setHeader('Retry-After', '1')
+        response.status(503).json({
+          error: 'Patient setup capacity is unavailable; retry with the same Idempotency-Key.'
+        })
+        return
+      }
       response.status(503).json({ error: 'Patient scenario setup could not be completed' })
     }
   })
@@ -267,6 +340,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     const sessionId = request.params.sessionId ?? ''
     const turnId = request.body?.turnId
     const learnerMessage = request.body?.text
+    const rawModality = request.body?.modality
     if (!principal || !store) {
       response.status(401).json({ error: 'Valid bearer authentication is required' })
       return
@@ -283,6 +357,13 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.status(400).json({ error: 'text must be a non-empty string of at most 8000 characters' })
       return
     }
+    const parsedModality = rawModality === undefined
+      ? { success: true as const, data: 'typed' as const }
+      : LearnerInputModalitySchema.safeParse(rawModality)
+    if (!parsedModality.success) {
+      response.status(400).json({ error: 'modality must be typed or realtime_transcription' })
+      return
+    }
     if (!dependencies.generatePatientTurn) {
       response.status(503).json({ error: 'Patient turn generation is not configured' })
       return
@@ -290,7 +371,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
 
     try {
       const result = await store.submitPatientTurn(
-        principal, sessionId, turnId, learnerMessage.trim(), dependencies.generatePatientTurn
+        principal, sessionId, turnId, learnerMessage.trim(), dependencies.generatePatientTurn, parsedModality.data
       )
       if (typeof result === 'object') {
         response.json({ turnId: result.turnId, text: result.patientResponse })
@@ -299,6 +380,90 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       turnResultResponse(result, response)
     } catch {
       response.status(503).json({ error: 'Patient turn could not be completed' })
+    }
+  })
+
+  app.post('/api/sessions/:sessionId/assessment-phase', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    try {
+      const result = await store.beginAssessment(principal, sessionId)
+      if (result === 'assessment') {
+        response.json({ sessionId, phase: 'assessment' })
+      } else if (result === 'not_found') {
+        response.status(404).json({ error: 'Session not found' })
+      } else if (result === 'not_ready') {
+        response.status(409).json({ error: 'Complete at least one history turn before beginning assessment' })
+      } else if (result === 'phase_conflict') {
+        response.status(409).json({ error: 'The encounter phase could not be changed' })
+      } else {
+        response.status(503).json({ error: 'Encounter state is unavailable' })
+      }
+    } catch {
+      response.status(503).json({ error: 'Encounter phase could not be saved' })
+    }
+  })
+
+  app.post('/api/sessions/:sessionId/assessment', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    const assessmentId = request.body?.assessmentId
+    if (typeof assessmentId !== 'string' || !/^[A-Za-z0-9_-]{1,200}$/.test(assessmentId)) {
+      response.status(400).json({ error: 'A valid assessmentId is required' })
+      return
+    }
+    const fields = AssessmentFieldsSchema.safeParse({
+      summary: request.body?.summary,
+      differential: request.body?.differential,
+      rationale: request.body?.rationale,
+      plan: request.body?.plan
+    })
+    if (!fields.success) {
+      const fieldErrors: Record<string, string> = {}
+      for (const issue of fields.error.issues) {
+        const field = issue.path[0]
+        if (typeof field === 'string' && !fieldErrors[field]) {
+          fieldErrors[field] = issue.code === 'too_small'
+            ? 'This field is required.'
+            : `Use no more than ${issue.code === 'too_big' ? issue.maximum : 'the allowed'} characters.`
+        }
+      }
+      response.status(422).json({ error: 'Complete each assessment field before submitting.', fieldErrors })
+      return
+    }
+    try {
+      const result = await store.submitAssessment(principal, sessionId, assessmentId, fields.data)
+      if (typeof result === 'object') {
+        response.json(result)
+      } else if (result === 'not_found') {
+        response.status(404).json({ error: 'Session not found' })
+      } else if (result === 'not_ready') {
+        response.status(409).json({ error: 'Begin the assessment phase before submitting' })
+      } else if (result === 'phase_conflict') {
+        response.status(409).json({ error: 'An assessment has already been submitted for this encounter' })
+      } else {
+        response.status(503).json({ error: 'Assessment could not be saved' })
+      }
+    } catch {
+      response.status(503).json({ error: 'Assessment could not be saved' })
     }
   })
 

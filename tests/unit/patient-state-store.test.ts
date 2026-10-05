@@ -5,6 +5,7 @@ function createJsonRedis(isOpen = true): RedisJsonClient & { documents: Map<stri
   const documents = new Map<string, unknown>()
   const locks = new Map<string, string>()
   const sendCommand = vi.fn(async (command: string[]) => {
+    if (command[0] === 'XADD') return '1-0'
     if (command[0] === 'SET' && command[3] === 'NX') {
       if (locks.has(command[1]!)) return null
       locks.set(command[1]!, command[2]!)
@@ -58,7 +59,7 @@ function createAtomicJsonRedis(): ReturnType<typeof createJsonRedis> & {
       redis.documents.set(command[3]!, JSON.parse(command[11]!))
       redis.documents.set(command[4]!, JSON.parse(command[12]!))
       retryRecords.set(retryField, command[14]!)
-      events.push(command[10]!)
+      events.push(...JSON.parse(command[10]!) as string[])
       return ['accepted', command[14]!]
     }
     return handleJson(command)
@@ -67,6 +68,25 @@ function createAtomicJsonRedis(): ReturnType<typeof createJsonRedis> & {
 }
 
 describe('Redis patient state store', () => {
+  it('queues only bounded turn audit identifiers and categories in the worker stream', async () => {
+    const redis = createJsonRedis()
+    const store = createRedisPatientStateStore(redis)
+    const audit = {
+      eventId: '58fa91f0-77f4-4dc7-a055-7783f0270c00',
+      sessionId: 's'.repeat(43),
+      eventType: 'patient_turn_validation_failure' as const,
+      occurredAt: '2026-10-05T00:00:00.000Z',
+      payload: { turnIdHash: 'a'.repeat(64), attemptCount: 2 }
+    }
+
+    await store.appendAuditEvent(audit)
+
+    expect(redis.sendCommand).toHaveBeenCalledWith([
+      'XADD', 'gptmd:session-events', '*', 'event', JSON.stringify(audit)
+    ])
+    expect(JSON.stringify(audit)).not.toMatch(/learnerMessage|patientResponse|prompt|raw/i)
+  })
+
   it('serializes a session turn with an owner checked Redis lock', async () => {
     const redis = createJsonRedis()
     const store = createRedisPatientStateStore(redis)
@@ -107,8 +127,8 @@ describe('Redis patient state store', () => {
         reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
       },
       conversationId: 'conv_private',
-      profileDigest: 'digest_private',
-      schemaVersion: 1
+      profileDigest: 'a'.repeat(64),
+      schemaVersion: 3
     })
 
     expect(redis.connect).not.toHaveBeenCalled()
@@ -119,9 +139,30 @@ describe('Redis patient state store', () => {
       sessionId, patientProfileId, state: { status: 'ready' }, acceptedTurns: [],
       profile: { diagnosis: 'Endometriosis' },
       setupProjection: { diagnosis: 'Endometriosis' },
-      conversationId: 'conv_private', profileDigest: 'digest_private', schemaVersion: 1
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 3
     })
     expect(redis.sendCommand).toHaveBeenCalledWith(expect.arrayContaining(['EVAL', expect.any(String), '2', `gptmd:session:${sessionId}`]))
+
+    const commandsBeforeUnsupportedVersion = redis.sendCommand.mock.calls.length
+    await expect(store.saveReady({
+      sessionId, patientProfileId, openedAt: '2026-10-01T00:00:00.000Z',
+      profile: {
+        fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+        currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
+        patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
+        persona: {
+          mood: 'concerned', maturity: 'adult', verbosity: 'moderate',
+          educationLevel: 'college', willingnessToDisclose: 'gradual'
+        }
+      },
+      setupProjection: {
+        fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
+      },
+      conversationId: 'conv_private', profileDigest: 'digest_private', schemaVersion: 2
+    } as never)).rejects.toThrow()
+    expect(redis.sendCommand).toHaveBeenCalledTimes(commandsBeforeUnsupportedVersion)
   })
 
   it('rejects a Redis key already bound to another session or profile', async () => {
@@ -155,7 +196,8 @@ describe('Redis patient state store', () => {
       sessionId, patientProfileId, openedAt,
       profile: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis',
+        history: [{ field: 'anyPain', status: 'known', value: 'Pelvic pain' }],
         currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
         patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
         persona: {
@@ -167,13 +209,18 @@ describe('Redis patient state store', () => {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
         reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
       },
-      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 1
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 3
     })
     const turn = {
       turnId: 'turn-1', sessionId, sequence: 1, acceptedAt: '2026-10-01T00:01:00.000Z',
-      phase: 'history',
+      phase: 'history', learnerModality: 'typed',
+      versions: {
+        promptVersion: 'patient-turn-prompt-v5', modelVersion: 'gpt-6-luna',
+        schemaVersion: 1, policyVersion: 'patient-turn-policy-v4', rubricVersion: null
+      },
       learnerMessage: 'What brings you in?', patientResponse: 'I have pelvic pain.',
-      patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: [], clinicalActions: []
+      patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: ['anyPain'],
+      disclosedFactIds: ['seed:scenario-1:anyPain'], historyCoverageState: [], clinicalActions: []
     }
 
     const results = await Promise.all([store.acceptTurn(turn), store.acceptTurn(turn)])
@@ -182,8 +229,12 @@ describe('Redis patient state store', () => {
       { status: 'accepted', turnId: 'turn-1', sequence: 1, patientResponse: 'I have pelvic pain.' },
       { status: 'duplicate', turnId: 'turn-1', sequence: 1, patientResponse: 'I have pelvic pain.' }
     ])
-    expect(redis.events).toHaveLength(1)
-    expect(JSON.parse(redis.events[0]!).eventType).toBe('accepted_turn')
+    expect(redis.events).toHaveLength(2)
+    expect(redis.events.map((serialized) => JSON.parse(serialized!).eventType)).toEqual(['accepted_turn', 'disclosure'])
+    expect(JSON.parse(redis.events[1]!)).toMatchObject({
+      eventOrdinal: 1,
+      payload: { turnId: 'turn-1', turnSequence: 1, field: 'anyPain', factId: 'seed:scenario-1:anyPain', source: 'scenario_seed' }
+    })
     expect(await store.read(sessionId)).toMatchObject({
       state: { status: 'active', currentTurnSequence: 1 }, acceptedTurns: [turn]
     })

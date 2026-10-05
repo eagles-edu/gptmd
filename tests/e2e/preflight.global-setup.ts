@@ -1,4 +1,6 @@
-import { createServer } from 'node:http'
+import { createServer } from 'node:https'
+import { readFileSync } from 'node:fs'
+import { getE2ECertificate } from '../../scripts/e2e-certificate.mjs'
 
 export default async function setupPreflightAuth(): Promise<() => Promise<void>> {
   const user = {
@@ -10,8 +12,9 @@ export default async function setupPreflightAuth(): Promise<() => Promise<void>>
     user_metadata: { full_name: 'Preflight Test User' },
     created_at: '2026-01-01T00:00:00.000Z'
   }
-  const server = createServer((request, response) => {
-    response.setHeader('access-control-allow-origin', 'http://127.0.0.1:3002')
+  const { key, cert } = getE2ECertificate()
+  const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }, (request, response) => {
+    response.setHeader('access-control-allow-origin', 'https://localhost:3002')
     response.setHeader(
       'access-control-allow-headers',
       request.headers['access-control-request-headers'] ?? 'apikey, authorization, x-client-info, content-type'
@@ -33,7 +36,7 @@ export default async function setupPreflightAuth(): Promise<() => Promise<void>>
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(3003, '127.0.0.1', resolve)
+    server.listen(3003, '0.0.0.0', resolve)
   })
 
   return () => new Promise<void>((resolve, reject) => {

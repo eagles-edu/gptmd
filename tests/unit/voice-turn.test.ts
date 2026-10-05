@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { classifyVoiceRepair, VoiceTurnBuffer, VOICE_TURN_SILENCE_MS } from '../../app/utils/voice-turn'
+import { classifyVoiceRepair, isAssessmentTransitionCue, shouldSpeakPatientReply, VoiceTurnBuffer, VOICE_TURN_SILENCE_MS } from '../../app/utils/voice-turn'
 
 afterEach(() => vi.useRealTimers())
 
@@ -49,5 +49,33 @@ describe('classifyVoiceRepair', () => {
     ['When did the pain begin?', 'question']
   ] as const)('classifies %s as %s', (text, expected) => {
     expect(classifyVoiceRepair(text)).toBe(expected)
+  })
+})
+
+describe('isAssessmentTransitionCue', () => {
+  it.each([
+    'Begin assessment.',
+    'Could we start the written assessment now?',
+    'Move on to the assessment.',
+    'I think it is time for assessment.'
+  ])('recognizes a phase-change cue that needs confirmation: %s', (text) => {
+    expect(isAssessmentTransitionCue(text)).toBe(true)
+  })
+
+  it.each([
+    'What is your assessment of the pain?',
+    'How would you describe the assessment?',
+    'When did the pain begin?'
+  ])('leaves an ordinary patient question in the history lane: %s', (text) => {
+    expect(isAssessmentTransitionCue(text)).toBe(false)
+  })
+})
+
+describe('shouldSpeakPatientReply', () => {
+  it('speaks replies only while the learner explicitly uses an active voice conversation', () => {
+    expect(shouldSpeakPatientReply('audio', true)).toBe(true)
+    expect(shouldSpeakPatientReply('audio', false)).toBe(false)
+    expect(shouldSpeakPatientReply('transcript', true)).toBe(false)
+    expect(shouldSpeakPatientReply('transcript', false)).toBe(false)
   })
 })

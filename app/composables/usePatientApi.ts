@@ -1,5 +1,8 @@
 import {
   CreateSessionResponseSchema,
+  AudioTranscriptionGrantSchema,
+  AssessmentSubmittedResponseSchema,
+  BeginAssessmentResponseSchema,
   SetupResponseSchema,
   TurnResponseSchema,
   type CreateSessionResult,
@@ -51,13 +54,18 @@ export function usePatientApi() {
     return parsed.data
   }
 
-  async function sendTurn(sessionId: string, turnId: string, text: string): Promise<TurnResult> {
+  async function sendTurn(
+    sessionId: string,
+    turnId: string,
+    text: string,
+    modality: 'typed' | 'realtime_transcription' = 'typed'
+  ): Promise<TurnResult> {
     const result = await $fetch<unknown>(
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/turns`,
       {
         method: 'POST',
         headers: await auth.accessHeaders(),
-        body: { turnId, text }
+        body: { turnId, text, modality }
       }
     )
     const parsed = TurnResponseSchema.safeParse(result)
@@ -69,5 +77,49 @@ export function usePatientApi() {
     return parsed.data
   }
 
-  return { createSession, setupSession, sendTurn }
+  async function createAudioTranscriptionGrant(sessionId: string): Promise<import('../schemas/patient-api').AudioTranscriptionGrant> {
+    const result = await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/audio-transcription`,
+      {
+        method: 'POST',
+        headers: await auth.accessHeaders(),
+        body: { consentVersion: 'gptmd-audio-transcription-v1' }
+      }
+    )
+    const parsed = AudioTranscriptionGrantSchema.safeParse(result)
+    if (!parsed.success) throw new Error('The speech service returned an invalid transcription grant.')
+    return parsed.data
+  }
+
+  async function beginAssessment(sessionId: string): Promise<void> {
+    const result = await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/assessment-phase`,
+      { method: 'POST', headers: await auth.accessHeaders() }
+    )
+    if (!BeginAssessmentResponseSchema.safeParse(result).success) {
+      throw new Error('The encounter service returned an invalid phase response.')
+    }
+  }
+
+  async function submitAssessment(
+    sessionId: string,
+    assessmentId: string,
+    fields: import('../schemas/patient-api').AssessmentFields
+  ): Promise<import('../schemas/patient-api').AssessmentSubmittedResult> {
+    const result = await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/assessment`,
+      {
+        method: 'POST',
+        headers: await auth.accessHeaders(),
+        body: { assessmentId, ...fields }
+      }
+    )
+    const parsed = AssessmentSubmittedResponseSchema.safeParse(result)
+    if (!parsed.success || parsed.data.assessmentId !== assessmentId) {
+      throw new Error('The encounter service returned an invalid assessment response.')
+    }
+    return parsed.data
+  }
+
+  return { createSession, setupSession, sendTurn, createAudioTranscriptionGrant, beginAssessment, submitAssessment }
 }

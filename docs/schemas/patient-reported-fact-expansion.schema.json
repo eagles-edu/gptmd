@@ -15,7 +15,14 @@
         "typicalMenstrualPeriodDescription",
         "dysmenorrheaHistory",
         "anyPain",
-        "pqrstResult",
+        "whatProvokesPalliatesPain",
+        "painQuality",
+        "painLocationRadiationWhere",
+        "painSeverity0-10",
+        "timePainOnset",
+        "constantIntermittentPain",
+        "durationPain",
+        "patientConcern",
         "medicalHistory",
         "lastPelvicExam",
         "lastPapSmear",
@@ -23,6 +30,7 @@
         "lastMammogram",
         "comorbidity",
         "currentMedications",
+        "allergies",
         "pastMedications",
         "nutraceuticalUse",
         "cannabisUse",
@@ -72,6 +80,11 @@
         "miscellaneousDetailsNos"
       ]
     },
+    "section": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120
+    },
     "value": {
       "anyOf": [
         {
@@ -117,6 +130,7 @@
   "required": [
     "factId",
     "field",
+    "section",
     "value",
     "source",
     "turnId",

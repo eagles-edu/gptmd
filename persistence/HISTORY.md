@@ -90,3 +90,24 @@ never commits or modifies application source.
 
 <!-- curatormd:record_id=450ee673b761764e29788b7615b5a419;content_sha256=dba77a5fdff25ec29e79c17e7f222315f44bf4287e94b0cdccf1b9ee6bba85e5 -->
 <!-- curatormd:fingerprint=92b52a01134a2a7fa0e1b9396e0e00b8d610582c17d09d34c6667516f73b1679 -->
+
+## 2026-10-04 — Separate profile catalog from scenario seed examples
+
+**Decision:** ## Separate profile catalog from scenario seed examples
+
+**Beginning — trigger and context:** The 1A inventory needed to distinguish the canonical allowed-field catalog and runtime patient profile contract from concrete fixtures, historical examples, and values that could be mistaken for production seeds.
+
+**Middle — decisions and work:** Audited the current API schema and repository examples. Clarified that the JSON catalog names reason and history fields while `patient-profile.ts` defines the full runtime schema; separated active generation behavior from test fixtures, the legacy Nuxt008 request, and archived examples. Replaced concrete values in the checked-in patient JSON example with explicit placeholders. The runtime profile shape did not change, so schema version 1 required no migration.
+
+**End — outcome and verification:** The task list and companion checklist now describe the sources separately. The placeholder JSON parses and `git diff --check` passed. The application test suite was not run because this thread changed documentation and an illustrative template only.
+
+**Future utility:** Prevents future work from treating a field catalog, fixture, or legacy example as active generation input and keeps illustrative profile values from being mistaken for real patient scenarios.
+
+**Project impact:** Observed: the example contains placeholders and the source inventory is recorded in project documentation. Expected: the distinction reduces accidental use of fabricated example values in runtime behavior.
+
+**Rationale:** Prevents future work from treating a field catalog, fixture, or legacy example as active generation input and keeps illustrative profile values from being mistaken for real patient scenarios.
+
+**Impact:** Observed: the example contains placeholders and the source inventory is recorded in project documentation. Expected: the distinction reduces accidental use of fabricated example values in runtime behavior.
+
+<!-- curatormd:record_id=c454d4b1abb9eb376dba5972b0f8d20c;content_sha256=80ddf7c286be290ba1edec30f9f7610b197ce70ae2e3d365666936a7a34d2869 -->
+<!-- curatormd:fingerprint=c652858f314e58e0dadbaa10cb6e04fe83294d1748c44c0d331a9f7533a4b684 -->

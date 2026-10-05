@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import {
+  PATIENT_SCENARIO_SCHEMA_VERSION,
   PATIENT_HISTORY_FIELDS,
   PatientScenarioProfileSchema
 } from './patient-profile.ts'
@@ -28,7 +29,7 @@ const PatientReportedValueSchema = z.union([
 /** Immutable, app-owned snapshot of the validated patient canon for one visit. */
 export const ImmutablePatientScenarioSchema = z.object({
   scenarioId: OpaqueIdSchema,
-  schemaVersion: z.literal(1),
+  schemaVersion: z.literal(PATIENT_SCENARIO_SCHEMA_VERSION),
   createdAt: UtcTimestampSchema,
   profileDigest: z.string().regex(/^[a-f0-9]{64}$/),
   profile: PatientScenarioProfileSchema
@@ -40,6 +41,7 @@ export type ImmutablePatientScenario = z.infer<typeof ImmutablePatientScenarioSc
 export const PatientReportedFactExpansionSchema = z.object({
   factId: OpaqueIdSchema,
   field: HistoryFieldSchema,
+  section: z.string().trim().min(1).max(120),
   value: PatientReportedValueSchema,
   source: z.literal('patient_reported'),
   turnId: OpaqueIdSchema,
@@ -51,6 +53,8 @@ export type PatientReportedFactExpansion = z.infer<typeof PatientReportedFactExp
 
 export const EncounterPhaseSchema = z.enum(['history', 'assessment', 'debrief'])
 export type EncounterPhase = z.infer<typeof EncounterPhaseSchema>
+export const LearnerInputModalitySchema = z.enum(['typed', 'realtime_transcription'])
+export type LearnerInputModality = z.infer<typeof LearnerInputModalitySchema>
 export const InteractionModeSchema = z.literal('transcript')
 export type InteractionMode = z.infer<typeof InteractionModeSchema>
 export const SessionStatusSchema = z.enum([
@@ -67,7 +71,7 @@ export const SessionStateSchema = z.object({
   scenarioId: OpaqueIdSchema.nullable(),
   status: SessionStatusSchema,
   phase: EncounterPhaseSchema.nullable(),
-  interactionMode: InteractionModeSchema.default('transcript'),
+  interactionMode: InteractionModeSchema,
   openedAt: UtcTimestampSchema,
   updatedAt: UtcTimestampSchema,
   currentTurnSequence: z.number().int().nonnegative(),
@@ -108,14 +112,15 @@ export const SessionTurnSchema = z.object({
   sessionId: ApplicationSessionIdSchema,
   sequence: z.number().int().positive(),
   acceptedAt: UtcTimestampSchema,
-  phase: EncounterPhaseSchema.default('history'),
-  versions: SessionTurnVersionPinsSchema.optional(),
+  phase: EncounterPhaseSchema,
+  learnerModality: LearnerInputModalitySchema,
+  versions: SessionTurnVersionPinsSchema,
   learnerMessage: z.string().trim().min(1).max(8_000),
   patientResponse: z.string().trim().min(1).max(8_000),
   patientReportedFacts: z.array(PatientReportedFactExpansionSchema).max(100),
-  historyCoverage: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length).default([]),
-  disclosedHistoryFields: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length).default([]),
-  disclosedFactIds: z.array(OpaqueIdSchema).max(100).default([]),
+  historyCoverage: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length),
+  disclosedHistoryFields: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length),
+  disclosedFactIds: z.array(OpaqueIdSchema).max(100),
   historyCoverageState: z.array(z.object({
     field: HistoryFieldSchema,
     asked: z.boolean(),
@@ -123,9 +128,13 @@ export const SessionTurnSchema = z.object({
     missing: z.boolean(),
     sensitive: z.boolean(),
     notRelevant: z.boolean()
-  }).strict()).max(PATIENT_HISTORY_FIELDS.length).default([]),
+  }).strict()).max(PATIENT_HISTORY_FIELDS.length),
   clinicalActions: z.array(z.lazy(() => ClinicalActionSchema)).max(100)
-}).strict()
+}).strict().superRefine((turn, context) => {
+  if (turn.disclosedHistoryFields.length !== turn.disclosedFactIds.length) {
+    context.addIssue({ code: 'custom', message: 'Each disclosed history field must identify its disclosed fact' })
+  }
+})
 
 export type SessionTurn = z.infer<typeof SessionTurnSchema>
 export type HistoryCoverageState = SessionTurn['historyCoverageState'][number]
@@ -171,11 +180,28 @@ export const TerminalEventSchema = z.object({
 
 export type TerminalEvent = z.infer<typeof TerminalEventSchema>
 
+export const AssessmentFieldsSchema = z.object({
+  summary: z.string().trim().min(1).max(4_000),
+  differential: z.string().trim().min(1).max(4_000),
+  rationale: z.string().trim().min(1).max(8_000),
+  plan: z.string().trim().min(1).max(4_000)
+}).strict()
+export type AssessmentFields = z.infer<typeof AssessmentFieldsSchema>
+
+export const AssessmentSubmissionSchema = AssessmentFieldsSchema.extend({
+  assessmentId: OpaqueIdSchema,
+  sessionId: ApplicationSessionIdSchema,
+  turnSequence: z.number().int().positive(),
+  submittedAt: UtcTimestampSchema
+}).strict()
+export type AssessmentSubmission = z.infer<typeof AssessmentSubmissionSchema>
+
 export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
   z.object({
     eventId: OpaqueIdSchema,
     sessionId: ApplicationSessionIdSchema,
     sequence: z.number().int().positive(),
+    eventOrdinal: z.literal(0),
     eventType: z.literal('accepted_turn'),
     occurredAt: UtcTimestampSchema,
     payload: SessionTurnSchema
@@ -189,6 +215,61 @@ export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
     eventId: OpaqueIdSchema,
     sessionId: ApplicationSessionIdSchema,
     sequence: z.number().int().positive(),
+    eventOrdinal: z.number().int().positive(),
+    eventType: z.literal('disclosure'),
+    occurredAt: UtcTimestampSchema,
+    payload: z.object({
+      turnId: OpaqueIdSchema,
+      turnSequence: z.number().int().positive(),
+      field: HistoryFieldSchema,
+      factId: OpaqueIdSchema,
+      source: z.enum(['scenario_seed', 'patient_reported'])
+    }).strict()
+  }).strict().superRefine((event, context) => {
+    if (event.sessionId.length !== 43 || event.sequence !== event.payload.turnSequence) {
+      context.addIssue({ code: 'custom', message: 'Disclosure-event envelope does not match its payload' })
+    }
+  }),
+  z.object({
+    eventId: OpaqueIdSchema,
+    sessionId: ApplicationSessionIdSchema,
+    sequence: z.number().int().positive(),
+    eventOrdinal: z.number().int().positive(),
+    eventType: z.literal('phase_changed'),
+    occurredAt: UtcTimestampSchema,
+    payload: z.object({
+      transitionId: OpaqueIdSchema,
+      sessionId: ApplicationSessionIdSchema,
+      turnSequence: z.number().int().positive(),
+      from: z.literal('history'),
+      to: z.literal('assessment'),
+      occurredAt: UtcTimestampSchema
+    }).strict()
+  }).strict().superRefine((event, context) => {
+    if (event.eventId !== event.payload.transitionId || event.sessionId !== event.payload.sessionId ||
+        event.sequence !== event.payload.turnSequence || event.occurredAt !== event.payload.occurredAt) {
+      context.addIssue({ code: 'custom', message: 'Phase-change event envelope does not match its payload' })
+    }
+  }),
+  z.object({
+    eventId: OpaqueIdSchema,
+    sessionId: ApplicationSessionIdSchema,
+    sequence: z.number().int().positive(),
+    eventOrdinal: z.number().int().positive(),
+    eventType: z.literal('assessment_submitted'),
+    occurredAt: UtcTimestampSchema,
+    payload: AssessmentSubmissionSchema
+  }).strict().superRefine((event, context) => {
+    if (event.eventId !== event.payload.assessmentId || event.sessionId !== event.payload.sessionId ||
+        event.sequence !== event.payload.turnSequence || event.occurredAt !== event.payload.submittedAt) {
+      context.addIssue({ code: 'custom', message: 'Assessment event envelope does not match its payload' })
+    }
+  }),
+  z.object({
+    eventId: OpaqueIdSchema,
+    sessionId: ApplicationSessionIdSchema,
+    sequence: z.number().int().positive(),
+    eventOrdinal: z.literal(0),
     eventType: z.literal('terminal'),
     occurredAt: UtcTimestampSchema,
     payload: TerminalEventSchema
@@ -201,6 +282,25 @@ export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
 ])
 
 export type SessionHistoryEvent = z.infer<typeof SessionHistoryEventSchema>
+
+/** Minimal, non-clinical audit record for bounded patient-turn failure paths. */
+export const SessionAuditEventSchema = z.object({
+  eventId: z.uuid(),
+  sessionId: ApplicationSessionIdSchema,
+  eventType: z.enum([
+    'patient_turn_model_failure',
+    'patient_turn_validation_failure',
+    'patient_turn_recovered_after_validation_retry',
+    'patient_turn_lock_release_failure'
+  ]),
+  occurredAt: UtcTimestampSchema,
+  payload: z.object({
+    turnIdHash: z.string().regex(/^[a-f0-9]{64}$/),
+    attemptCount: z.number().int().positive().max(2)
+  }).strict()
+}).strict()
+
+export type SessionAuditEvent = z.infer<typeof SessionAuditEventSchema>
 
 const ArchiveStatusBase = z.object({
   archiveId: OpaqueIdSchema,

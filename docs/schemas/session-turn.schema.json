@@ -23,12 +23,18 @@
       "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
     },
     "phase": {
-      "default": "history",
       "type": "string",
       "enum": [
         "history",
         "assessment",
         "debrief"
+      ]
+    },
+    "learnerModality": {
+      "type": "string",
+      "enum": [
+        "typed",
+        "realtime_transcription"
       ]
     },
     "versions": {
@@ -104,7 +110,14 @@
               "typicalMenstrualPeriodDescription",
               "dysmenorrheaHistory",
               "anyPain",
-              "pqrstResult",
+              "whatProvokesPalliatesPain",
+              "painQuality",
+              "painLocationRadiationWhere",
+              "painSeverity0-10",
+              "timePainOnset",
+              "constantIntermittentPain",
+              "durationPain",
+              "patientConcern",
               "medicalHistory",
               "lastPelvicExam",
               "lastPapSmear",
@@ -112,6 +125,7 @@
               "lastMammogram",
               "comorbidity",
               "currentMedications",
+              "allergies",
               "pastMedications",
               "nutraceuticalUse",
               "cannabisUse",
@@ -161,6 +175,11 @@
               "miscellaneousDetailsNos"
             ]
           },
+          "section": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 120
+          },
           "value": {
             "anyOf": [
               {
@@ -206,6 +225,7 @@
         "required": [
           "factId",
           "field",
+          "section",
           "value",
           "source",
           "turnId",
@@ -216,8 +236,7 @@
       }
     },
     "historyCoverage": {
-      "default": [],
-      "maxItems": 59,
+      "maxItems": 67,
       "type": "array",
       "items": {
         "type": "string",
@@ -226,7 +245,14 @@
           "typicalMenstrualPeriodDescription",
           "dysmenorrheaHistory",
           "anyPain",
-          "pqrstResult",
+          "whatProvokesPalliatesPain",
+          "painQuality",
+          "painLocationRadiationWhere",
+          "painSeverity0-10",
+          "timePainOnset",
+          "constantIntermittentPain",
+          "durationPain",
+          "patientConcern",
           "medicalHistory",
           "lastPelvicExam",
           "lastPapSmear",
@@ -234,6 +260,7 @@
           "lastMammogram",
           "comorbidity",
           "currentMedications",
+          "allergies",
           "pastMedications",
           "nutraceuticalUse",
           "cannabisUse",
@@ -285,8 +312,7 @@
       }
     },
     "disclosedHistoryFields": {
-      "default": [],
-      "maxItems": 59,
+      "maxItems": 67,
       "type": "array",
       "items": {
         "type": "string",
@@ -295,7 +321,14 @@
           "typicalMenstrualPeriodDescription",
           "dysmenorrheaHistory",
           "anyPain",
-          "pqrstResult",
+          "whatProvokesPalliatesPain",
+          "painQuality",
+          "painLocationRadiationWhere",
+          "painSeverity0-10",
+          "timePainOnset",
+          "constantIntermittentPain",
+          "durationPain",
+          "patientConcern",
           "medicalHistory",
           "lastPelvicExam",
           "lastPapSmear",
@@ -303,6 +336,7 @@
           "lastMammogram",
           "comorbidity",
           "currentMedications",
+          "allergies",
           "pastMedications",
           "nutraceuticalUse",
           "cannabisUse",
@@ -354,7 +388,6 @@
       }
     },
     "disclosedFactIds": {
-      "default": [],
       "maxItems": 100,
       "type": "array",
       "items": {
@@ -364,8 +397,7 @@
       }
     },
     "historyCoverageState": {
-      "default": [],
-      "maxItems": 59,
+      "maxItems": 67,
       "type": "array",
       "items": {
         "type": "object",
@@ -377,7 +409,14 @@
               "typicalMenstrualPeriodDescription",
               "dysmenorrheaHistory",
               "anyPain",
-              "pqrstResult",
+              "whatProvokesPalliatesPain",
+              "painQuality",
+              "painLocationRadiationWhere",
+              "painSeverity0-10",
+              "timePainOnset",
+              "constantIntermittentPain",
+              "durationPain",
+              "patientConcern",
               "medicalHistory",
               "lastPelvicExam",
               "lastPapSmear",
@@ -385,6 +424,7 @@
               "lastMammogram",
               "comorbidity",
               "currentMedications",
+              "allergies",
               "pastMedications",
               "nutraceuticalUse",
               "cannabisUse",
@@ -669,6 +709,8 @@
     "sequence",
     "acceptedAt",
     "phase",
+    "learnerModality",
+    "versions",
     "learnerMessage",
     "patientResponse",
     "patientReportedFacts",

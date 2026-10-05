@@ -75,7 +75,7 @@ i09: Allocate opaque per-visit ppid; bind it to authenticated sid { shape: recta
 i10: Create Redis JSON session mapping and initializing patient-profile receptacle { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i11: Confirm client preflight and Redis reservation before setup-generation command { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i12: Resolve the same server-held Conversation ID from sid + ppid for every later turn { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
-i13: Return client-safe four-value profile sans diagnosis, if any, after Redis commit { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i13: Return name, DOB, body type, and reason for visit without diagnosis; display name, DOB, and reason only { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i14: Select portrait folder from derived age band/body type and preload selected assets { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i15: Show amber while required work is pending; show green and enable Enter Room only when ready { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 s01 -> s02 -> s03

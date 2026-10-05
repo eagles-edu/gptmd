@@ -1,11 +1,19 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import type { AuthenticatedPrincipal } from './auth.ts'
+import type { AuthenticatedPrincipal, TenantRole } from './auth.ts'
 import {
   ImmutablePatientScenarioSchema,
   SessionStateSchema,
   SessionTurnSchema,
-  TerminalEventSchema
+  SessionAuditEventSchema,
+  AssessmentSubmissionSchema,
+  AssessmentFieldsSchema,
+  TerminalEventSchema,
+  type AssessmentFields,
+  type AssessmentSubmission,
+  type SessionTurn,
+  type TerminalEvent,
+  type LearnerInputModality
 } from './session-contracts.ts'
 import {
   PATIENT_SCENARIO_POLICY_VERSION,
@@ -19,7 +27,6 @@ import {
 import { derivePatientSetup, toLearnerPatientProfile } from './patient-setup.ts'
 import { canonicalJsonStringify } from './canonical-json.ts'
 import type { LivePatientState, PatientStateStore } from './patient-state-store.ts'
-import type { SessionTurn, TerminalEvent } from './session-contracts.ts'
 import {
   validatePatientTurnOutput,
   PATIENT_TURN_POLICY_VERSION,
@@ -30,7 +37,7 @@ import {
 } from './patient-turn.ts'
 
 export type QuotaFeature = 'sessions' | 'responses'
-export type SessionStatus = 'initializing' | 'ready' | 'active' | 'completed' | 'cancelled'
+export type SessionStatus = 'initializing' | 'failed' | 'ready' | 'active' | 'completed' | 'cancelled'
 export type SessionRecord = {
   sessionId: string
   status: SessionStatus
@@ -55,6 +62,7 @@ export type ScenarioSetupResult =
   | 'invalid_state'
   | 'version_unavailable'
   | 'state_unavailable'
+  | 'entitlement_denied'
 
 export type StoreResult = 'allowed' | 'membership_missing' | 'entitlement_denied' | 'quota_exceeded'
 export type PatientTurnResult =
@@ -69,11 +77,23 @@ export type PatientTurnResult =
   | 'membership_missing'
   | 'entitlement_denied'
   | 'quota_exceeded'
+export type AssessmentResult =
+  | { assessmentId: string; status: 'unscored'; submittedAt: string }
+  | 'not_found'
+  | 'not_ready'
+  | 'state_unavailable'
+  | 'phase_conflict'
 
 export interface SessionStore {
   getActiveTenantIds(subjectId: string): Promise<string[]>
-  hasActiveMembership(principal: AuthenticatedPrincipal): Promise<boolean>
-  consumeQuota(principal: AuthenticatedPrincipal, feature: QuotaFeature): Promise<StoreResult>
+  getActiveMembershipRole(subjectId: string, tenantId: string): Promise<TenantRole | null>
+  consumeQuota(principal: AuthenticatedPrincipal, feature: QuotaFeature, sessionId?: string): Promise<StoreResult>
+  createAudioTranscriptionGrant(
+    principal: AuthenticatedPrincipal,
+    sessionId: string,
+    consentVersion: string
+  ): Promise<StoreResult | { grantId: string }>
+  recordAudioProviderSession(grantId: string, providerSessionId: string): Promise<void>
   createSession(
     principal: AuthenticatedPrincipal,
     versions: PatientScenarioVersionPins
@@ -84,7 +104,8 @@ export interface SessionStore {
     idempotencyKey: string,
     generateScenario: (
       versions: PatientScenarioVersionPins,
-      asOf: Date
+      asOf: Date,
+      scenarioSeed: string
     ) => Promise<GeneratedPatientScenario>
   ): Promise<ScenarioSetupResult>
   submitPatientTurn(
@@ -92,8 +113,16 @@ export interface SessionStore {
     sessionId: string,
     turnId: string,
     learnerMessage: string,
-    generateTurn: (context: PatientTurnGenerationContext) => Promise<{ responseId: string; output: unknown }>
+    generateTurn: (context: PatientTurnGenerationContext) => Promise<{ responseId: string; output: unknown }>,
+    learnerModality?: LearnerInputModality
   ): Promise<PatientTurnResult>
+  beginAssessment(principal: AuthenticatedPrincipal, sessionId: string): Promise<'not_found' | 'not_ready' | 'state_unavailable' | 'phase_conflict' | 'assessment'>
+  submitAssessment(
+    principal: AuthenticatedPrincipal,
+    sessionId: string,
+    assessmentId: string,
+    fields: AssessmentFields
+  ): Promise<AssessmentResult>
   getOwnedSession(
     principal: AuthenticatedPrincipal,
     sessionId: string
@@ -104,12 +133,15 @@ export interface SessionStore {
 type EntitlementRow = {
   enabled: boolean
   monthly_quota: number | null
+  monthly_user_quota?: number | null
+  session_quota?: number | null
   max_active_sessions?: number | null
 }
 
 type SetupSessionRow = {
   session_id: string
   patient_profile_id: string | null
+  scenario_seed: string | null
   status: SessionStatus
   created_at: Date
   setup_idempotency_key_hash: string | null
@@ -117,6 +149,7 @@ type SetupSessionRow = {
   model_version: string
   schema_version: number
   policy_version: string
+  sessions_enabled?: boolean | null
 }
 
 type ScenarioRow = {
@@ -159,8 +192,28 @@ async function rollback(client: PoolClient): Promise<void> {
   }
 }
 
-function queueTurnAudit(event: string, sessionId: string, turnId: string): void {
-  setImmediate(() => console.warn(JSON.stringify({ event, sessionId, turnId })))
+function queueTurnAudit(
+  stateStore: PatientStateStore | null,
+  eventType: 'patient_turn_model_failure' | 'patient_turn_validation_failure' |
+    'patient_turn_recovered_after_validation_retry' | 'patient_turn_lock_release_failure',
+  sessionId: string,
+  turnId: string,
+  attemptCount = 1
+): void {
+  const event = SessionAuditEventSchema.parse({
+    eventId: randomUUID(), sessionId, eventType, occurredAt: new Date().toISOString(),
+    payload: { turnIdHash: createHash('sha256').update(turnId).digest('hex'), attemptCount }
+  })
+  const turnIdHash = event.payload.turnIdHash
+  setImmediate(() => {
+    if (!stateStore?.appendAuditEvent) {
+      console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_unavailable', sessionId, turnIdHash, eventType }))
+      return
+    }
+    void stateStore.appendAuditEvent(event).catch(() => {
+      console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_failed', sessionId, turnIdHash, eventType }))
+    })
+  })
 }
 
 export function createPostgresSessionStore(
@@ -178,22 +231,23 @@ export function createPostgresSessionStore(
       return result.rows.map((row) => row.tenant_id)
     },
 
-    async hasActiveMembership(principal) {
-      if (!principal.tenantId) return false
-      const result = await pool.query(
-        `SELECT 1 FROM tenant_memberships
+    async getActiveMembershipRole(subjectId, tenantId) {
+      const result = await pool.query<{ role: TenantRole }>(
+        `SELECT role FROM tenant_memberships
          WHERE tenant_id = $1 AND subject_id = $2 AND status = 'active'`,
-        [principal.tenantId, principal.subjectId]
+        [tenantId, subjectId]
       )
-      return (result.rowCount ?? 0) > 0
+      return result.rows[0]?.role ?? null
     },
 
-    async consumeQuota(principal, feature) {
+    async consumeQuota(principal, feature, sessionId) {
       const client = await pool.connect()
       try {
         await client.query('BEGIN')
         const entitlement = await client.query<EntitlementRow>(
-          `SELECT ${feature === 'sessions' ? 'sessions_enabled AS enabled, monthly_session_quota AS monthly_quota' : 'responses_enabled AS enabled, monthly_response_quota AS monthly_quota'}
+          `SELECT ${feature === 'sessions'
+            ? 'sessions_enabled AS enabled, monthly_session_quota AS monthly_quota, monthly_session_quota_per_user AS monthly_user_quota, NULL::integer AS session_quota'
+            : 'responses_enabled AS enabled, monthly_response_quota AS monthly_quota, monthly_response_quota_per_user AS monthly_user_quota, response_quota_per_session AS session_quota'}
            FROM tenant_entitlements e
            JOIN tenant_memberships m USING (tenant_id)
            WHERE e.tenant_id = $1 AND m.subject_id = $2
@@ -215,6 +269,22 @@ export function createPostgresSessionStore(
           await client.query('ROLLBACK')
           return 'quota_exceeded'
         }
+        const userReserved = await reserveUserMonthlyQuota(
+          client, principal.tenantId, principal.subjectId, feature, row.monthly_user_quota ?? null
+        )
+        if (!userReserved) {
+          await client.query('ROLLBACK')
+          return 'quota_exceeded'
+        }
+        if (sessionId && feature === 'responses') {
+          const sessionReserved = await reserveSessionQuota(
+            client, principal.tenantId, principal.subjectId, sessionId, row.session_quota ?? null
+          )
+          if (!sessionReserved) {
+            await client.query('ROLLBACK')
+            return 'quota_exceeded'
+          }
+        }
         await client.query('COMMIT')
         return 'allowed'
       } catch (error) {
@@ -225,12 +295,83 @@ export function createPostgresSessionStore(
       }
     },
 
+    async createAudioTranscriptionGrant(principal, sessionId, consentVersion) {
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const entitlement = await client.query<{
+          sessions_enabled: boolean
+          audio_transcription_enabled: boolean
+          audio_transcription_privacy_approved: boolean
+          monthly_quota: number | null
+          session_status: SessionStatus
+        }>(
+          `SELECT e.sessions_enabled, e.audio_transcription_enabled,
+                  e.audio_transcription_privacy_approved,
+                  e.monthly_audio_transcription_session_quota AS monthly_quota,
+                  s.status AS session_status
+           FROM tenant_entitlements e
+           JOIN tenant_memberships m ON m.tenant_id = e.tenant_id
+             AND m.subject_id = $2 AND m.status = 'active'
+           JOIN app_sessions s ON s.tenant_id = e.tenant_id
+             AND s.subject_id = m.subject_id AND s.session_id = $3
+           WHERE e.tenant_id = $1
+           FOR UPDATE OF e, s`,
+          [principal.tenantId, principal.subjectId, sessionId]
+        )
+        const row = entitlement.rows[0]
+        if (!row) {
+          await client.query('ROLLBACK')
+          return 'membership_missing'
+        }
+        if (!row.sessions_enabled || !row.audio_transcription_enabled ||
+            !row.audio_transcription_privacy_approved || row.monthly_quota === null ||
+            !['ready', 'active'].includes(row.session_status)) {
+          await client.query('ROLLBACK')
+          return 'entitlement_denied'
+        }
+        const usage = await client.query<{ count: string }>(
+          `SELECT count(*)::text AS count FROM app_audio_transcription_sessions
+           WHERE tenant_id = $1 AND subject_id = $2
+             AND created_at >= date_trunc('month', now())`,
+          [principal.tenantId, principal.subjectId]
+        )
+        if (Number(usage.rows[0]?.count ?? 0) >= row.monthly_quota) {
+          await client.query('ROLLBACK')
+          return 'quota_exceeded'
+        }
+        const grantId = randomUUID()
+        await client.query(
+          `INSERT INTO app_audio_transcription_sessions
+             (grant_id, session_id, tenant_id, subject_id, consent_version)
+           VALUES ($1, $2, $3, $4, $5)`,
+          [grantId, sessionId, principal.tenantId, principal.subjectId, consentVersion]
+        )
+        await client.query('COMMIT')
+        return { grantId }
+      } catch (error) {
+        await rollback(client)
+        throw error
+      } finally {
+        client.release()
+      }
+    },
+
+    async recordAudioProviderSession(grantId, providerSessionId) {
+      await pool.query(
+        `UPDATE app_audio_transcription_sessions SET provider_session_id = $2
+         WHERE grant_id = $1`,
+        [grantId, providerSessionId]
+      )
+    },
+
     async createSession(principal, versions) {
       const client = await pool.connect()
       try {
         await client.query('BEGIN')
         const entitlement = await client.query<EntitlementRow>(
           `SELECT sessions_enabled AS enabled, monthly_session_quota AS monthly_quota,
+                  monthly_session_quota_per_user AS monthly_user_quota,
                   max_active_sessions
            FROM tenant_entitlements e
            JOIN tenant_memberships m USING (tenant_id)
@@ -263,18 +404,27 @@ export function createPostgresSessionStore(
           await client.query('ROLLBACK')
           return 'quota_exceeded'
         }
+        const userReserved = await reserveUserMonthlyQuota(
+          client, principal.tenantId, principal.subjectId, 'sessions', row.monthly_user_quota ?? null
+        )
+        if (!userReserved) {
+          await client.query('ROLLBACK')
+          return 'quota_exceeded'
+        }
         const sessionId = randomBytes(32).toString('base64url')
         const patientProfileId = randomBytes(32).toString('base64url')
+        const scenarioSeed = randomBytes(32).toString('base64url')
         const inserted = await client.query<{ created_at: Date; updated_at: Date }>(
           `INSERT INTO app_sessions (
-             session_id, patient_profile_id, tenant_id, subject_id, status,
+             session_id, patient_profile_id, scenario_seed, tenant_id, subject_id, status,
              prompt_version, model_version, schema_version, policy_version
            )
-           VALUES ($1, $2, $3, $4, 'initializing', $5, $6, $7, $8)
+           VALUES ($1, $2, $3, $4, $5, 'initializing', $6, $7, $8, $9)
            RETURNING created_at, updated_at`,
           [
             sessionId,
             patientProfileId,
+            scenarioSeed,
             principal.tenantId,
             principal.subjectId,
             versions.promptVersion,
@@ -307,11 +457,13 @@ export function createPostgresSessionStore(
       try {
         await client.query('BEGIN')
         const selected = await client.query<SetupSessionRow>(
-          `SELECT session_id, patient_profile_id, status, created_at, setup_idempotency_key_hash,
-                  prompt_version, model_version, schema_version, policy_version
-           FROM app_sessions
-           WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3
-           FOR UPDATE`,
+          `SELECT s.session_id, s.patient_profile_id, s.scenario_seed, s.status, s.created_at, s.setup_idempotency_key_hash,
+                  s.prompt_version, s.model_version, s.schema_version, s.policy_version,
+                  e.sessions_enabled
+           FROM app_sessions s
+           LEFT JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id
+           WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3
+           FOR UPDATE OF s`,
           [sessionId, principal.tenantId, principal.subjectId]
         )
         const session = selected.rows[0]
@@ -319,8 +471,19 @@ export function createPostgresSessionStore(
           await client.query('ROLLBACK')
           return 'not_found'
         }
+        if (session.sessions_enabled !== true) {
+          await client.query('ROLLBACK')
+          return 'entitlement_denied'
+        }
 
         const patientProfileId = session.patient_profile_id ?? randomBytes(32).toString('base64url')
+        const scenarioSeed = session.scenario_seed ?? randomBytes(32).toString('base64url')
+        if (!session.scenario_seed) {
+          await client.query(
+            `UPDATE app_sessions SET scenario_seed = $2 WHERE session_id = $1`,
+            [sessionId, scenarioSeed]
+          )
+        }
         if (!session.patient_profile_id) {
           await client.query(
             `UPDATE app_sessions SET patient_profile_id = $2 WHERE session_id = $1`,
@@ -396,7 +559,7 @@ export function createPostgresSessionStore(
         }
         await patientStateStore.initialize(sessionId, patientProfileId)
 
-        const generated = await generateScenario(versions, session.created_at)
+        const generated = await generateScenario(versions, session.created_at, scenarioSeed)
         const profile = PatientScenarioProfileSchema.parse(generated.profile)
         if (!isPatientScenarioConsistent(profile, session.created_at)) {
           throw new Error('Generated patient profile failed session-time consistency validation')
@@ -450,17 +613,28 @@ export function createPostgresSessionStore(
         return toSetupResponse(sessionId, scenario, versions)
       } catch (error) {
         await rollback(client)
+        try {
+          await client.query(
+            `UPDATE app_sessions
+             SET status = 'failed', updated_at = now()
+             WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3 AND status = 'initializing'`,
+            [sessionId, principal.tenantId, principal.subjectId]
+          )
+        } catch {
+          // Keep the setup error as the primary failure if the failure status cannot be recorded.
+        }
         throw error
       } finally {
         client.release()
       }
     },
 
-    async submitPatientTurn(principal, sessionId, turnId, learnerMessage, generateTurn) {
+    async submitPatientTurn(principal, sessionId, turnId, learnerMessage, generateTurn, learnerModality = 'typed') {
       const owner = await pool.query(
-        `SELECT status, prompt_version, model_version, schema_version, policy_version
-         FROM app_sessions
-         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+        `SELECT s.status, s.prompt_version, s.model_version, s.schema_version, s.policy_version
+         FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
         [sessionId, principal.tenantId, principal.subjectId]
       )
       const ownerRow = owner.rows[0] as (Pick<SetupSessionRow,
@@ -479,7 +653,7 @@ export function createPostgresSessionStore(
         if (!current) return 'missing_state'
         const prior = current.acceptedTurns.find((turn) => turn.turnId === turnId)
         if (prior) {
-          return prior.learnerMessage === learnerMessage
+          return prior.learnerMessage === learnerMessage && prior.learnerModality === learnerModality
             ? {
                 status: 'duplicate', turnId: prior.turnId, sequence: prior.sequence,
                 patientResponse: prior.patientResponse
@@ -490,7 +664,7 @@ export function createPostgresSessionStore(
         if (current.state.status !== 'ready' && current.state.status !== 'active') return 'not_ready'
         if (current.state.phase !== 'history' || current.state.interactionMode !== 'transcript') return 'not_ready'
 
-        const quota = await this.consumeQuota(principal, 'responses')
+        const quota = await this.consumeQuota(principal, 'responses', sessionId)
         if (quota !== 'allowed') return quota
 
         const acceptedAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
@@ -507,7 +681,7 @@ export function createPostgresSessionStore(
             rubricVersion: null
           },
           acceptedTurns: current.acceptedTurns,
-          phase: current.state.phase ?? 'history',
+          phase: current.state.phase,
           learnerMessage
         }
 
@@ -518,7 +692,7 @@ export function createPostgresSessionStore(
           try {
             generated = await generateTurn({ ...context, retryAfterValidationFailure: attempt > 0 })
           } catch {
-            queueTurnAudit('patient_turn_model_failure', sessionId, turnId)
+            queueTurnAudit(patientStateStore, 'patient_turn_model_failure', sessionId, turnId, attempt + 1)
             return 'provider_error'
           }
           try {
@@ -531,7 +705,7 @@ export function createPostgresSessionStore(
           }
         }
         if (!acceptedContent) {
-          queueTurnAudit('patient_turn_validation_failure', sessionId, turnId)
+          queueTurnAudit(patientStateStore, 'patient_turn_validation_failure', sessionId, turnId, 2)
           acceptedContent = {
             patientResponse: 'Sorry, could you please repeat or clarify that?',
             patientReportedFacts: [],
@@ -548,6 +722,7 @@ export function createPostgresSessionStore(
           sequence,
           acceptedAt,
           phase: context.phase,
+          learnerModality,
           versions: context.versions,
           learnerMessage,
           patientResponse: acceptedContent.patientResponse,
@@ -559,9 +734,9 @@ export function createPostgresSessionStore(
           clinicalActions: []
         })
         if (validationFailed && acceptedContent.patientResponse !== 'Sorry, could you please repeat or clarify that?') {
-          queueTurnAudit('patient_turn_recovered_after_validation_retry', sessionId, turnId)
+          queueTurnAudit(patientStateStore, 'patient_turn_recovered_after_validation_retry', sessionId, turnId, 2)
         }
-        const committed = await patientStateStore.acceptTurn(turn, context.phase)
+        const committed = await patientStateStore.acceptTurn(turn)
         if (committed.status === 'accepted' || committed.status === 'duplicate') return committed
         if (committed.status === 'terminal') return 'not_ready'
         if (committed.status === 'not_ready') return 'not_ready'
@@ -571,9 +746,134 @@ export function createPostgresSessionStore(
         try {
           await patientStateStore.releaseTurnLock(sessionId, lockToken)
         } catch {
-          queueTurnAudit('patient_turn_lock_release_failure', sessionId, turnId)
+          queueTurnAudit(patientStateStore, 'patient_turn_lock_release_failure', sessionId, turnId)
         }
       }
+    },
+
+    async beginAssessment(principal, sessionId) {
+      if (!patientStateStore) return 'state_unavailable'
+      const owner = await pool.query<{ status: SessionStatus }>(
+        `SELECT s.status FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         JOIN tenant_memberships m ON m.tenant_id = s.tenant_id AND m.subject_id = s.subject_id AND m.status = 'active'
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      const session = owner.rows[0]
+      if (!session) return 'not_found'
+      if (!['ready', 'active'].includes(session.status)) return 'not_ready'
+      await this.ensureLiveState?.(principal, sessionId)
+      const current = await patientStateStore.read(sessionId)
+      if (!current) return 'state_unavailable'
+      if (current.state.phase === 'assessment') return 'assessment'
+      if (current.state.phase !== 'history' || current.state.currentTurnSequence < 1) return 'not_ready'
+
+      const lastTurn = current.acceptedTurns.at(-1)
+      if (!lastTurn) return 'state_unavailable'
+      const occurredAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
+      const transitionId = randomUUID()
+      const event = {
+        eventId: transitionId,
+        sessionId,
+        sequence: current.state.currentTurnSequence,
+        eventOrdinal: lastTurn.disclosedHistoryFields.length + 1,
+        eventType: 'phase_changed' as const,
+        occurredAt,
+        payload: {
+          transitionId,
+          sessionId,
+          turnSequence: current.state.currentTurnSequence,
+          from: 'history' as const,
+          to: 'assessment' as const,
+          occurredAt
+        }
+      }
+      const result = await patientStateStore.changePhase(event)
+      if (result === 'accepted' || result === 'duplicate') return 'assessment'
+      if (result === 'missing_state') return 'state_unavailable'
+      if (result === 'not_ready') return 'not_ready'
+      return 'phase_conflict'
+    },
+
+    async submitAssessment(principal, sessionId, assessmentId, inputFields) {
+      if (!patientStateStore) return 'state_unavailable'
+      const owner = await pool.query<{ status: SessionStatus }>(
+        `SELECT s.status FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         JOIN tenant_memberships m ON m.tenant_id = s.tenant_id AND m.subject_id = s.subject_id AND m.status = 'active'
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      const session = owner.rows[0]
+      if (!session) return 'not_found'
+      if (!['ready', 'active', 'completed'].includes(session.status)) return 'not_ready'
+      await this.ensureLiveState?.(principal, sessionId)
+      const current = await patientStateStore.read(sessionId)
+      if (!current) return 'state_unavailable'
+      if (current.assessment) {
+        if (current.assessment.assessmentId !== assessmentId) return 'phase_conflict'
+        const fields = AssessmentFieldsSchema.parse(inputFields)
+        if (Object.keys(fields).some((key) => fields[key as keyof typeof fields] !== current.assessment?.[key as keyof AssessmentSubmission])) {
+          return 'phase_conflict'
+        }
+        if (current.terminalEvent) {
+          return {
+            assessmentId,
+            status: 'unscored',
+            submittedAt: current.assessment.submittedAt
+          }
+        }
+      }
+      if (!current.assessment && (current.state.phase !== 'assessment' || current.state.currentTurnSequence < 1)) return 'not_ready'
+
+      const fields = AssessmentFieldsSchema.parse(inputFields)
+      const submission = current.assessment ?? (() => {
+        const lastTurn = current.acceptedTurns.at(-1)
+        if (!lastTurn) return null
+        const submittedAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
+        return AssessmentSubmissionSchema.parse({
+          assessmentId,
+          sessionId,
+          turnSequence: current.state.currentTurnSequence,
+          submittedAt,
+          ...fields
+        })
+      })()
+      if (!submission) return 'state_unavailable'
+      if (!current.assessment) {
+        const lastTurn = current.acceptedTurns.at(-1)
+        if (!lastTurn) return 'state_unavailable'
+        const assessmentEvent = {
+          eventId: assessmentId,
+          sessionId,
+          sequence: current.state.currentTurnSequence,
+          eventOrdinal: lastTurn.disclosedHistoryFields.length + 2,
+          eventType: 'assessment_submitted' as const,
+          occurredAt: submission.submittedAt,
+          payload: submission
+        }
+        const committed = await patientStateStore.acceptAssessment(assessmentEvent)
+        if (committed === 'missing_state') return 'state_unavailable'
+        if (committed === 'not_ready') return 'not_ready'
+        if (committed === 'conflict') return 'phase_conflict'
+      }
+
+      const latest = await patientStateStore.read(sessionId)
+      if (!latest) return 'state_unavailable'
+      if (!latest.terminalEvent) {
+        const terminal: TerminalEvent = {
+          eventId: randomUUID(),
+          sessionId,
+          outcome: 'completed',
+          occurredAt: submission.submittedAt,
+          reason: null,
+          finalTurnSequence: current.state.currentTurnSequence
+        }
+        const completed = await patientStateStore.recordTerminal(terminal)
+        if (completed !== 'accepted' && completed !== 'duplicate') return 'state_unavailable'
+      }
+      return { assessmentId, status: 'unscored', submittedAt: submission.submittedAt }
     },
 
     async getOwnedSession(principal, sessionId) {
@@ -587,10 +887,11 @@ export function createPostgresSessionStore(
         schema_version: number
         policy_version: string
       }>(
-        `SELECT session_id, status, created_at, updated_at,
-                prompt_version, model_version, schema_version, policy_version
-         FROM app_sessions
-         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+        `SELECT s.session_id, s.status, s.created_at, s.updated_at,
+                s.prompt_version, s.model_version, s.schema_version, s.policy_version
+         FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
         [sessionId, principal.tenantId, principal.subjectId]
       )
       const row = result.rows[0]
@@ -620,6 +921,7 @@ export function createPostgresSessionStore(
         `SELECT s.session_id, s.patient_profile_id, s.status, s.created_at, s.updated_at,
                 s.schema_version, p.profile_digest, p.profile_json, p.provider_conversation_id
          FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
          LEFT JOIN patient_scenarios p ON p.session_id = s.session_id
          WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
         [sessionId, principal.tenantId, principal.subjectId]
@@ -636,20 +938,28 @@ export function createPostgresSessionStore(
       const eventRows = await pool.query<{
         event_id: string
         sequence: string | number
-        event_type: 'accepted_turn' | 'terminal'
+        event_ordinal: number
+        event_type: 'accepted_turn' | 'disclosure' | 'phase_changed' | 'assessment_submitted' | 'terminal'
         occurred_at: Date
         payload: unknown
       }>(
-        `SELECT event_id, sequence, event_type, occurred_at, payload
-         FROM session_events WHERE session_id = $1 ORDER BY sequence`,
+        `SELECT event_id, sequence, event_ordinal, event_type, occurred_at, payload
+         FROM session_events WHERE session_id = $1 ORDER BY sequence, event_ordinal`,
         [sessionId]
       )
       const acceptedTurns: SessionTurn[] = []
       let terminalEvent: TerminalEvent | null = null
+      let assessment: AssessmentSubmission | null = null
+      let phase: 'history' | 'assessment' | 'debrief' = 'history'
       for (const row of eventRows.rows) {
         if (row.event_type === 'accepted_turn') {
           acceptedTurns.push(SessionTurnSchema.parse(row.payload))
-        } else {
+        } else if (row.event_type === 'phase_changed') {
+          phase = 'assessment'
+        } else if (row.event_type === 'assessment_submitted') {
+          assessment = AssessmentSubmissionSchema.parse(row.payload)
+          phase = 'debrief'
+        } else if (row.event_type === 'terminal') {
           terminalEvent = TerminalEventSchema.parse(row.payload)
         }
       }
@@ -658,7 +968,7 @@ export function createPostgresSessionStore(
         sessionId,
         scenarioId: session.patient_profile_id,
         status: terminalEvent?.outcome ?? (lastTurn ? 'active' : session.status),
-        phase: terminalEvent ? 'debrief' : 'history',
+        phase: terminalEvent ? 'debrief' : phase,
         interactionMode: 'transcript',
         openedAt: session.created_at.toISOString(),
         updatedAt: terminalEvent?.occurredAt ?? lastTurn?.acceptedAt ?? session.updated_at.toISOString(),
@@ -676,6 +986,7 @@ export function createPostgresSessionStore(
         schemaVersion: session.schema_version,
         state,
         acceptedTurns,
+        assessment,
         terminalEvent
       }
       await patientStateStore.restore(liveState)
@@ -698,6 +1009,46 @@ async function reserveMonthlyQuota(
        WHERE $3::integer IS NULL OR tenant_monthly_usage.used < $3::integer
      RETURNING used`,
     [tenantId, feature, quota]
+  )
+  return (result.rowCount ?? 0) === 1
+}
+
+async function reserveUserMonthlyQuota(
+  client: PoolClient,
+  tenantId: string,
+  subjectId: string,
+  feature: QuotaFeature,
+  quota: number | null
+): Promise<boolean> {
+  const result = await client.query(
+    `INSERT INTO tenant_user_monthly_usage (tenant_id, subject_id, feature, month_start, used)
+     SELECT $1, $2, $3, date_trunc('month', now() AT TIME ZONE 'UTC')::date, 1
+     WHERE $4::integer IS NULL OR $4::integer > 0
+     ON CONFLICT (tenant_id, subject_id, feature, month_start)
+     DO UPDATE SET used = tenant_user_monthly_usage.used + 1
+       WHERE $4::integer IS NULL OR tenant_user_monthly_usage.used < $4::integer
+     RETURNING used`,
+    [tenantId, subjectId, feature, quota]
+  )
+  return (result.rowCount ?? 0) === 1
+}
+
+async function reserveSessionQuota(
+  client: PoolClient,
+  tenantId: string,
+  subjectId: string,
+  sessionId: string,
+  quota: number | null
+): Promise<boolean> {
+  const result = await client.query(
+    `INSERT INTO app_session_usage (session_id, tenant_id, subject_id, feature, used)
+     SELECT $1, $2, $3, 'responses', 1
+     WHERE $4::integer IS NULL OR $4::integer > 0
+     ON CONFLICT (session_id, feature)
+     DO UPDATE SET used = app_session_usage.used + 1, updated_at = now()
+       WHERE $4::integer IS NULL OR app_session_usage.used < $4::integer
+     RETURNING used`,
+    [sessionId, tenantId, subjectId, quota]
   )
   return (result.rowCount ?? 0) === 1
 }

@@ -69,12 +69,59 @@ describe('patient setup Conversation isolation', () => {
     } as unknown as OpenAI
 
     const scenario = await generatePatientScenario(client, 'gpt-6-luna', {
-      asOf: new Date('2026-10-01T00:00:00.000Z'), maxAttempts: 1
+      asOf: new Date('2026-10-01T00:00:00.000Z'), maxAttempts: 1,
+      scenarioSeed: 's'.repeat(43)
     })
 
     expect(scenario.profile.diagnosis).toBe('Endometriosis')
     expect(scenario.conversationId).toBe('conv-1')
     expect(deleted).toEqual(['setup-answer-key', 'setup-input'])
     expect(history).toEqual([])
+  })
+
+  it('reuses the same persisted variation seed when validation retries in a fresh Conversation', async () => {
+    const seed = 'r'.repeat(43)
+    const responseInputs: string[] = []
+    let conversationNumber = 0
+    const profile = {
+      fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+      reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+      currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
+      patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
+      persona: {
+        mood: 'concerned', maturity: 'adult', verbosity: 'moderate',
+        educationLevel: 'college', willingnessToDisclose: 'gradual'
+      }
+    }
+    const client = {
+      conversations: {
+        create: vi.fn(async () => ({ id: `conv-${++conversationNumber}` })),
+        items: {
+          list: vi.fn(async function* () {}),
+          delete: vi.fn(async () => ({ id: 'conv' }))
+        }
+      },
+      responses: {
+        create: vi.fn(async (request: { input: string; instructions: string }) => {
+          responseInputs.push(`${request.instructions}\n${request.input}`)
+          return {
+            id: `response-${responseInputs.length}`, status: 'completed',
+            output_text: responseInputs.length === 1 ? '{"invalid":true}' : JSON.stringify(profile),
+            usage: null
+          }
+        })
+      }
+    } as unknown as OpenAI
+
+    const scenario = await generatePatientScenario(client, 'gpt-6-luna', {
+      asOf: new Date('2026-10-01T00:00:00.000Z'), maxAttempts: 2, scenarioSeed: seed
+    })
+
+    expect(scenario.conversationId).toBe('conv-2')
+    expect(responseInputs).toHaveLength(2)
+    expect(responseInputs[0]).toBe(responseInputs[1])
+    expect(responseInputs[0]).toContain(`Stable scenario variation seed: ${seed}`)
+    expect(responseInputs[0]).toContain('dedicated fields for quality, location and radiation, severity, onset, pattern, duration')
+    expect(responseInputs[0]).toContain('include miscellaneousDetailsNos as unknown')
   })
 })

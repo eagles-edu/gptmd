@@ -3,7 +3,7 @@ import type { Server } from 'node:http'
 import { createHmac, randomBytes } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApiApp, type ApiDependencies } from '../../services/api/src/app.js'
-import { createServiceClients } from '../../services/api/src/clients.js'
+import { createServiceClients, realtimeTranscriptionSessionConfig } from '../../services/api/src/clients.js'
 import type { AuthenticatedPrincipal } from '../../services/api/src/auth.ts'
 import type { GeneratedPatientScenario, PatientScenarioVersionPins } from '../../services/api/src/patient-profile.ts'
 import type { PatientScenarioSetupResult, SessionRecord, SessionStore } from '../../services/api/src/session-store.ts'
@@ -27,9 +27,9 @@ function makeToken(overrides: Record<string, unknown> = {}): string {
 
 const authHeaders = () => ({ authorization: `Bearer ${makeToken()}`, 'content-type': 'application/json' })
 const sessionVersions: PatientScenarioVersionPins = {
-  promptVersion: 'patient-scenario-prompt-v1',
+  promptVersion: 'patient-scenario-prompt-v3',
   modelVersion: 'gpt-6-luna',
-  schemaVersion: 1,
+  schemaVersion: 3,
   policyVersion: 'patient-scenario-policy-v1'
 }
 
@@ -44,11 +44,15 @@ function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore
   }
   return {
     getActiveTenantIds: vi.fn().mockResolvedValue(['tenant-a', 'tenant-b']),
-    hasActiveMembership: vi.fn().mockResolvedValue(true),
+    getActiveMembershipRole: vi.fn().mockResolvedValue('learner'),
     consumeQuota: vi.fn().mockResolvedValue('allowed'),
+    createAudioTranscriptionGrant: vi.fn().mockResolvedValue({ grantId: 'audio-grant-test' }),
+    recordAudioProviderSession: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue(record),
     setupScenario: vi.fn().mockResolvedValue('not_found'),
     submitPatientTurn: vi.fn().mockResolvedValue('not_found'),
+    beginAssessment: vi.fn().mockResolvedValue('not_ready'),
+    submitAssessment: vi.fn().mockResolvedValue('not_ready'),
     getOwnedSession: vi.fn().mockImplementation(async (principal: AuthenticatedPrincipal, id: string) =>
       principal.tenantId === 'tenant-a' && principal.subjectId === 'learner-1' && id === sessionId
         ? record
@@ -73,6 +77,9 @@ const createDependencies = (overrides: Partial<ApiDependencies> = {}): ApiDepend
     output: {
       patientResponse: 'I have been having pain.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
     }
+  }),
+  createTranscriptionCredential: vi.fn().mockResolvedValue({
+    clientSecret: 'ephemeral-secret-test', expiresAt: 1_800_000_000, providerSessionId: 'sess_provider_test'
   }),
   model: 'gpt-6-luna',
   jwt: { secret: jwtSecret, issuer: 'https://issuer.test', audience: 'gptmd-api' },
@@ -101,6 +108,19 @@ async function withApi(
 afterEach(() => vi.restoreAllMocks())
 
 describe('GPTMD API integrations', () => {
+  it('uses the current Realtime transcription language configuration', () => {
+    expect(realtimeTranscriptionSessionConfig()).toEqual({
+      type: 'transcription',
+      audio: {
+        input: {
+          format: { type: 'audio/pcm', rate: 24_000 },
+          transcription: { model: 'gpt-live-transcribe', languages: ['en'] },
+          turn_detection: null
+        }
+      }
+    })
+  })
+
   it('defaults the OpenAI model to GPT-6 Luna', async () => {
     const clients = createServiceClients({})
 
@@ -212,7 +232,7 @@ describe('GPTMD API integrations', () => {
   })
 
   it('requires a valid signed bearer token and active tenant membership for API routes', async () => {
-    const sessionStore = createSessionStore({ hasActiveMembership: vi.fn().mockResolvedValue(false) })
+    const sessionStore = createSessionStore({ getActiveMembershipRole: vi.fn().mockResolvedValue(null) })
     const dependencies = createDependencies({ sessionStore })
     await withApi(dependencies, async (baseUrl) => {
       const missing = await fetch(`${baseUrl}/api/sessions`, { method: 'POST' })
@@ -226,6 +246,114 @@ describe('GPTMD API integrations', () => {
       expect(invalid.status).toBe(401)
       expect(inactive.status).toBe(403)
       expect(sessionStore.createSession).not.toHaveBeenCalled()
+    })
+  })
+
+  it('loads the active tenant role and denies non-learners from encounter routes', async () => {
+    const getActiveMembershipRole = vi.fn().mockResolvedValue('instructor')
+    const sessionStore = createSessionStore({ getActiveMembershipRole })
+    await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST', headers: authHeaders()
+      })
+
+      expect(getActiveMembershipRole).toHaveBeenCalledWith('learner-1', 'tenant-a')
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({ error: 'Learner role is required for encounter API routes' })
+      expect(sessionStore.createSession).not.toHaveBeenCalled()
+    })
+  })
+
+  it('denies scenario setup when the tenant session entitlement has been revoked', async () => {
+    const sessionStore = createSessionStore({ setupScenario: vi.fn().mockResolvedValue('entitlement_denied') })
+    await withApi(createDependencies({
+      sessionStore,
+      generatePatientScenario: vi.fn().mockResolvedValue({}) as ApiDependencies['generatePatientScenario']
+    }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/setup`, {
+        method: 'POST',
+        headers: { ...authHeaders(), 'idempotency-key': 'setup-key-0001' }
+      })
+
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({ error: 'Tenant plan does not include this capability' })
+      expect(sessionStore.setupScenario).toHaveBeenCalledOnce()
+    })
+  })
+
+  it('returns retryable overload before invoking setup when active capacity is full', async () => {
+    let finishSetup!: (result: 'not_found') => void
+    const pendingSetup = new Promise<'not_found'>((resolve) => { finishSetup = resolve })
+    const setupScenario = vi.fn(() => pendingSetup)
+    const sessionStore = createSessionStore({ setupScenario })
+    await withApi(createDependencies({
+      sessionStore,
+      setupQueueLimits: { maxConcurrent: 1, maxQueued: 0, waitTimeoutMs: 1_000 },
+      generatePatientScenario: vi.fn() as ApiDependencies['generatePatientScenario']
+    }), async (baseUrl) => {
+      const setupUrl = () => `${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/setup`
+      const firstResponse = fetch(setupUrl(), {
+        method: 'POST', headers: { ...authHeaders(), 'idempotency-key': 'setup-first-0001' }
+      })
+      await vi.waitFor(() => expect(setupScenario).toHaveBeenCalledOnce())
+
+      const overloaded = await fetch(setupUrl(), {
+        method: 'POST', headers: { ...authHeaders(), 'idempotency-key': 'setup-second-001' }
+      })
+      expect(overloaded.status).toBe(503)
+      expect(overloaded.headers.get('retry-after')).toBe('1')
+      expect(await overloaded.json()).toEqual({
+        error: 'Patient setup capacity is unavailable; retry with the same Idempotency-Key.'
+      })
+      expect(setupScenario).toHaveBeenCalledOnce()
+
+      finishSetup('not_found')
+      expect((await firstResponse).status).toBe(404)
+    })
+  })
+
+  it('mints a scoped transcription credential only after authenticated consent and tenant authorization', async () => {
+    const sessionStore = createSessionStore()
+    const createTranscriptionCredential = vi.fn().mockResolvedValue({
+      clientSecret: 'ephemeral-secret-test', expiresAt: 1_800_000_000, providerSessionId: 'sess_provider_test'
+    })
+    await withApi(createDependencies({ sessionStore, createTranscriptionCredential }), async (baseUrl) => {
+      const url = `${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`
+      const denied = await fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify({}) })
+      expect(denied.status).toBe(400)
+      expect(createTranscriptionCredential).not.toHaveBeenCalled()
+
+      const response = await fetch(url, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1' })
+      })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({
+        clientSecret: 'ephemeral-secret-test', expiresAt: 1_800_000_000, maxDurationSeconds: 900
+      })
+      expect(sessionStore.createAudioTranscriptionGrant).toHaveBeenCalledWith(
+        { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' },
+        expect.any(String), 'gptmd-audio-transcription-v1'
+      )
+      expect(sessionStore.recordAudioProviderSession).toHaveBeenCalledWith('audio-grant-test', 'sess_provider_test')
+      expect(createTranscriptionCredential).toHaveBeenCalledOnce()
+    })
+  })
+
+  it('does not mint a provider credential when tenant audio approval is denied', async () => {
+    const sessionStore = createSessionStore({ createAudioTranscriptionGrant: vi.fn().mockResolvedValue('entitlement_denied') })
+    const createTranscriptionCredential = vi.fn()
+    await withApi(createDependencies({ sessionStore, createTranscriptionCredential }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1' })
+      })
+      expect(response.status).toBe(403)
+      expect(await response.json()).toEqual({
+        error: 'Tenant plan or audio privacy approval does not allow voice transcription'
+      })
+      expect(createTranscriptionCredential).not.toHaveBeenCalled()
+      expect(sessionStore.recordAudioProviderSession).not.toHaveBeenCalled()
     })
   })
 
@@ -252,7 +380,7 @@ describe('GPTMD API integrations', () => {
       })
       expect(selected.status).toBe(201)
       expect(sessionStore.createSession).toHaveBeenCalledWith(
-        { subjectId: 'learner-1', tenantId: 'tenant-b' },
+        { subjectId: 'learner-1', tenantId: 'tenant-b', role: 'learner' },
         sessionVersions
       )
 
@@ -279,7 +407,7 @@ describe('GPTMD API integrations', () => {
       })
       expect(response.status).toBe(201)
       expect(sessionStore.createSession).toHaveBeenCalledWith(
-        { subjectId: 'learner-1', tenantId: 'tenant-only' },
+        { subjectId: 'learner-1', tenantId: 'tenant-only', role: 'learner' },
         sessionVersions
       )
 
@@ -328,7 +456,7 @@ describe('GPTMD API integrations', () => {
       expect(body.sessionId).toMatch(/^[A-Za-z0-9_-]{43}$/)
       expect(body.sessionId).not.toContain('learner')
       expect(sessionStore.createSession).toHaveBeenCalledWith(
-        { subjectId: 'learner-1', tenantId: 'tenant-a' },
+        { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' },
         sessionVersions
       )
 
@@ -395,12 +523,12 @@ describe('GPTMD API integrations', () => {
       _principal: AuthenticatedPrincipal,
       _id: string,
       key: string,
-      generate: (versions: PatientScenarioVersionPins, asOf: Date) => Promise<GeneratedPatientScenario>
+      generate: (versions: PatientScenarioVersionPins, asOf: Date, seed: string) => Promise<GeneratedPatientScenario>
     ) => {
       if (stored) return storedKey === key ? stored : 'idempotency_conflict' as const
       if (!pending) {
         pending = (async () => {
-          await generate(sessionVersions, new Date('2026-10-01T00:00:00.000Z'))
+          await generate(sessionVersions, new Date('2026-10-01T00:00:00.000Z'), 'z'.repeat(43))
           return setupResponse
         })()
       }
@@ -441,7 +569,9 @@ describe('GPTMD API integrations', () => {
       expect(JSON.stringify(firstBody)).not.toContain('conv_internal_only')
       expect(JSON.stringify(firstBody)).not.toContain('resp_internal_only')
       expect(generatePatientScenario).toHaveBeenCalledOnce()
-      expect(generatePatientScenario).toHaveBeenCalledWith(sessionVersions, new Date('2026-10-01T00:00:00.000Z'))
+      expect(generatePatientScenario).toHaveBeenCalledWith(
+        sessionVersions, new Date('2026-10-01T00:00:00.000Z'), 'z'.repeat(43)
+      )
 
       const conflicting = await fetch(`${baseUrl}/api/sessions/${sessionId}/setup`, {
         method: 'POST',
@@ -487,14 +617,14 @@ describe('GPTMD API integrations', () => {
     await withApi(dependencies, async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/turns`, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ turnId, text: 'Where does it hurt?' })
+        body: JSON.stringify({ turnId, text: 'Where does it hurt?', modality: 'realtime_transcription' })
       })
 
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual({ turnId, text: 'I feel pain on my left side.' })
       expect(submitPatientTurn).toHaveBeenCalledWith(
-        { subjectId: 'learner-1', tenantId: 'tenant-a' }, sessionId, turnId,
-        'Where does it hurt?', generatePatientTurn
+        { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' }, sessionId, turnId,
+        'Where does it hurt?', generatePatientTurn, 'realtime_transcription'
       )
     })
   })
@@ -510,6 +640,64 @@ describe('GPTMD API integrations', () => {
       })
       expect(response.status).toBe(400)
       expect(generatePatientTurn).not.toHaveBeenCalled()
+    })
+  })
+
+  it('rejects an unknown transcript modality before provider work', async () => {
+    const generatePatientTurn = vi.fn()
+    const dependencies = createDependencies({ generatePatientTurn })
+
+    await withApi(dependencies, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${'s'.repeat(43)}/turns`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ turnId: 'turn-0001', text: 'Where does it hurt?', modality: 'uploaded_audio' })
+      })
+      expect(response.status).toBe(400)
+      expect(await response.json()).toEqual({ error: 'modality must be typed or realtime_transcription' })
+      expect(generatePatientTurn).not.toHaveBeenCalled()
+    })
+  })
+
+  it('validates assessment fields before storage and returns an unscored submission result', async () => {
+    const sessionId = randomBytes(32).toString('base64url')
+    const submitAssessment = vi.fn().mockResolvedValue({
+      assessmentId: 'assessment-1', status: 'unscored', submittedAt: '2026-10-01T00:02:00.000Z'
+    })
+    const sessionStore = createSessionStore({
+      beginAssessment: vi.fn().mockResolvedValue('assessment'),
+      submitAssessment
+    })
+
+    await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
+      const phase = await fetch(`${baseUrl}/api/sessions/${sessionId}/assessment-phase`, {
+        method: 'POST', headers: authHeaders()
+      })
+      expect(phase.status).toBe(200)
+      expect(await phase.json()).toEqual({ sessionId, phase: 'assessment' })
+
+      const invalid = await fetch(`${baseUrl}/api/sessions/${sessionId}/assessment`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ assessmentId: 'assessment-1', summary: '', differential: 'Possible cyst', rationale: '', plan: 'Follow up' })
+      })
+      expect(invalid.status).toBe(422)
+      expect((await invalid.json()).fieldErrors).toEqual({ summary: 'This field is required.', rationale: 'This field is required.' })
+      expect(submitAssessment).not.toHaveBeenCalled()
+
+      const valid = await fetch(`${baseUrl}/api/sessions/${sessionId}/assessment`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({
+          assessmentId: 'assessment-1', summary: 'Pelvic pain', differential: 'Possible cyst',
+          rationale: 'Acute onset', plan: 'Follow up'
+        })
+      })
+      expect(valid.status).toBe(200)
+      expect(await valid.json()).toEqual({
+        assessmentId: 'assessment-1', status: 'unscored', submittedAt: '2026-10-01T00:02:00.000Z'
+      })
+      expect(submitAssessment).toHaveBeenCalledWith(
+        { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' }, sessionId,
+        'assessment-1', { summary: 'Pelvic pain', differential: 'Possible cyst', rationale: 'Acute onset', plan: 'Follow up' }
+      )
     })
   })
 })
