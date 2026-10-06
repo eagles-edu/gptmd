@@ -126,10 +126,10 @@ test('signed-in account workspace context carries through the home into Begin Vi
   }))
   const sessionId = 's'.repeat(43)
   const versionPins = {
-    promptVersion: 'patient-scenario-prompt-v2',
+    promptVersion: 'patient-scenario-prompt-v6',
     modelVersion: 'gpt-6-luna',
-    schemaVersion: 1,
-    policyVersion: 'patient-scenario-policy-v1'
+    schemaVersion: 5,
+    policyVersion: 'patient-scenario-policy-v3'
   }
   await page.route('**/api/sessions', async (route) => {
     sessionTenantId = route.request().headers()['x-gptmd-tenant-id'] ?? ''
@@ -195,7 +195,9 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await preflight.getByRole('checkbox', { name: /send my microphone audio to OpenAI/i }).check()
   await preflight.getByRole('button', { name: 'Continue with voice' }).click()
   await page.getByRole('button', { name: 'Create patient session' }).click()
+  await page.getByRole('tab', { name: 'Chart' }).click()
   await expect(page.getByText('Ari Nguyen')).toBeVisible()
+  await page.getByRole('tab', { name: 'Interview' }).click()
   await expect(page.getByRole('button', { name: 'Enter Room' })).toBeEnabled()
   await page.getByRole('button', { name: 'Enter Room' }).click()
   await expect(page.getByRole('button', { name: 'Start voice conversation' })).toBeEnabled()

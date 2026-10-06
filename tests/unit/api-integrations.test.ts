@@ -6,6 +6,7 @@ import { createApiApp, type ApiDependencies } from '../../services/api/src/app.j
 import { createServiceClients, realtimeTranscriptionSessionConfig } from '../../services/api/src/clients.js'
 import type { AuthenticatedPrincipal } from '../../services/api/src/auth.ts'
 import type { GeneratedPatientScenario, PatientScenarioVersionPins } from '../../services/api/src/patient-profile.ts'
+import type { ProviderUsageSample } from '../../services/api/src/session-contracts.ts'
 import type { PatientScenarioSetupResult, SessionRecord, SessionStore } from '../../services/api/src/session-store.ts'
 
 const jwtSecret = 'unit-test-secret-that-is-at-least-32-bytes-long'
@@ -26,11 +27,16 @@ function makeToken(overrides: Record<string, unknown> = {}): string {
 }
 
 const authHeaders = () => ({ authorization: `Bearer ${makeToken()}`, 'content-type': 'application/json' })
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((done) => { resolve = done })
+  return { promise, resolve }
+}
 const sessionVersions: PatientScenarioVersionPins = {
-  promptVersion: 'patient-scenario-prompt-v3',
+  promptVersion: 'patient-scenario-prompt-v6',
   modelVersion: 'gpt-6-luna',
-  schemaVersion: 3,
-  policyVersion: 'patient-scenario-policy-v1'
+  schemaVersion: 5,
+  policyVersion: 'patient-scenario-policy-v3'
 }
 
 function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore {
@@ -74,13 +80,15 @@ const createDependencies = (overrides: Partial<ApiDependencies> = {}): ApiDepend
   generatePatientScenario: null,
   generatePatientTurn: vi.fn().mockResolvedValue({
     responseId: 'resp_turn_test',
+    providerUsage: null,
     output: {
       patientResponse: 'I have been having pain.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
     }
   }),
-  createTranscriptionCredential: vi.fn().mockResolvedValue({
-    clientSecret: 'ephemeral-secret-test', expiresAt: 1_800_000_000, providerSessionId: 'sess_provider_test'
+  createTranscriptionCall: vi.fn().mockResolvedValue({
+    answerSdp: 'mock-answer', providerCallId: 'call_provider_test', providerSessionId: 'sess_provider_test'
   }),
+  hangupTranscriptionCall: vi.fn().mockResolvedValue(undefined),
   model: 'gpt-6-luna',
   jwt: { secret: jwtSecret, issuer: 'https://issuer.test', audience: 'gptmd-api' },
   sessionStore: createSessionStore(),
@@ -203,7 +211,14 @@ describe('GPTMD API integrations', () => {
   })
 
   it('returns SDK output without logging or exposing upstream errors', async () => {
-    const generateResponse = vi.fn().mockResolvedValue({ id: 'resp_test', outputText: 'A test response.' })
+    const generateResponse = vi.fn(async (
+      _input: string,
+      recordTiming?: (stage: 'first_token' | 'completed', elapsedMs: number) => void
+    ) => {
+      recordTiming?.('first_token', 10)
+      recordTiming?.('completed', 20)
+      return { id: 'resp_test', outputText: 'A test response.' }
+    })
     const dependencies = createDependencies({ generateResponse })
 
     await withApi(dependencies, async (baseUrl) => {
@@ -214,7 +229,10 @@ describe('GPTMD API integrations', () => {
       })
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual({ id: 'resp_test', outputText: 'A test response.' })
-      expect(generateResponse).toHaveBeenCalledWith('Use fictional data.')
+      expect(response.headers.get('server-timing')).toMatch(
+        /^interactive_capacity_wait;dur=\d+\.\d{3}, responses_first_token;dur=10\.000, responses_completion;dur=20\.000$/
+      )
+      expect(generateResponse).toHaveBeenCalledWith('Use fictional data.', expect.any(Function))
     })
 
     const failingDependencies = createDependencies({
@@ -228,6 +246,47 @@ describe('GPTMD API integrations', () => {
       })
       expect(response.status).toBe(502)
       expect(await response.json()).toEqual({ error: 'OpenAI request failed' })
+    })
+  })
+
+  it('rejects a learner turn before session quota or state work when interactive provider capacity is full', async () => {
+    const pendingResponse = deferred<{ id: string; outputText: string }>()
+    const generateResponse = vi.fn(() => pendingResponse.promise)
+    const sessionStore = createSessionStore()
+    const generatePatientTurn = vi.fn()
+    await withApi(createDependencies({
+      sessionStore,
+      generateResponse,
+      generatePatientTurn,
+      providerCapacityLimits: {
+        maxConcurrent: 1,
+        reservedInteractive: 0,
+        maxQueuedInteractive: 0,
+        interactiveWaitTimeoutMs: 1_000,
+        maxQueuedSetup: 0,
+        setupWaitTimeoutMs: 1_000
+      }
+    }), async (baseUrl) => {
+      const responseRequest = fetch(`${baseUrl}/api/openai/responses`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ input: 'Explain the symptom.' })
+      })
+      await vi.waitFor(() => expect(generateResponse).toHaveBeenCalledOnce())
+
+      const turnResponse = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/turns`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ turnId: 'turn-capacity-0001', text: 'When did it start?' })
+      })
+
+      expect(turnResponse.status).toBe(503)
+      expect(turnResponse.headers.get('retry-after')).toBe('1')
+      expect(await turnResponse.json()).toEqual({
+        error: 'Interactive response capacity is unavailable; retry with the same turnId.'
+      })
+      expect(sessionStore.submitPatientTurn).not.toHaveBeenCalled()
+      expect(generatePatientTurn).not.toHaveBeenCalled()
+
+      pendingResponse.resolve({ id: 'resp_test', outputText: 'A test response.' })
+      expect((await responseRequest).status).toBe(200)
     })
   })
 
@@ -305,6 +364,7 @@ describe('GPTMD API integrations', () => {
       expect(await overloaded.json()).toEqual({
         error: 'Patient setup capacity is unavailable; retry with the same Idempotency-Key.'
       })
+      expect(overloaded.headers.get('server-timing')).toMatch(/^setup_queue_wait;dur=\d+\.\d{3}$/)
       expect(setupScenario).toHaveBeenCalledOnce()
 
       finishSetup('not_found')
@@ -312,48 +372,78 @@ describe('GPTMD API integrations', () => {
     })
   })
 
-  it('mints a scoped transcription credential only after authenticated consent and tenant authorization', async () => {
+  it('creates and durably schedules a provider call only after consent and tenant authorization', async () => {
     const sessionStore = createSessionStore()
-    const createTranscriptionCredential = vi.fn().mockResolvedValue({
-      clientSecret: 'ephemeral-secret-test', expiresAt: 1_800_000_000, providerSessionId: 'sess_provider_test'
+    const createTranscriptionCall = vi.fn().mockResolvedValue({
+      answerSdp: 'mock-answer', providerCallId: 'call_provider_test', providerSessionId: 'sess_provider_test'
     })
-    await withApi(createDependencies({ sessionStore, createTranscriptionCredential }), async (baseUrl) => {
+    const hangupTranscriptionCall = vi.fn().mockResolvedValue(undefined)
+    await withApi(createDependencies({ sessionStore, createTranscriptionCall, hangupTranscriptionCall }), async (baseUrl) => {
       const url = `${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`
       const denied = await fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify({}) })
       expect(denied.status).toBe(400)
-      expect(createTranscriptionCredential).not.toHaveBeenCalled()
+      expect(createTranscriptionCall).not.toHaveBeenCalled()
 
       const response = await fetch(url, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1' })
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1', sdp: 'v=0\\r\\n' })
       })
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual({
-        clientSecret: 'ephemeral-secret-test', expiresAt: 1_800_000_000, maxDurationSeconds: 900
+        answerSdp: 'mock-answer', maxDurationSeconds: 900
       })
       expect(sessionStore.createAudioTranscriptionGrant).toHaveBeenCalledWith(
         { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' },
         expect.any(String), 'gptmd-audio-transcription-v1'
       )
-      expect(sessionStore.recordAudioProviderSession).toHaveBeenCalledWith('audio-grant-test', 'sess_provider_test')
-      expect(createTranscriptionCredential).toHaveBeenCalledOnce()
+      expect(sessionStore.recordAudioProviderSession).toHaveBeenCalledWith(
+        'audio-grant-test', 'sess_provider_test', 'call_provider_test'
+      )
+      expect(createTranscriptionCall).toHaveBeenCalledWith('v=0\\r\\n')
     })
   })
 
   it('does not mint a provider credential when tenant audio approval is denied', async () => {
     const sessionStore = createSessionStore({ createAudioTranscriptionGrant: vi.fn().mockResolvedValue('entitlement_denied') })
-    const createTranscriptionCredential = vi.fn()
-    await withApi(createDependencies({ sessionStore, createTranscriptionCredential }), async (baseUrl) => {
+    const createTranscriptionCall = vi.fn()
+    await withApi(createDependencies({ sessionStore, createTranscriptionCall }), async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`, {
         method: 'POST', headers: authHeaders(),
-        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1' })
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1', sdp: 'v=0\\r\\n' })
       })
       expect(response.status).toBe(403)
       expect(await response.json()).toEqual({
         error: 'Tenant plan or audio privacy approval does not allow voice transcription'
       })
-      expect(createTranscriptionCredential).not.toHaveBeenCalled()
+      expect(createTranscriptionCall).not.toHaveBeenCalled()
       expect(sessionStore.recordAudioProviderSession).not.toHaveBeenCalled()
+    })
+  })
+
+  it('hangs up a provider call if its expiry metadata cannot be committed', async () => {
+    const sessionStore = createSessionStore({ recordAudioProviderSession: vi.fn().mockRejectedValue(new Error('database unavailable')) })
+    const hangupTranscriptionCall = vi.fn().mockResolvedValue(undefined)
+    await withApi(createDependencies({ sessionStore, hangupTranscriptionCall }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1', sdp: 'v=0\\r\\n' })
+      })
+      expect(response.status).toBe(503)
+      expect(hangupTranscriptionCall).toHaveBeenCalledWith('call_provider_test')
+    })
+  })
+
+  it('rejects oversized SDP before granting audio transcription', async () => {
+    const sessionStore = createSessionStore()
+    const createTranscriptionCall = vi.fn()
+    await withApi(createDependencies({ sessionStore, createTranscriptionCall }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1', sdp: 'x'.repeat(128_001) })
+      })
+      expect(response.status).toBe(400)
+      expect(sessionStore.createAudioTranscriptionGrant).not.toHaveBeenCalled()
+      expect(createTranscriptionCall).not.toHaveBeenCalled()
     })
   })
 
@@ -499,7 +589,7 @@ describe('GPTMD API integrations', () => {
           willingnessToDisclose: 'gradual'
         }
       },
-      usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+      usage: { inputTokens: 100, cachedInputTokens: 0, outputTokens: 50, totalTokens: 150, durationMs: 620 },
       abandonedConversationIds: []
     }
     const setupResponse: PatientScenarioSetupResult = {
@@ -515,20 +605,45 @@ describe('GPTMD API integrations', () => {
       versions: sessionVersions,
       readiness: { profile: true, redis: true, conversation: true }
     }
-    const generatePatientScenario = vi.fn().mockResolvedValue(generated)
+    const generatePatientScenario = vi.fn(async (
+      _versions: PatientScenarioVersionPins,
+      _asOf: Date,
+      _seed: string,
+      recordTiming?: (stage: 'first_token' | 'completed', elapsedMs: number) => void,
+      recordProviderUsage?: (usage: ProviderUsageSample) => Promise<void>
+    ) => {
+      recordTiming?.('first_token', 11)
+      recordTiming?.('completed', 22)
+      await recordProviderUsage?.({
+        responseId: 'resp-invalid-attempt', inputTokens: 310, cachedInputTokens: 30,
+        outputTokens: 12, totalTokens: 322, durationMs: 450
+      })
+      return generated
+    })
     let stored: PatientScenarioSetupResult | null = null
     let storedKey: string | null = null
     let pending: Promise<PatientScenarioSetupResult> | null = null
+    const recordedProviderUsage: ProviderUsageSample[] = []
     const setupScenario = vi.fn(async (
       _principal: AuthenticatedPrincipal,
       _id: string,
       key: string,
-      generate: (versions: PatientScenarioVersionPins, asOf: Date, seed: string) => Promise<GeneratedPatientScenario>
+      generate: (
+        versions: PatientScenarioVersionPins,
+        asOf: Date,
+        seed: string,
+        recordProviderUsage: (usage: ProviderUsageSample) => Promise<void>
+      ) => Promise<GeneratedPatientScenario>
     ) => {
       if (stored) return storedKey === key ? stored : 'idempotency_conflict' as const
       if (!pending) {
         pending = (async () => {
-          await generate(sessionVersions, new Date('2026-10-01T00:00:00.000Z'), 'z'.repeat(43))
+          await generate(
+            sessionVersions,
+            new Date('2026-10-01T00:00:00.000Z'),
+            'z'.repeat(43),
+            async (usage) => { recordedProviderUsage.push(usage) }
+          )
           return setupResponse
         })()
       }
@@ -562,6 +677,10 @@ describe('GPTMD API integrations', () => {
       const duplicateBody = await duplicate.json()
       expect(first.status).toBe(200)
       expect(duplicate.status).toBe(200)
+      expect(first.headers.get('server-timing')).toMatch(/^setup_queue_wait;dur=\d+\.\d{3}(, |$)/)
+      expect(first.headers.get('server-timing')).toContain('responses_first_token;dur=11.000')
+      expect(first.headers.get('server-timing')).toContain('responses_completion;dur=22.000')
+      expect(duplicate.headers.get('server-timing')).toMatch(/^setup_queue_wait;dur=\d+\.\d{3}$/)
       expect(firstBody).toEqual(duplicateBody)
       expect(firstBody.patient).not.toHaveProperty('diagnosis')
       expect(firstBody).not.toHaveProperty('scenarioId')
@@ -570,8 +689,12 @@ describe('GPTMD API integrations', () => {
       expect(JSON.stringify(firstBody)).not.toContain('resp_internal_only')
       expect(generatePatientScenario).toHaveBeenCalledOnce()
       expect(generatePatientScenario).toHaveBeenCalledWith(
-        sessionVersions, new Date('2026-10-01T00:00:00.000Z'), 'z'.repeat(43)
+        sessionVersions, new Date('2026-10-01T00:00:00.000Z'), 'z'.repeat(43), expect.any(Function), expect.any(Function)
       )
+      expect(recordedProviderUsage).toEqual([{
+        responseId: 'resp-invalid-attempt', inputTokens: 310, cachedInputTokens: 30,
+        outputTokens: 12, totalTokens: 322, durationMs: 450
+      }])
 
       const conflicting = await fetch(`${baseUrl}/api/sessions/${sessionId}/setup`, {
         method: 'POST',
@@ -602,29 +725,49 @@ describe('GPTMD API integrations', () => {
   it('routes a patient turn through the owned session store and returns the learner response shape', async () => {
     const sessionId = randomBytes(32).toString('base64url')
     const turnId = 'turn-0001'
-    const submitPatientTurn = vi.fn().mockResolvedValue({
-      status: 'accepted', turnId, sequence: 1, patientResponse: 'I feel pain on my left side.'
+    const submitPatientTurn = vi.fn().mockImplementation(async (...args: Parameters<SessionStore['submitPatientTurn']>) => {
+      args[6]?.(2.5)
+      args[7]?.('turn', 3.75)
+      await args[4]({} as Parameters<NonNullable<typeof args[4]>>[0])
+      return { status: 'accepted' as const, turnId, sequence: 1, patientResponse: 'I feel pain on my left side.' }
     })
     const sessionStore = createSessionStore({ submitPatientTurn })
-    const generatePatientTurn = vi.fn().mockResolvedValue({
-      responseId: 'resp-turn', output: {
+    const generatePatientTurn = vi.fn(async (
+      _context: Parameters<NonNullable<ApiDependencies['generatePatientTurn']>>[0],
+      recordTiming?: (stage: 'first_token' | 'completed', elapsedMs: number) => void
+    ) => {
+      recordTiming?.('first_token', 12)
+      recordTiming?.('completed', 24)
+      return {
+        responseId: 'resp-turn', providerUsage: null, output: {
         patientResponse: 'I feel pain on my left side.', proposedFacts: [],
         historyCoverage: [], disclosedHistoryFields: []
+        }
       }
     })
-    const dependencies = createDependencies({ sessionStore, generatePatientTurn })
+    const recordSessionCommitTiming = vi.fn((_operation: string, _elapsedMs: number) => {
+      throw new Error('metrics sink unavailable')
+    })
+    const dependencies = createDependencies({
+      sessionStore, generatePatientTurn, recordSessionCommitTiming, allowedOrigins: ['https://gptmd.test']
+    })
 
     await withApi(dependencies, async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/turns`, {
-        method: 'POST', headers: authHeaders(),
+        method: 'POST', headers: { ...authHeaders(), origin: 'https://gptmd.test' },
         body: JSON.stringify({ turnId, text: 'Where does it hurt?', modality: 'realtime_transcription' })
       })
 
       expect(response.status).toBe(200)
       expect(await response.json()).toEqual({ turnId, text: 'I feel pain on my left side.' })
+      expect(response.headers.get('server-timing')).toMatch(
+        /^interactive_capacity_wait;dur=\d+\.\d{3}, session_lock_attempt;dur=2\.500, redis_turn_state_event_commit;dur=3\.750, responses_first_token;dur=12\.000, responses_completion;dur=24\.000$/
+      )
+      expect(response.headers.get('access-control-expose-headers')).toBe('Server-Timing')
+      expect(recordSessionCommitTiming).toHaveBeenCalledWith('turn', 3.75)
       expect(submitPatientTurn).toHaveBeenCalledWith(
         { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' }, sessionId, turnId,
-        'Where does it hurt?', generatePatientTurn, 'realtime_transcription'
+        'Where does it hurt?', expect.any(Function), 'realtime_transcription', expect.any(Function), expect.any(Function)
       )
     })
   })
@@ -660,11 +803,16 @@ describe('GPTMD API integrations', () => {
 
   it('validates assessment fields before storage and returns an unscored submission result', async () => {
     const sessionId = randomBytes(32).toString('base64url')
-    const submitAssessment = vi.fn().mockResolvedValue({
-      assessmentId: 'assessment-1', status: 'unscored', submittedAt: '2026-10-01T00:02:00.000Z'
+    const submitAssessment = vi.fn().mockImplementation(async (...args: Parameters<SessionStore['submitAssessment']>) => {
+      args[4]?.('assessment', 3.75)
+      return { assessmentId: 'assessment-1', status: 'unscored' as const, submittedAt: '2026-10-01T00:02:00.000Z' }
+    })
+    const beginAssessment = vi.fn().mockImplementation(async (...args: Parameters<SessionStore['beginAssessment']>) => {
+      args[2]?.('phase', 1.25)
+      return 'assessment' as const
     })
     const sessionStore = createSessionStore({
-      beginAssessment: vi.fn().mockResolvedValue('assessment'),
+      beginAssessment,
       submitAssessment
     })
 
@@ -674,6 +822,7 @@ describe('GPTMD API integrations', () => {
       })
       expect(phase.status).toBe(200)
       expect(await phase.json()).toEqual({ sessionId, phase: 'assessment' })
+      expect(phase.headers.get('server-timing')).toBe('redis_phase_state_event_commit;dur=1.250')
 
       const invalid = await fetch(`${baseUrl}/api/sessions/${sessionId}/assessment`, {
         method: 'POST', headers: authHeaders(),
@@ -694,10 +843,38 @@ describe('GPTMD API integrations', () => {
       expect(await valid.json()).toEqual({
         assessmentId: 'assessment-1', status: 'unscored', submittedAt: '2026-10-01T00:02:00.000Z'
       })
+      expect(valid.headers.get('server-timing')).toBe('redis_assessment_state_event_commit;dur=3.750')
       expect(submitAssessment).toHaveBeenCalledWith(
         { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' }, sessionId,
-        'assessment-1', { summary: 'Pelvic pain', differential: 'Possible cyst', rationale: 'Acute onset', plan: 'Follow up' }
+        'assessment-1', { summary: 'Pelvic pain', differential: 'Possible cyst', rationale: 'Acute onset', plan: 'Follow up' },
+        expect.any(Function)
       )
+    })
+  })
+
+  it('returns a retryable conflict when assessment mutations contend on the session lock', async () => {
+    const sessionId = randomBytes(32).toString('base64url')
+    const sessionStore = createSessionStore({
+      beginAssessment: vi.fn().mockResolvedValue('turn_in_progress'),
+      submitAssessment: vi.fn().mockResolvedValue('turn_in_progress')
+    })
+
+    await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
+      const phase = await fetch(`${baseUrl}/api/sessions/${sessionId}/assessment-phase`, {
+        method: 'POST', headers: authHeaders()
+      })
+      expect(phase.status).toBe(409)
+      expect(await phase.json()).toEqual({ error: 'Another action is being processed for this session' })
+
+      const assessment = await fetch(`${baseUrl}/api/sessions/${sessionId}/assessment`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({
+          assessmentId: 'assessment-1', summary: 'Pelvic pain', differential: 'Possible cyst',
+          rationale: 'Acute onset', plan: 'Evaluate further'
+        })
+      })
+      expect(assessment.status).toBe(409)
+      expect(await assessment.json()).toEqual({ error: 'Another action is being processed for this session' })
     })
   })
 })

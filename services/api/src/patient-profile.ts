@@ -1,6 +1,10 @@
 import type OpenAI from 'openai'
+import { readFileSync } from 'node:fs'
 import { zodTextFormat } from 'openai/helpers/zod'
 import { z } from 'zod'
+import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.ts'
+import { estimateOpenAiResponseCost } from './provider-cost.ts'
+import type { ProviderUsageSample } from './session-contracts.ts'
 
 // Keep this field catalog aligned with the canonical catalog in ../catalog/patient-profile.json.
 // `reasonForVisit` is represented as a required profile property; the remaining
@@ -36,10 +40,12 @@ export const PATIENT_HISTORY_FIELDS = [
   'surgicalHistory',
   'obstetricalHistory',
   'numberPregnancies',
+  'numberPriorPregnanciesReaching20Weeks',
   'numberMiscarriage',
   'numberStillbirths',
   'numberAbortions',
   'numberEctopicPregnancies',
+  'numberPregnanciesWithLiveBirth',
   'numberLiveBirths',
   'numberChildren',
   'tubalLigation',
@@ -77,14 +83,14 @@ export const PATIENT_HISTORY_FIELDS = [
 export const PATIENT_PROFILE_FIELDS = ['reasonForVisit', ...PATIENT_HISTORY_FIELDS] as const
 
 export const OBSTETRIC_COUNT_FIELDS = [
-  'numberPregnancies', 'numberMiscarriage', 'numberStillbirths', 'numberAbortions',
-  'numberEctopicPregnancies', 'numberLiveBirths', 'numberChildren'
+  'numberPregnancies', 'numberPriorPregnanciesReaching20Weeks', 'numberMiscarriage', 'numberStillbirths', 'numberAbortions',
+  'numberEctopicPregnancies', 'numberPregnanciesWithLiveBirth', 'numberLiveBirths', 'numberChildren'
 ] as const
 export type ObstetricCountField = typeof OBSTETRIC_COUNT_FIELDS[number]
 
 const COMPLETED_PREGNANCY_OUTCOME_FIELDS = [
   'numberMiscarriage', 'numberStillbirths', 'numberAbortions',
-  'numberEctopicPregnancies', 'numberLiveBirths'
+  'numberEctopicPregnancies', 'numberPregnanciesWithLiveBirth'
 ] as const satisfies readonly ObstetricCountField[]
 
 const HistoryValueSchema = z.union([
@@ -125,26 +131,32 @@ export const PatientScenarioProfileSchema = z.object({
 
 export type PatientScenarioProfile = z.infer<typeof PatientScenarioProfileSchema>
 
+const patientProfileCatalogJson = readFileSync(
+  new URL('../catalog/patient-profile.json', import.meta.url),
+  'utf8'
+)
+
 // Bump the prompt or policy version when their corresponding behavior changes.
-export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v3'
-export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v1'
-export const PATIENT_SCENARIO_SCHEMA_VERSION = 3 as const
+export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v6'
+export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v3'
+export const PATIENT_SCENARIO_SCHEMA_VERSION = 5 as const
 
 export interface PatientScenarioVersionPins {
   promptVersion: string
   modelVersion: string
-  schemaVersion: number
+  schemaVersion: typeof PATIENT_SCENARIO_SCHEMA_VERSION
   policyVersion: string
 }
 
 const setupInstructions = [
   'Create one fictional OB-GYN training patient as a complete private scenario profile.',
-  'Use the supplied structured schema. Include only profile history fields relevant to this case; do not fill every available field.',
+  'Use the supplied structured schema and the complete canonical patient-profile parameter catalog in the developer context. Treat the catalog as the authoritative inventory of PP fields and setup parameters. Include only history fields relevant to this case; do not fill every available field.',
   'For each included history entry, use known for a patient-reported or established detail, negative for an explicit negative, unknown when relevant but not known, and not_applicable only when the field does not apply. Unknown and not_applicable values must be null. Do not turn missing information into a negative.',
   'When pain is relevant, include dedicated history entries for known details and mark relevant details that should be elicited during the interview unknown. Use the dedicated fields for quality, location and radiation, severity, onset, pattern, duration, and provoking or relieving factors. Keep symptom onset in timePainOnset rather than learner-visible reasonForVisit.',
   'When case-relevant associated symptoms or negatives are not already represented by a dedicated field, include miscellaneousDetailsNos as unknown so the patient can answer on demand. Do not seed blanket negatives or expose these details in reasonForVisit.',
   'Use currentMenopausalStatus for the scenario’s present-state truth. Keep the separate menopauseStatus history entry for the applicable patient-reported/history detail; do not use it as a substitute for currentMenopausalStatus.',
   'Make the current reason, history, diagnosis if any, patient beliefs, examination findings, and test results internally consistent. Invent no unsupported test result.',
+  'For obstetric counts, keep gravidity, parity, outcomes, infants, and living children separate. numberPriorPregnanciesReaching20Weeks is the patient-reported parity count: completed pregnancies before the current pregnancy that reached 20 weeks or later, regardless of outcome; count a multiple pregnancy once. Do not derive this value from other fields. numberPregnanciesWithLiveBirth counts pregnancies resulting in one or more live-born infants, while numberLiveBirths counts the infants; a multiple pregnancy counts once in the former and once per live-born infant in the latter. numberChildren is the current living-child count and must not be inferred from births. Include obstetricalHistory complications only when supported by the scenario and patient report.',
   'Include a concise, patient-voiced primary concern as the patientConcern history field when one is relevant to the case. Keep it distinct from the clinician-only diagnosis and disclose it only when asked about worries or concerns.',
   'Use dateOfBirth in YYYY-MM-DD format. A 16-year-old must not have currentMenopausalStatus menopausal. A 75-year-old must not currently be pregnant; a coherent history of past pregnancies is allowed.',
   'Keep diagnosis private in this profile. The later learner-facing profile is a separate projection.',
@@ -156,11 +168,7 @@ export interface GeneratedPatientScenario {
   conversationId: string
   responseId: string
   profile: PatientScenarioProfile
-  usage: {
-    inputTokens: number | null
-    outputTokens: number | null
-    totalTokens: number | null
-  }
+  usage: ProviderUsageSample | null
   abandonedConversationIds: string[]
 }
 
@@ -312,12 +320,20 @@ export function isObstetricHistoryConsistent(
   const pregnancies = counts.numberPregnancies
   if (pregnancies === undefined) return true
   if (currentPregnancyStatus === 'pregnant' && pregnancies < 1) return false
+  const completedPregnancies = currentPregnancyStatus === 'pregnant' ? pregnancies - 1 : pregnancies
+  if (counts.numberPriorPregnanciesReaching20Weeks !== undefined &&
+      counts.numberPriorPregnanciesReaching20Weeks > completedPregnancies) return false
+
+  const liveBirthPregnancies = counts.numberPregnanciesWithLiveBirth
+  const liveBornInfants = counts.numberLiveBirths
+  if (liveBirthPregnancies !== undefined && liveBornInfants !== undefined &&
+      liveBornInfants < liveBirthPregnancies) return false
 
   const knownOutcomes = COMPLETED_PREGNANCY_OUTCOME_FIELDS
     .map((field) => counts[field])
     .filter((value): value is number => value !== undefined)
   const outcomeTotal = knownOutcomes.reduce((total, value) => total + value, 0)
-  const expectedOutcomes = currentPregnancyStatus === 'pregnant' ? pregnancies - 1 : pregnancies
+  const expectedOutcomes = completedPregnancies
   if (outcomeTotal > expectedOutcomes) return false
 
   const everyOutcomeKnown = COMPLETED_PREGNANCY_OUTCOME_FIELDS.every((field) => counts[field] !== undefined)
@@ -361,6 +377,8 @@ export async function generatePatientScenario(
     promptVersion?: string
     policyVersion?: string
     scenarioSeed: string
+    recordTiming?: ResponsesTimingRecorder
+    recordProviderUsage?: (usage: ProviderUsageSample) => Promise<void>
   }
 ): Promise<GeneratedPatientScenario> {
   const promptVersion = options.promptVersion ?? PATIENT_SCENARIO_PROMPT_VERSION
@@ -388,19 +406,73 @@ export async function generatePatientScenario(
       throw new PatientScenarioProviderError([...abandonedConversationIds])
     }
     let response: OpenAI.Responses.Response
+    let durationMs: number
     try {
-      response = await client.responses.create({
+      const startedAt = performance.now()
+      let firstTokenReported = false
+      const stream = client.responses.stream({
         model,
         conversation: conversation.id,
-        instructions: setupInstructions,
-        input: `Generate one coherent fictional patient scenario profile for an OB-GYN history-taking simulation. Stable scenario variation seed: ${options.scenarioSeed}`,
+        prompt_cache_options: { mode: 'explicit', ttl: '30m' },
+        input: [
+          {
+            role: 'developer',
+            content: [
+              { type: 'input_text', text: setupInstructions },
+              {
+                type: 'input_text',
+                text: `Complete canonical patient-profile parameter catalog (intact JSON):\n${patientProfileCatalogJson}`,
+                prompt_cache_breakpoint: { mode: 'explicit' }
+              }
+            ]
+          },
+          {
+            role: 'user',
+            content: `Generate one coherent fictional patient scenario profile for an OB-GYN history-taking simulation. Stable scenario variation seed: ${options.scenarioSeed}`
+          }
+        ],
         text: {
           format: zodTextFormat(PatientScenarioProfileSchema, 'patient_scenario_profile')
         }
       })
+      const reportFirstToken = () => {
+        if (firstTokenReported) return
+        firstTokenReported = true
+        reportResponsesTiming(options.recordTiming, 'first_token', startedAt)
+      }
+      stream.on('response.output_text.delta', reportFirstToken)
+      stream.on('response.refusal.delta', reportFirstToken)
+      stream.on('response.completed', () => reportResponsesTiming(options.recordTiming, 'completed', startedAt))
+      response = await stream.finalResponse()
+      durationMs = Math.max(0, Math.round(performance.now() - startedAt))
     } catch {
       throw new PatientScenarioProviderError([...abandonedConversationIds, conversation.id])
     }
+
+    const usage: ProviderUsageSample | null = response.usage ? (() => {
+      const cost = estimateOpenAiResponseCost({
+        model: response.model,
+        serviceTier: response.service_tier ?? null,
+        inputTokens: response.usage.input_tokens,
+        cachedInputTokens: response.usage.input_tokens_details?.cached_tokens ?? 0,
+        cacheWriteTokens: response.usage.input_tokens_details?.cache_write_tokens ?? 0,
+        outputTokens: response.usage.output_tokens
+      })
+      return {
+        responseId: response.id,
+        model: response.model,
+        serviceTier: response.service_tier ?? null,
+        inputTokens: response.usage.input_tokens,
+        cachedInputTokens: response.usage.input_tokens_details?.cached_tokens ?? 0,
+        cacheWriteTokens: response.usage.input_tokens_details?.cache_write_tokens ?? 0,
+        outputTokens: response.usage.output_tokens,
+        totalTokens: response.usage.total_tokens,
+        durationMs,
+        pricingVersion: cost?.pricingVersion ?? null,
+        estimatedCostUsd: cost?.estimatedCostUsd ?? null
+      }
+    })() : null
+    if (usage) await options.recordProviderUsage?.(usage)
 
     let profile: PatientScenarioProfile | null = null
     if (!validationFailure(response)) {
@@ -424,11 +496,7 @@ export async function generatePatientScenario(
         conversationId: conversation.id,
         responseId: response.id,
         profile,
-        usage: {
-          inputTokens: response.usage?.input_tokens ?? null,
-          outputTokens: response.usage?.output_tokens ?? null,
-          totalTokens: response.usage?.total_tokens ?? null
-        },
+        usage,
         abandonedConversationIds
       }
     }

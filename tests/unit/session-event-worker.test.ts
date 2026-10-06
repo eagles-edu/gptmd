@@ -1,29 +1,79 @@
 import type { Pool, PoolClient } from 'pg'
 import { describe, expect, it, vi } from 'vitest'
-import { createSessionEventWorker } from '../../services/api/src/session-event-worker.ts'
+import { createSessionEventWorker, type SessionEventWorkerMetrics } from '../../services/api/src/session-event-worker.ts'
+import type { ProviderUsageSample } from '../../services/api/src/session-contracts.ts'
 
 const sessionId = 's'.repeat(43)
 const turn = {
   turnId: 'turn-1', sessionId, sequence: 1,
   acceptedAt: '2026-10-01T00:01:00.000Z', phase: 'history', learnerMessage: 'What brings you in?',
   versions: {
-    promptVersion: 'patient-turn-prompt-v5', modelVersion: 'gpt-6-luna',
-    schemaVersion: 1, policyVersion: 'patient-turn-policy-v4', rubricVersion: null
+    promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
+    schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
   },
   learnerModality: 'typed', patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
   disclosedHistoryFields: [], disclosedFactIds: [], historyCoverageState: [], clinicalActions: []
 }
 const event = {
   eventId: turn.turnId, sessionId, sequence: turn.sequence, eventOrdinal: 0, eventType: 'accepted_turn',
-  occurredAt: turn.acceptedAt, payload: turn
+  occurredAt: turn.acceptedAt, providerUsage: [], payload: turn
 } as const
+
+function usageSample(
+  responseId: string,
+  inputTokens: number,
+  cachedInputTokens: number,
+  outputTokens: number,
+  durationMs: number
+): ProviderUsageSample {
+  return {
+    responseId, model: 'gpt-6-luna', serviceTier: null,
+    inputTokens, cachedInputTokens, cacheWriteTokens: 0,
+    outputTokens, totalTokens: inputTokens + outputTokens, durationMs,
+    pricingVersion: null, estimatedCostUsd: null
+  }
+}
 
 function workerHarness(options: {
   existing?: boolean
+  existingUsage?: Array<{
+    provider_response_id: string
+    model_id: string | null
+    service_tier: string | null
+    input_tokens: number
+    cached_input_tokens: number
+    cache_write_tokens: number
+    output_tokens: number
+    total_tokens: number
+    estimated_cost_usd: string | null
+    pricing_version: string | null
+    duration_ms: number
+  }>
+  existingProviderUsage?: Array<{
+    session_id: string
+    operation: string
+    model_id: string | null
+    service_tier: string | null
+    input_tokens: number
+    cached_input_tokens: number
+    cache_write_tokens: number
+    output_tokens: number
+    total_tokens: number
+    estimated_cost_usd: string | null
+    pricing_version: string | null
+    duration_ms: number | null
+    occurred_at: Date
+  }>
   existingAudit?: { session_id: string; turn_id_hash: string; event_type: string; attempt_count: number; occurred_at: Date }
   failInsert?: boolean
+  failUsageInsert?: boolean
   streamEvent?: unknown
   prior?: { sequence: number; event_ordinal: number }
+  workerOptions?: {
+    metricsIntervalMs?: number
+    onError?: (error: unknown) => void
+    onMetrics?: (metrics: SessionEventWorkerMetrics) => void
+  }
 } = {}) {
   const order: string[] = []
   const streamEvent = JSON.stringify(options.streamEvent ?? event)
@@ -40,6 +90,13 @@ function workerHarness(options: {
         order.push('ack')
         return 1
       }
+      if (command[0] === 'XINFO' && command[1] === 'GROUPS') {
+        return [[
+          'name', 'gptmd-session-history', 'consumers', 1, 'pending', 2,
+          'last-delivered-id', '1700000001000-0', 'entries-read', 2, 'lag', 3
+        ]]
+      }
+      if (command[0] === 'XPENDING') return [2, '1700000000000-0', '1700000001000-0', []]
       throw new Error(`Unexpected Redis command: ${command[0]}`)
     })
   }
@@ -48,7 +105,12 @@ function workerHarness(options: {
       order.push(sql.toLowerCase())
       return { rows: [], rowCount: 0 }
     }
-    if (sql.includes('SELECT status FROM app_sessions')) return { rows: [{ status: 'ready' }], rowCount: 1 }
+    if (sql.includes('SELECT status, tenant_id, subject_id FROM app_sessions')) {
+      return { rows: [{ status: 'ready', tenant_id: 'tenant-a', subject_id: 'learner-a' }], rowCount: 1 }
+    }
+    if (sql.includes('SELECT tenant_id, subject_id FROM app_sessions')) {
+      return { rows: [{ tenant_id: 'tenant-a', subject_id: 'learner-a' }], rowCount: 1 }
+    }
     if (sql.includes('FROM session_turn_audits WHERE audit_id')) {
       return { rows: options.existingAudit ? [options.existingAudit] : [], rowCount: options.existingAudit ? 1 : 0 }
     }
@@ -59,6 +121,18 @@ function workerHarness(options: {
     }
     if (sql.includes('SELECT sequence, event_ordinal FROM session_events')) {
       return { rows: options.prior ? [options.prior] : [], rowCount: options.prior ? 1 : 0 }
+    }
+    if (sql.includes('FROM provider_usage WHERE session_id')) {
+      return { rows: options.existingUsage ?? [], rowCount: options.existingUsage?.length ?? 0 }
+    }
+    if (sql.includes("FROM provider_usage WHERE provider = 'openai'")) {
+      return { rows: options.existingProviderUsage ?? [], rowCount: options.existingProviderUsage?.length ?? 0 }
+    }
+    if (sql.includes('INSERT INTO provider_usage')) {
+      if (options.failUsageInsert) throw new Error('usage database unavailable')
+      order.push('insert-usage')
+      expect(values?.[1]).toBe(sessionId)
+      return { rows: [], rowCount: 1 }
     }
     if (sql.includes('INSERT INTO session_events')) {
       if (options.failInsert) throw new Error('database unavailable')
@@ -77,11 +151,44 @@ function workerHarness(options: {
   })
   const client = { query, release: vi.fn() } as unknown as PoolClient
   const pool = { connect: vi.fn(async () => client) } as unknown as Pool
-  const worker = createSessionEventWorker(redis, pool, { consumerName: 'test-worker', blockMs: 1 })
+  const worker = createSessionEventWorker(redis, pool, {
+    consumerName: 'test-worker', blockMs: 1, ...options.workerOptions
+  })
   return { worker, order, redis, query, client }
 }
 
 describe('PostgreSQL session event worker', () => {
+  it('reports stream backlog, oldest pending age, and persistence lag without event content', async () => {
+    const onMetrics = vi.fn()
+    const harness = workerHarness({ workerOptions: { metricsIntervalMs: 0, onMetrics } })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(onMetrics).toHaveBeenCalledWith(expect.objectContaining({
+      processedEvents: 1,
+      pendingEvents: 2,
+      undeliveredEvents: 3,
+      backlogEvents: 5,
+      oldestPendingAgeMs: expect.any(Number),
+      maxPersistenceLagMs: expect.any(Number)
+    }))
+    const metrics = onMetrics.mock.calls[0]?.[0]
+    expect(metrics?.oldestPendingAgeMs).toBeGreaterThan(0)
+    expect(metrics).not.toHaveProperty('sessionId')
+    expect(JSON.stringify(metrics)).not.toContain('Pelvic pain')
+  })
+
+  it('keeps persistence and acknowledgement successful when the metrics observer fails', async () => {
+    const onError = vi.fn()
+    const onMetrics = vi.fn(() => { throw new Error('metrics sink unavailable') })
+    const harness = workerHarness({ workerOptions: { metricsIntervalMs: 0, onMetrics, onError } })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack'])
+    expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'metrics sink unavailable' }))
+  })
+
   it('commits accepted history before acknowledging its stream entry', async () => {
     const harness = workerHarness()
 
@@ -98,6 +205,95 @@ describe('PostgreSQL session event worker', () => {
 
     expect(harness.order).toEqual(['begin', 'commit', 'ack'])
     expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_events'), expect.anything())
+  })
+
+  it('persists provider token usage atomically with accepted history before acknowledgement', async () => {
+    const usage = usageSample('resp-private', 120, 20, 30, 842)
+    const harness = workerHarness({ streamEvent: { ...event, providerUsage: [usage] } })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.order).toEqual(['begin', 'insert', 'insert-usage', 'commit', 'ack'])
+    expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
+      expect.any(String), sessionId, 'tenant-a', 'learner-a', turn.turnId, 'resp-private',
+      'gpt-6-luna', null, 120, 20, 0, 30, 150, null, null, 842, turn.acceptedAt
+    ])
+    const persistedTurn = harness.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO session_events'))?.[1]?.[6]
+    expect(JSON.parse(String(persistedTurn))).toEqual(turn)
+    expect(String(persistedTurn)).not.toContain('resp-private')
+  })
+
+  it('verifies saved provider usage on duplicate delivery instead of counting it twice', async () => {
+    const usage = usageSample('resp-private', 120, 20, 30, 842)
+    const harness = workerHarness({
+      existing: true,
+      streamEvent: { ...event, providerUsage: [usage] },
+      existingUsage: [{
+        provider_response_id: usage.responseId, model_id: usage.model, service_tier: usage.serviceTier,
+        input_tokens: usage.inputTokens, cached_input_tokens: usage.cachedInputTokens,
+        cache_write_tokens: usage.cacheWriteTokens, output_tokens: usage.outputTokens,
+        total_tokens: usage.totalTokens, estimated_cost_usd: usage.estimatedCostUsd,
+        pricing_version: usage.pricingVersion, duration_ms: usage.durationMs
+      }]
+    })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.order).toEqual(['begin', 'commit', 'ack'])
+    expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), expect.anything())
+  })
+
+  it('keeps mismatched usage on a duplicate event pending for diagnosis', async () => {
+    const harness = workerHarness({
+      existing: true,
+      streamEvent: { ...event, providerUsage: [usageSample('resp-private', 120, 20, 30, 842)] }
+    })
+
+    await expect(harness.worker.processOnce()).rejects.toThrow('different provider usage')
+
+    expect(harness.order).toEqual(['begin', 'rollback'])
+    expect(harness.redis.sendCommand).not.toHaveBeenCalledWith(['XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'])
+  })
+
+  it('persists setup-generation usage without adding it to clinical session history', async () => {
+    const usage = usageSample('resp-setup', 900, 0, 300, 3420)
+    const streamEvent = {
+      eventId: 'usage_79f9b28a', sessionId, eventType: 'provider_usage',
+      operation: 'scenario_generation', occurredAt: turn.acceptedAt, usage
+    }
+    const harness = workerHarness({ streamEvent })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.order).toEqual(['begin', 'insert-usage', 'commit', 'ack'])
+    expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
+      expect.any(String), sessionId, 'tenant-a', 'learner-a', 'scenario_generation',
+      'resp-setup', 'gpt-6-luna', null, 900, 0, 0, 300, 1200, null, null, 3420, turn.acceptedAt
+    ])
+    expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_events'), expect.anything())
+  })
+
+  it('acknowledges setup-usage retries only when the stored provider row matches', async () => {
+    const usage = usageSample('resp-setup', 900, 0, 300, 3420)
+    const streamEvent = {
+      eventId: 'usage_79f9b28a', sessionId, eventType: 'provider_usage',
+      operation: 'scenario_generation', occurredAt: turn.acceptedAt, usage
+    }
+    const harness = workerHarness({
+      streamEvent,
+      existingProviderUsage: [{
+        session_id: sessionId, operation: 'scenario_generation', model_id: usage.model,
+        service_tier: usage.serviceTier, input_tokens: 900, cached_input_tokens: 0,
+        cache_write_tokens: 0, output_tokens: 300, total_tokens: 1200,
+        estimated_cost_usd: null, pricing_version: null,
+        duration_ms: 3420, occurred_at: new Date(turn.acceptedAt)
+      }]
+    })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.order).toEqual(['begin', 'commit', 'ack'])
+    expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), expect.anything())
   })
 
   it('rejects accepted-turn stream entries without first-generation fields and leaves them pending', async () => {
@@ -125,6 +321,18 @@ describe('PostgreSQL session event worker', () => {
     await expect(harness.worker.processOnce()).rejects.toThrow('database unavailable')
 
     expect(harness.order).toEqual(['begin', 'rollback'])
+    expect(harness.redis.sendCommand).not.toHaveBeenCalledWith(['XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'])
+  })
+
+  it('leaves the accepted event pending when usage persistence fails', async () => {
+    const harness = workerHarness({
+      failUsageInsert: true,
+      streamEvent: { ...event, providerUsage: [usageSample('resp-private', 120, 20, 30, 842)] }
+    })
+
+    await expect(harness.worker.processOnce()).rejects.toThrow('usage database unavailable')
+
+    expect(harness.order).toEqual(['begin', 'insert', 'rollback'])
     expect(harness.redis.sendCommand).not.toHaveBeenCalledWith(['XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'])
   })
 

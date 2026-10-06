@@ -66,11 +66,12 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/008_scope_ses
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/009_audio_transcription_policy.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/010_disclosure_event_ordinals.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/011_persist_scenario_seed.sql
-psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/012_patient_concern_history_field.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/013_assessment_events.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/014_session_turn_audits.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/015_session_transcript_view.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/016_strict_session_transcript_view.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/017_audio_transcription_expiry.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/018_provider_usage_cost_attribution.sql
 ```
 
 Provision a tenant row in `tenants`, its active `(tenant_id, subject_id)` in
@@ -157,9 +158,27 @@ replica; they are not a distributed queue. Active generation is additionally
 bounded by the OpenAI client request timeout/retry settings and the scenario
 generator's single validation retry.
 
+OpenAI Responses work uses a separate in-process capacity scheduler with four
+active provider slots and two slots reserved for learner-facing interactive
+requests. Scenario setup may use at most two slots; interactive requests may
+use any free slot and are started before waiting setup work. The interactive
+lane holds at most eight waiting requests for five seconds; the setup lane
+holds at most two provider waits for fifteen seconds. Full or expired waits
+return `503` with `Retry-After: 1` before patient-turn quota or state work begins.
+These limits protect turn admission from setup load on one API process; they do
+not coordinate across replicas or establish a provider-wide account rate limit.
+
+Encounter mutation responses expose `redis_turn_state_event_commit`,
+`redis_phase_state_event_commit`, `redis_assessment_state_event_commit`, and
+`redis_terminal_state_event_commit` in `Server-Timing`. Each value measures the
+full Redis `EVAL` round trip that commits encounter state together with its
+event, not the event append in isolation. The timings are transient response
+measurements; they are not aggregated or persisted, so use request telemetry to
+evaluate the 5 ms handoff target.
+
 ## Redis live state and PostgreSQL history
 
-Run the session-history worker as a separate process next to the API:
+Run the session-history and audio-expiry workers next to the API:
 
 ```bash
 npm run api:worker
@@ -179,6 +198,23 @@ worker acknowledges the stream entry. A failed database write stays pending;
 the worker retries claimed entries after the database is available. Multiple
 worker processes cannot commit events for one session out of order because the
 session row lock and sequence check serialize their writes.
+
+The same worker process claims due audio transcription calls from PostgreSQL,
+hangs each provider call up at its persisted 15-minute deadline, and marks the
+call ended. It retries failed hangups with bounded exponential delays and
+reclaims claims older than one minute after a worker restart. Provider calls
+are created through the API, so the browser receives only the SDP answer; the
+ephemeral credential and provider call identifier stay server-side. Keep at
+least one worker process running anywhere audio transcription is enabled. The
+local `npm run dev` launcher starts it automatically.
+
+The worker emits a structured `session_event_worker_metrics` log every 30
+seconds with consumer-group pending and undelivered counts, their combined
+backlog, the age of the oldest pending Redis entry, and the maximum event-time
+to-PostgreSQL-commit delay observed in the interval. The record contains no
+session IDs or patient content. These are live operational logs, not durable
+historical aggregates; a metrics inspection failure does not interrupt event
+commit or acknowledgement.
 
 The local Redis Stack is configured with AOF enabled and `appendfsync
 everysec`, so a sudden Redis failure can lose up to roughly one second of

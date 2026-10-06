@@ -8,6 +8,13 @@ import {
   type SetupQueueLimits
 } from './bounded-setup-queue.ts'
 import {
+  BoundedProviderCapacity,
+  DEFAULT_PROVIDER_CAPACITY_LIMITS,
+  ProviderCapacityFullError,
+  ProviderCapacityTimeoutError,
+  type ProviderCapacityLimits
+} from './provider-capacity.ts'
+import {
   PATIENT_SCENARIO_POLICY_VERSION,
   PATIENT_SCENARIO_PROMPT_VERSION,
   PATIENT_SCENARIO_SCHEMA_VERSION,
@@ -18,9 +25,12 @@ import {
   AssessmentFieldsSchema,
   LearnerInputModalitySchema,
   PatientScenarioSetupResponseSchema,
-  SessionCreatedResponseSchema
+  SessionCreatedResponseSchema,
+  type ProviderUsageSample
 } from './session-contracts.ts'
 import type { PatientTurnGenerationContext } from './patient-turn.ts'
+import type { ResponsesTimingRecorder } from './response-timing.ts'
+import type { SessionCommitTimingRecorder } from './patient-state-store.ts'
 import type { PatientTurnResult, ScenarioSetupResult, SessionStore, StoreResult } from './session-store.ts'
 
 export interface RedisProbe {
@@ -37,22 +47,31 @@ export interface ApiDependencies {
   redis: RedisProbe | null
   postgres: PostgresProbe | null
   openaiConfigured: boolean
-  generateResponse: ((input: string) => Promise<{ id: string; outputText: string }>) | null
+  generateResponse: ((input: string, recordTiming?: ResponsesTimingRecorder) => Promise<{ id: string; outputText: string }>) | null
   generatePatientScenario: ((
     versions: PatientScenarioVersionPins,
     asOf: Date,
-    scenarioSeed: string
+    scenarioSeed: string,
+    recordTiming?: ResponsesTimingRecorder,
+    recordProviderUsage?: (usage: ProviderUsageSample) => Promise<void>
   ) => Promise<GeneratedPatientScenario>) | null
-  generatePatientTurn: ((context: PatientTurnGenerationContext) => Promise<{ responseId: string; output: unknown }>) | null
-  createTranscriptionCredential: (() => Promise<{
-    clientSecret: string
-    expiresAt: number
+  generatePatientTurn: ((context: PatientTurnGenerationContext, recordTiming?: ResponsesTimingRecorder) => Promise<{
+    responseId: string
+    output: unknown
+    providerUsage: ProviderUsageSample | null
+  }>) | null
+  createTranscriptionCall: ((sdpOffer: string) => Promise<{
+    answerSdp: string
+    providerCallId: string
     providerSessionId: string
   }>) | null
+  hangupTranscriptionCall: ((providerCallId: string) => Promise<void>) | null
   model: string
   jwt: JwtConfiguration
   sessionStore: SessionStore | null
   setupQueueLimits?: SetupQueueLimits
+  providerCapacityLimits?: ProviderCapacityLimits
+  recordSessionCommitTiming?: SessionCommitTimingRecorder
   allowedOrigins?: string[]
 }
 
@@ -62,6 +81,9 @@ const validInput = (value: unknown): value is string =>
 export function createApiApp(dependencies: ApiDependencies): Express {
   const app = express()
   const setupQueue = new BoundedSetupQueue(dependencies.setupQueueLimits ?? DEFAULT_SETUP_QUEUE_LIMITS)
+  const providerCapacity = new BoundedProviderCapacity(
+    dependencies.providerCapacityLimits ?? DEFAULT_PROVIDER_CAPACITY_LIMITS
+  )
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
   app.use(express.json({ limit: '1mb' }))
@@ -72,6 +94,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.setHeader('Access-Control-Allow-Origin', origin)
       response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
       response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, X-GPTMD-Tenant-ID')
+      response.setHeader('Access-Control-Expose-Headers', 'Server-Timing')
       response.setHeader('Vary', 'Origin')
     }
     if (request.method === 'OPTIONS') {
@@ -164,7 +187,12 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.status(400).json({ error: 'Current explicit audio-transcription consent is required' })
       return
     }
-    if (!dependencies.createTranscriptionCredential) {
+    const sdpOffer = request.body?.sdp
+    if (typeof sdpOffer !== 'string' || !sdpOffer.trim() || sdpOffer.length > 128_000) {
+      response.status(400).json({ error: 'A valid secure audio connection offer is required' })
+      return
+    }
+    if (!dependencies.createTranscriptionCall || !dependencies.hangupTranscriptionCall) {
       response.status(503).json({ error: 'Cross-browser speech transcription is not configured' })
       return
     }
@@ -178,11 +206,17 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         else response.status(429).json({ error: 'Monthly voice transcription allowance is exhausted' })
         return
       }
-      const credential = await dependencies.createTranscriptionCredential()
-      await store.recordAudioProviderSession(grant.grantId, credential.providerSessionId)
+      const call = await dependencies.createTranscriptionCall(sdpOffer)
+      try {
+        await store.recordAudioProviderSession(
+          grant.grantId, call.providerSessionId, call.providerCallId
+        )
+      } catch (error) {
+        await dependencies.hangupTranscriptionCall(call.providerCallId).catch(() => undefined)
+        throw error
+      }
       response.json({
-        clientSecret: credential.clientSecret,
-        expiresAt: credential.expiresAt,
+        answerSdp: call.answerSdp,
         maxDurationSeconds: 900
       })
     } catch {
@@ -238,18 +272,35 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
 
     try {
-      const quota = await dependencies.sessionStore.consumeQuota(principal, 'responses')
-      const denial = quotaResponse(quota, response)
-      if (denial) return
-    } catch {
-      response.status(503).json({ error: 'Usage authorization is unavailable' })
-      return
-    }
-
-    try {
-      const result = await dependencies.generateResponse(request.body.input)
+      let usageResult: StoreResult = 'allowed'
+      const result = await providerCapacity.run('interactive', async () => {
+        try {
+          usageResult = await dependencies.sessionStore!.consumeQuota(principal, 'responses')
+        } catch {
+          throw new Error('usage_authorization_failed')
+        }
+        if (usageResult !== 'allowed') return null
+        return dependencies.generateResponse!(
+          request.body.input,
+          (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs)
+        )
+      },
+        (waitMs) => appendServerTiming(response, 'interactive_capacity_wait', waitMs))
+      if (usageResult !== 'allowed') {
+        quotaResponse(usageResult, response)
+        return
+      }
+      if (!result) return
       response.json({ id: result.id, outputText: result.outputText })
-    } catch {
+    } catch (error) {
+      if (isProviderCapacityError(error)) {
+        providerCapacityResponse(response, 'Interactive response capacity is unavailable; retry the request.')
+        return
+      }
+      if (error instanceof Error && error.message === 'usage_authorization_failed') {
+        response.status(503).json({ error: 'Usage authorization is unavailable' })
+        return
+      }
       response.status(502).json({ error: 'OpenAI request failed' })
     }
   })
@@ -306,8 +357,16 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         principal,
         sessionId,
         idempotencyKey,
-        dependencies.generatePatientScenario!
-      ))
+        (versions, asOf, scenarioSeed, recordProviderUsage) => providerCapacity.run('setup',
+          () => dependencies.generatePatientScenario!(
+            versions,
+            asOf,
+            scenarioSeed,
+            (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs),
+            recordProviderUsage
+          ),
+          (waitMs) => appendServerTiming(response, 'setup_provider_capacity_wait', waitMs))
+      ), (waitMs) => appendServerTiming(response, 'setup_queue_wait', waitMs))
       if (typeof result === 'string') {
         if (result === 'not_found') response.status(404).json({ error: 'Session not found' })
         else if (result === 'idempotency_conflict') {
@@ -323,6 +382,10 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       }
       response.json(PatientScenarioSetupResponseSchema.parse(result))
     } catch (error) {
+      if (isProviderCapacityError(error)) {
+        providerCapacityResponse(response, 'Patient setup provider capacity is unavailable; retry with the same Idempotency-Key.')
+        return
+      }
       if (error instanceof SetupQueueFullError || error instanceof SetupQueueTimeoutError) {
         response.setHeader('Retry-After', '1')
         response.status(503).json({
@@ -370,15 +433,31 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
 
     try {
-      const result = await store.submitPatientTurn(
-        principal, sessionId, turnId, learnerMessage.trim(), dependencies.generatePatientTurn, parsedModality.data
-      )
+      const result = await providerCapacity.run('interactive',
+        () => store.submitPatientTurn(
+          principal,
+          sessionId,
+          turnId,
+          learnerMessage.trim(),
+          (context) => dependencies.generatePatientTurn!(
+            context,
+            (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs)
+          ),
+          parsedModality.data,
+          (waitMs) => appendServerTiming(response, 'session_lock_attempt', waitMs),
+          (operation, elapsedMs) => reportSessionCommitTiming(response, dependencies, operation, elapsedMs)
+        ),
+        (waitMs) => appendServerTiming(response, 'interactive_capacity_wait', waitMs))
       if (typeof result === 'object') {
         response.json({ turnId: result.turnId, text: result.patientResponse })
         return
       }
       turnResultResponse(result, response)
-    } catch {
+    } catch (error) {
+      if (isProviderCapacityError(error)) {
+        providerCapacityResponse(response, 'Interactive response capacity is unavailable; retry with the same turnId.')
+        return
+      }
       response.status(503).json({ error: 'Patient turn could not be completed' })
     }
   })
@@ -396,13 +475,19 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
-      const result = await store.beginAssessment(principal, sessionId)
+      const result = await store.beginAssessment(
+        principal,
+        sessionId,
+        (operation, elapsedMs) => reportSessionCommitTiming(response, dependencies, operation, elapsedMs)
+      )
       if (result === 'assessment') {
         response.json({ sessionId, phase: 'assessment' })
       } else if (result === 'not_found') {
         response.status(404).json({ error: 'Session not found' })
       } else if (result === 'not_ready') {
         response.status(409).json({ error: 'Complete at least one history turn before beginning assessment' })
+      } else if (result === 'turn_in_progress') {
+        response.status(409).json({ error: 'Another action is being processed for this session' })
       } else if (result === 'phase_conflict') {
         response.status(409).json({ error: 'The encounter phase could not be changed' })
       } else {
@@ -450,13 +535,21 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
-      const result = await store.submitAssessment(principal, sessionId, assessmentId, fields.data)
+      const result = await store.submitAssessment(
+        principal,
+        sessionId,
+        assessmentId,
+        fields.data,
+        (operation, elapsedMs) => reportSessionCommitTiming(response, dependencies, operation, elapsedMs)
+      )
       if (typeof result === 'object') {
         response.json(result)
       } else if (result === 'not_found') {
         response.status(404).json({ error: 'Session not found' })
       } else if (result === 'not_ready') {
         response.status(409).json({ error: 'Begin the assessment phase before submitting' })
+      } else if (result === 'turn_in_progress') {
+        response.status(409).json({ error: 'Another action is being processed for this session' })
       } else if (result === 'phase_conflict') {
         response.status(409).json({ error: 'An assessment has already been submitted for this encounter' })
       } else {
@@ -505,6 +598,47 @@ function quotaResponse(result: StoreResult, response: import('express').Response
     response.status(429).json({ error: 'Tenant usage quota exceeded' })
   }
   return true
+}
+
+function appendServerTiming(response: import('express').Response, name: string, durationMs: number): void {
+  const current = response.getHeader('Server-Timing')
+  const entry = `${name};dur=${Math.max(0, durationMs).toFixed(3)}`
+  response.setHeader('Server-Timing', current ? `${current}, ${entry}` : entry)
+}
+
+function reportSessionCommitTiming(
+  response: import('express').Response,
+  dependencies: ApiDependencies,
+  operation: Parameters<SessionCommitTimingRecorder>[0],
+  elapsedMs: number
+): void {
+  appendServerTiming(response, `redis_${operation}_state_event_commit`, elapsedMs)
+  try {
+    dependencies.recordSessionCommitTiming?.(operation, elapsedMs)
+  } catch {
+    // Operational metrics must not change the payload-critical Redis commit.
+  }
+}
+
+function appendResponseTiming(
+  response: import('express').Response,
+  stage: 'first_token' | 'completed',
+  elapsedMs: number
+): void {
+  const metric = stage === 'first_token' ? 'responses_first_token' : 'responses_completion'
+  appendServerTiming(response, metric, elapsedMs)
+}
+
+function isProviderCapacityError(error: unknown): error is ProviderCapacityFullError | ProviderCapacityTimeoutError {
+  return error instanceof ProviderCapacityFullError || error instanceof ProviderCapacityTimeoutError
+}
+
+function providerCapacityResponse(
+  response: import('express').Response,
+  message: string
+): void {
+  response.setHeader('Retry-After', '1')
+  response.status(503).json({ error: message })
 }
 
 function turnResultResponse(result: PatientTurnResult, response: import('express').Response): void {

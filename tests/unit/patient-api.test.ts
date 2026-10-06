@@ -26,10 +26,10 @@ describe('patient API response contracts', () => {
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v3',
+        promptVersion: 'patient-scenario-prompt-v6',
         modelVersion: 'gpt-6-luna',
-        schemaVersion: 1,
-        policyVersion: 'patient-scenario-policy-v1'
+        schemaVersion: 5,
+        policyVersion: 'patient-scenario-policy-v3'
       }
     }
     fetchMock.mockResolvedValue(session)
@@ -43,6 +43,25 @@ describe('patient API response contracts', () => {
 
   it.each([undefined, '', 42, null, 'session-123'])('rejects an invalid session response: %s', async (sessionId) => {
     fetchMock.mockResolvedValue({ sessionId })
+
+    await expect(usePatientApi().createSession()).rejects.toThrow(
+      'The session service returned an invalid session response.'
+    )
+  })
+
+  it.each([1, 2, 3, 4, 6])('rejects session responses pinned to unsupported scenario schema version %s', async (schemaVersion) => {
+    fetchMock.mockResolvedValue({
+      sessionId: 's'.repeat(43),
+      status: 'initializing',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      versions: {
+        promptVersion: 'patient-scenario-prompt-v6',
+        modelVersion: 'gpt-6-luna',
+        schemaVersion,
+        policyVersion: 'patient-scenario-policy-v3'
+      }
+    })
 
     await expect(usePatientApi().createSession()).rejects.toThrow(
       'The session service returned an invalid session response.'
@@ -74,10 +93,10 @@ describe('patient API response contracts', () => {
         reasonForVisit: 'Pelvic pain'
       },
       versions: {
-        promptVersion: 'patient-scenario-prompt-v3',
+        promptVersion: 'patient-scenario-prompt-v6',
         modelVersion: 'gpt-6-luna',
-        schemaVersion: 1,
-        policyVersion: 'patient-scenario-policy-v1'
+        schemaVersion: 5,
+        policyVersion: 'patient-scenario-policy-v3'
       },
       readiness: { profile: true, redis: true, conversation: true }
     }

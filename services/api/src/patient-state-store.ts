@@ -10,12 +10,15 @@ import {
   SessionStateSchema,
   SessionTurnSchema,
   SessionHistoryEventSchema,
+  SessionProviderUsageEventSchema,
   SessionAuditEventSchema,
   type SessionAuditEvent,
   AssessmentSubmissionSchema,
   type SessionHistoryEvent,
+  type SessionProviderUsageEvent,
   TerminalEventSchema,
   type AssessmentSubmission,
+  type ProviderUsageSample,
   type SessionState,
   type SessionTurn,
   type TerminalEvent
@@ -48,6 +51,11 @@ export type LivePatientState = ReadyPatientState & {
 export type TurnCommitResult =
   | { status: 'accepted' | 'duplicate'; turnId: string; sequence: number; patientResponse: string }
   | { status: 'conflict' | 'missing_state' | 'terminal' | 'not_ready' }
+export type SessionCommitOperation = 'turn' | 'phase' | 'assessment' | 'terminal'
+export type SessionCommitTimingRecorder = (
+  operation: SessionCommitOperation | 'audit_event_enqueue',
+  elapsedMs: number
+) => void
 export type PhaseChangeResult = 'accepted' | 'duplicate' | 'conflict' | 'missing_state' | 'not_ready'
 export type AssessmentCommitResult = 'accepted' | 'duplicate' | 'conflict' | 'missing_state' | 'not_ready'
 
@@ -58,10 +66,11 @@ export interface PatientStateStore {
   acquireTurnLock(sessionId: string, ownerToken: string): Promise<boolean>
   releaseTurnLock(sessionId: string, ownerToken: string): Promise<void>
   appendAuditEvent(event: SessionAuditEvent): Promise<void>
-  acceptTurn(turn: SessionTurn): Promise<TurnCommitResult>
-  changePhase(event: Extract<SessionHistoryEvent, { eventType: 'phase_changed' }>): Promise<PhaseChangeResult>
-  acceptAssessment(event: Extract<SessionHistoryEvent, { eventType: 'assessment_submitted' }>): Promise<AssessmentCommitResult>
-  recordTerminal(event: TerminalEvent): Promise<'accepted' | 'duplicate' | 'conflict' | 'missing_state'>
+  appendProviderUsage(event: SessionProviderUsageEvent): Promise<void>
+  acceptTurn(turn: SessionTurn, providerUsage: ProviderUsageSample[], recordTiming?: SessionCommitTimingRecorder): Promise<TurnCommitResult>
+  changePhase(event: Extract<SessionHistoryEvent, { eventType: 'phase_changed' }>, recordTiming?: SessionCommitTimingRecorder): Promise<PhaseChangeResult>
+  acceptAssessment(event: Extract<SessionHistoryEvent, { eventType: 'assessment_submitted' }>, recordTiming?: SessionCommitTimingRecorder): Promise<AssessmentCommitResult>
+  recordTerminal(event: TerminalEvent, recordTiming?: SessionCommitTimingRecorder): Promise<'accepted' | 'duplicate' | 'conflict' | 'missing_state'>
   restore(state: LivePatientState): Promise<'restored' | 'already_current' | 'newer_live_state' | 'expired'>
 }
 
@@ -378,7 +387,15 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       ])
     },
 
-    async acceptTurn(input) {
+    async appendProviderUsage(input) {
+      await ensureConnected()
+      const event = SessionProviderUsageEventSchema.parse(input)
+      await client.sendCommand([
+        'XADD', streamKey, '*', 'event', JSON.stringify(event)
+      ])
+    },
+
+    async acceptTurn(input, providerUsage, recordTiming) {
       await ensureConnected()
       const turn = SessionTurnSchema.parse(input)
       const current = await this.read(turn.sessionId)
@@ -408,7 +425,7 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       const event = {
         eventId: turn.turnId, sessionId: turn.sessionId, sequence: turn.sequence,
         eventOrdinal: 0,
-        eventType: 'accepted_turn', occurredAt: turn.acceptedAt, payload: turn
+        eventType: 'accepted_turn', occurredAt: turn.acceptedAt, providerUsage, payload: turn
       }
       const disclosureEvents = turn.disclosedHistoryFields.map((field, index) => {
         const factId = turn.disclosedFactIds[index]
@@ -433,14 +450,14 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
         }
       })
       const reply = { turnId: turn.turnId, sequence: turn.sequence, patientResponse: turn.patientResponse }
-      const result = asStringArray(await client.sendCommand([
+      const result = asStringArray(await measureSessionCommit('turn', recordTiming, () => client.sendCommand([
         'EVAL', COMMIT_TURN_SCRIPT, '4', sessionKey(turn.sessionId), patientKey(current.patientProfileId),
         retryKey(turn.sessionId), streamKey,
         String(current.state.currentTurnSequence), turn.sessionId, current.patientProfileId,
         JSON.stringify([event, ...disclosureEvents].map((streamEvent) => JSON.stringify(streamEvent))),
         JSON.stringify(binding), JSON.stringify(next), `t:${turn.turnId}`,
         JSON.stringify(reply)
-      ]))
+      ])))
       if (result[0] === 'accepted' || result[0] === 'duplicate') {
         const saved = result[1] ? JSON.parse(result[1]) as typeof reply : reply
         return { status: result[0], ...saved }
@@ -451,7 +468,7 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       return { status: 'conflict' }
     },
 
-    async changePhase(input) {
+    async changePhase(input, recordTiming) {
       await ensureConnected()
       const event = SessionHistoryEventSchema.parse(input)
       if (event.eventType !== 'phase_changed') return 'conflict'
@@ -463,11 +480,11 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       const lastTurn = current.acceptedTurns.at(-1)
       const expectedOrdinal = (lastTurn?.disclosedHistoryFields.length ?? 0) + 1
       if (event.sequence !== current.state.currentTurnSequence || event.eventOrdinal !== expectedOrdinal) return 'conflict'
-      const result = asStringArray(await client.sendCommand([
+      const result = asStringArray(await measureSessionCommit('phase', recordTiming, () => client.sendCommand([
         'EVAL', COMMIT_PHASE_CHANGE_SCRIPT, '3', sessionKey(event.sessionId),
         patientKey(current.patientProfileId), streamKey,
         event.sessionId, current.patientProfileId, String(current.state.currentTurnSequence), JSON.stringify(event)
-      ]))
+      ])))
       if (result[0] === 'accepted') return 'accepted'
       if (result[0] === 'duplicate') return 'duplicate'
       if (result[0] === 'missing_state') return 'missing_state'
@@ -475,7 +492,7 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       return 'conflict'
     },
 
-    async acceptAssessment(input) {
+    async acceptAssessment(input, recordTiming) {
       await ensureConnected()
       const event = SessionHistoryEventSchema.parse(input)
       if (event.eventType !== 'assessment_submitted') return 'conflict'
@@ -489,12 +506,12 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       const lastTurn = current.acceptedTurns.at(-1)
       const expectedOrdinal = (lastTurn?.disclosedHistoryFields.length ?? 0) + 2
       if (event.sequence !== current.state.currentTurnSequence || event.eventOrdinal !== expectedOrdinal) return 'conflict'
-      const result = asStringArray(await client.sendCommand([
+      const result = asStringArray(await measureSessionCommit('assessment', recordTiming, () => client.sendCommand([
         'EVAL', COMMIT_ASSESSMENT_SCRIPT, '3', sessionKey(event.sessionId),
         patientKey(current.patientProfileId), streamKey,
         event.sessionId, current.patientProfileId, event.eventId,
         String(current.state.currentTurnSequence), JSON.stringify(event)
-      ]))
+      ])))
       if (result[0] === 'accepted') return 'accepted'
       if (result[0] === 'duplicate') return 'duplicate'
       if (result[0] === 'missing_state') return 'missing_state'
@@ -502,7 +519,7 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       return 'conflict'
     },
 
-    async recordTerminal(input) {
+    async recordTerminal(input, recordTiming) {
       await ensureConnected()
       const event = TerminalEventSchema.parse(input)
       const current = await this.read(event.sessionId)
@@ -526,13 +543,13 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
         eventType: 'terminal', occurredAt: event.occurredAt, payload: event
       }
       const expiresAt = Math.floor(Date.parse(event.occurredAt) / 1000) + 20 * 60
-      const result = asStringArray(await client.sendCommand([
+      const result = asStringArray(await measureSessionCommit('terminal', recordTiming, () => client.sendCommand([
         'EVAL', COMMIT_TERMINAL_SCRIPT, '4', sessionKey(event.sessionId), patientKey(current.patientProfileId),
         retryKey(event.sessionId), streamKey,
         String(current.state.currentTurnSequence), event.sessionId, current.patientProfileId,
         JSON.stringify(binding), JSON.stringify(next), `e:${event.eventId}`, event.eventId,
         JSON.stringify(streamEvent), String(expiresAt)
-      ]))
+      ])))
       if (result[0] === 'accepted' || result[0] === 'duplicate') return result[0]
       if (result[0] === 'missing_state') return 'missing_state'
       return 'conflict'
@@ -569,4 +586,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function asStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) throw new Error('Redis event commit returned an invalid result')
   return value.map((item) => String(item))
+}
+
+async function measureSessionCommit<T>(
+  operation: SessionCommitOperation,
+  recordTiming: SessionCommitTimingRecorder | undefined,
+  commit: () => Promise<T>
+): Promise<T> {
+  if (!recordTiming) return commit()
+  const startedAt = performance.now()
+  try {
+    return await commit()
+  } finally {
+    try {
+      recordTiming(operation, Math.max(0, performance.now() - startedAt))
+    } catch {
+      // Timing observers must not affect the payload-critical commit.
+    }
+  }
 }

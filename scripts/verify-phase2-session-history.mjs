@@ -54,11 +54,12 @@ try {
     '009_audio_transcription_policy.sql',
     '010_disclosure_event_ordinals.sql',
     '011_persist_scenario_seed.sql',
-    '012_patient_concern_history_field.sql',
     '013_assessment_events.sql',
     '014_session_turn_audits.sql',
     '015_session_transcript_view.sql',
-    '016_strict_session_transcript_view.sql'
+    '016_strict_session_transcript_view.sql',
+    '017_audio_transcription_expiry.sql',
+    '018_provider_usage_cost_attribution.sql'
   ]) {
     const sql = await readFile(new URL(`../services/api/migrations/${file}`, import.meta.url), 'utf8')
     await testPool.query(sql)
@@ -94,15 +95,15 @@ try {
   await testPool.query(
     `INSERT INTO app_sessions (
        session_id, patient_profile_id, tenant_id, subject_id, status, schema_version
-     ) VALUES ($1, $2, $3, $4, 'ready', 3)`,
+     ) VALUES ($1, $2, $3, $4, 'ready', 5)`,
     [sessionId, patientProfileId, tenantId, subjectId]
   )
   await testPool.query(
     `INSERT INTO patient_scenarios (
        scenario_id, session_id, schema_version, created_at, profile_digest, profile_json,
        provider_conversation_id, prompt_version, model_version, policy_version
-     ) VALUES ($1, $2, 3, $3, $4, $5::jsonb, 'verification-conversation',
-       'patient-scenario-prompt-v3', 'gpt-6-luna', 'patient-scenario-policy-v1')`,
+     ) VALUES ($1, $2, 5, $3, $4, $5::jsonb, 'verification-conversation',
+       'patient-scenario-prompt-v5', 'gpt-6-luna', 'patient-scenario-policy-v3')`,
     [patientProfileId, sessionId, createdAt, profileDigest, JSON.stringify(profile)]
   )
 
@@ -115,7 +116,7 @@ try {
       bodyType: profile.bodyType, reasonForVisit: profile.reasonForVisit,
       diagnosis: profile.diagnosis
     },
-    conversationId: 'verification-conversation', profileDigest, schemaVersion: 3
+    conversationId: 'verification-conversation', profileDigest, schemaVersion: 5
   })
 
   const turnId = `turn-${randomBytes(6).toString('hex')}`
@@ -124,8 +125,8 @@ try {
   const turn = {
     turnId, sessionId, sequence: 1, acceptedAt, phase: 'history', learnerMessage: 'What brings you in?',
     versions: {
-      promptVersion: 'patient-turn-prompt-v5', modelVersion: 'gpt-6-luna',
-      schemaVersion: 1, policyVersion: 'patient-turn-policy-v4', rubricVersion: null
+      promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
+      schemaVersion: 3, policyVersion: 'patient-turn-policy-v6', rubricVersion: null
     },
     learnerModality: 'realtime_transcription',
     patientResponse: 'I have pelvic pain.',
@@ -138,7 +139,21 @@ try {
     historyCoverage: ['patientConcern'], disclosedHistoryFields: ['patientConcern'],
     disclosedFactIds: [factId], historyCoverageState: [], clinicalActions: []
   }
-  const commits = await Promise.all([stateStore.acceptTurn(turn), stateStore.acceptTurn(turn)])
+  const patientTurnUsage = {
+    responseId: `resp-${randomBytes(6).toString('hex')}`,
+    model: 'gpt-6-luna', serviceTier: 'default',
+    inputTokens: 120,
+    cachedInputTokens: 20,
+    cacheWriteTokens: 0,
+    outputTokens: 30,
+    totalTokens: 150,
+    durationMs: 842,
+    pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000025200000'
+  }
+  const commits = await Promise.all([
+    stateStore.acceptTurn(turn, [patientTurnUsage]),
+    stateStore.acceptTurn(turn, [patientTurnUsage])
+  ])
   if (commits[0]?.patientResponse !== turn.patientResponse || commits[1]?.patientResponse !== turn.patientResponse ||
       !commits.some((commit) => commit.status === 'duplicate')) {
     throw new Error('Redis idempotent turn retry did not return the saved reply')
@@ -166,7 +181,7 @@ try {
   }
   const turnEnvelope = {
     eventId: turn.turnId, sessionId, sequence: 1, eventOrdinal: 0, eventType: 'accepted_turn',
-    occurredAt: turn.acceptedAt, payload: turn
+    occurredAt: turn.acceptedAt, providerUsage: [patientTurnUsage], payload: turn
   }
   await redis.sendCommand(['XADD', streamKey, '*', 'event', JSON.stringify(turnEnvelope)])
   if (await worker.processOnce() !== 1) throw new Error('Worker did not acknowledge the idempotent PostgreSQL retry')
@@ -174,6 +189,70 @@ try {
     `SELECT count(*)::int AS count FROM session_events WHERE session_id = $1`, [sessionId]
   )
   if (durableTurnCount.rows[0]?.count !== 2) throw new Error('Worker retry duplicated a PostgreSQL turn or disclosure event')
+  const durableTurnUsage = await testPool.query(
+    `SELECT provider_response_id, operation, model_id, service_tier, input_tokens,
+            cached_input_tokens, cache_write_tokens, output_tokens, total_tokens,
+            estimated_cost_usd, pricing_version, duration_ms
+     FROM provider_usage WHERE session_id = $1 AND event_id = $2`, [sessionId, turnId]
+  )
+  if (durableTurnUsage.rows.length !== 1 ||
+      durableTurnUsage.rows[0]?.provider_response_id !== patientTurnUsage.responseId ||
+      durableTurnUsage.rows[0]?.operation !== 'patient_turn' ||
+      durableTurnUsage.rows[0]?.model_id !== patientTurnUsage.model ||
+      durableTurnUsage.rows[0]?.service_tier !== patientTurnUsage.serviceTier ||
+      Number(durableTurnUsage.rows[0]?.input_tokens) !== patientTurnUsage.inputTokens ||
+      Number(durableTurnUsage.rows[0]?.cached_input_tokens) !== patientTurnUsage.cachedInputTokens ||
+      Number(durableTurnUsage.rows[0]?.cache_write_tokens) !== patientTurnUsage.cacheWriteTokens ||
+      Number(durableTurnUsage.rows[0]?.output_tokens) !== patientTurnUsage.outputTokens ||
+      Number(durableTurnUsage.rows[0]?.total_tokens) !== patientTurnUsage.totalTokens ||
+      Number(durableTurnUsage.rows[0]?.estimated_cost_usd).toFixed(12) !== patientTurnUsage.estimatedCostUsd ||
+      durableTurnUsage.rows[0]?.pricing_version !== patientTurnUsage.pricingVersion ||
+      Number(durableTurnUsage.rows[0]?.duration_ms) !== patientTurnUsage.durationMs) {
+    throw new Error('Patient-turn provider usage was not durably recorded exactly once')
+  }
+
+  const scenarioGenerationUsage = {
+    responseId: `resp-${randomBytes(6).toString('hex')}`,
+    model: 'gpt-6-luna', serviceTier: 'default',
+    inputTokens: 900,
+    cachedInputTokens: 0,
+    cacheWriteTokens: 0,
+    outputTokens: 300,
+    totalTokens: 1200,
+    durationMs: 3420,
+    pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000240000000'
+  }
+  const scenarioUsageEvent = {
+    eventId: `usage_${createHash('sha256').update(`openai\0${scenarioGenerationUsage.responseId}`).digest('hex')}`,
+    sessionId,
+    eventType: 'provider_usage',
+    operation: 'scenario_generation',
+    occurredAt: new Date().toISOString(),
+    usage: scenarioGenerationUsage
+  }
+  await stateStore.appendProviderUsage(scenarioUsageEvent)
+  if (await worker.processOnce() !== 1) throw new Error('Worker did not persist the scenario-generation usage event')
+  const durableScenarioUsage = await testPool.query(
+    `SELECT operation, model_id, service_tier, input_tokens, cached_input_tokens,
+            cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd,
+            pricing_version, duration_ms
+     FROM provider_usage WHERE session_id = $1 AND provider_response_id = $2`,
+    [sessionId, scenarioGenerationUsage.responseId]
+  )
+  if (durableScenarioUsage.rows.length !== 1 ||
+      durableScenarioUsage.rows[0]?.operation !== 'scenario_generation' ||
+      durableScenarioUsage.rows[0]?.model_id !== scenarioGenerationUsage.model ||
+      durableScenarioUsage.rows[0]?.service_tier !== scenarioGenerationUsage.serviceTier ||
+      Number(durableScenarioUsage.rows[0]?.input_tokens) !== scenarioGenerationUsage.inputTokens ||
+      Number(durableScenarioUsage.rows[0]?.cached_input_tokens) !== scenarioGenerationUsage.cachedInputTokens ||
+      Number(durableScenarioUsage.rows[0]?.cache_write_tokens) !== scenarioGenerationUsage.cacheWriteTokens ||
+      Number(durableScenarioUsage.rows[0]?.output_tokens) !== scenarioGenerationUsage.outputTokens ||
+      Number(durableScenarioUsage.rows[0]?.total_tokens) !== scenarioGenerationUsage.totalTokens ||
+      Number(durableScenarioUsage.rows[0]?.estimated_cost_usd).toFixed(12) !== scenarioGenerationUsage.estimatedCostUsd ||
+      durableScenarioUsage.rows[0]?.pricing_version !== scenarioGenerationUsage.pricingVersion ||
+      Number(durableScenarioUsage.rows[0]?.duration_ms) !== scenarioGenerationUsage.durationMs) {
+    throw new Error('Scenario-generation provider usage was not durably recorded exactly once')
+  }
 
   const auditEvent = {
     eventId: randomUUID(), sessionId, eventType: 'patient_turn_validation_failure',
@@ -240,6 +319,7 @@ try {
     turnRetry: 'saved reply returned; accepted turn and disclosure events emitted atomically',
     transcript: 'ordered learner/patient utterances projected with time, phase, modality, and turn ID',
     workerRetry: 'turn and disclosure persisted once; acknowledged after commit',
+    providerUsage: 'patient-turn and scenario-generation token counts, model/tier metadata, versioned public-rate estimates, and duration persisted through the worker',
     turnFailureAudit: 'identifier-only failure metadata persisted through Redis and the PostgreSQL worker',
     assessmentOutcome: 'confirmed phase, unscored submission, and terminal events persisted in order',
     missingStateRecovery: 'rebuilt accepted patient fact, disclosure, assessment, and terminal event from PostgreSQL while preserving the immutable seeded profile',

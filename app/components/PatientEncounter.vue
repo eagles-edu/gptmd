@@ -1,5 +1,11 @@
 <template>
-  <section class="encounter-page" aria-labelledby="encounter-title">
+  <section
+    class="encounter-page"
+    aria-label="Patient encounter"
+    :data-tts-requested-at="ttsRequestedAt"
+    :data-tts-started-at="ttsStartedAt"
+    :data-tts-ended-at="ttsEndedAt"
+  >
     <v-dialog v-model="preflightOpen" persistent max-width="46rem" aria-labelledby="preflight-title">
       <v-card class="preflight-card" rounded="xl" variant="elevated">
         <v-card-text class="preflight-content">
@@ -58,66 +64,46 @@
       </v-card>
     </v-dialog>
 
-    <div class="intro">
-      <p class="eyebrow">OBGYN clinical English communication</p>
-      <h1 id="encounter-title">A patient history, one question at a time</h1>
-      <p>Practice a natural clinical interview in English with a fictional patient whose history stays consistent as details emerge.</p>
-    </div>
-
     <div class="encounter-grid">
-      <v-card class="profile-card" rounded="xl" variant="flat">
-        <div class="patient-presentation">
-          <section class="patient-chart" aria-labelledby="patient-chart-title">
-            <div class="chart-header">
-              <p>GPTpatient · New patient</p>
-              <span>CHART</span>
-            </div>
-            <h2 id="patient-chart-title">New patient chart</h2>
-            <template v-if="profile">
-              <dl class="profile-fields">
-                <div><dt>Name</dt><dd>{{ profile.fullName }}</dd></div>
-                <div><dt>Date of birth</dt><dd>{{ profile.dateOfBirth }}</dd></div>
-                <div><dt>Reason for visit</dt><dd>{{ profile.reasonForVisit }}</dd></div>
-              </dl>
-            </template>
-            <p v-else class="empty-profile">Create a session to load the patient chart.</p>
-          </section>
-          <div class="profile-image-wrap">
-            <v-img height="100%" :src="patientImage" :alt="profile ? `Portrait representing ${profile.fullName}` : 'Closed examination-room door'" cover />
-          </div>
-        </div>
-        <v-card-text>
-          <div class="status-row">
-            <span class="status-dot" :class="`status-${turnLed}`" aria-hidden="true" />
-            <span role="status" aria-live="polite">{{ turnStatusLabel }}</span>
-          </div>
-          <ol class="setup-readiness" aria-label="Patient setup readiness">
-            <li :data-ready="backendReady" :class="{ 'is-ready': backendReady }">
-              Patient profile and Redis state
-            </li>
-            <li :data-ready="imageReady" :class="{ 'is-ready': imageReady }">
-              Patient portrait loaded
-            </li>
-            <li :data-ready="inputReady" :class="{ 'is-ready': inputReady }">
-              Interview input available
-            </li>
-          </ol>
-          <p v-if="profile" class="privacy-note">The diagnosis and educator answer key stay hidden during the interview.</p>
-
-          <v-btn v-if="!profile" color="primary" :loading="pending" :disabled="pending" block @click="beginSession">
-            Create patient session
-          </v-btn>
-          <v-btn v-else color="primary" :disabled="!canEnterRoom" block @click="enterRoom">
-            {{ status === 'error' ? 'Retry readiness' : 'Enter Room' }}
-          </v-btn>
-        </v-card-text>
-      </v-card>
-
       <v-card class="conversation-card" rounded="xl" variant="flat">
+        <div class="patient-tabs" role="tablist" aria-label="Encounter workspace">
+          <button
+            id="interview-tab"
+            type="button"
+            role="tab"
+            :aria-selected="patientPanel === 'interview'"
+            aria-controls="interview-panel"
+            @click="patientPanel = 'interview'"
+          >Interview</button>
+          <button
+            id="patient-chart-tab"
+            type="button"
+            role="tab"
+            :aria-selected="patientPanel === 'chart'"
+            aria-controls="patient-chart-panel"
+            @click="patientPanel = 'chart'"
+          >Chart</button>
+        </div>
+        <section v-if="patientPanel === 'chart'" id="patient-chart-panel" class="patient-chart" role="tabpanel" aria-labelledby="patient-chart-tab">
+          <div class="chart-header">
+            <p>GPTpatient · New patient</p>
+            <span>CHART</span>
+          </div>
+          <h2 id="patient-chart-title">New patient chart</h2>
+          <template v-if="profile">
+            <dl class="profile-fields">
+              <div><dt>Name</dt><dd>{{ profile.fullName }}</dd></div>
+              <div><dt>Date of birth</dt><dd>{{ profile.dateOfBirth }}</dd></div>
+              <div><dt>Reason for visit</dt><dd>{{ profile.reasonForVisit }}</dd></div>
+            </dl>
+          </template>
+          <p v-else class="empty-profile">Create a session to load the patient chart.</p>
+        </section>
+        <section v-else id="interview-panel" class="interview-panel" role="tabpanel" aria-labelledby="interview-tab">
         <div class="conversation-heading">
           <div>
             <p class="eyebrow">{{ interactionMode === 'audio' ? 'Voice conversation' : 'Transcript mode' }}</p>
-            <h2>Clinical interview</h2>
+            <h1>Clinical interview</h1>
           </div>
           <span class="phase-chip">{{ phaseLabel }}</span>
         </div>
@@ -126,7 +112,7 @@
           <p v-if="messages.length === 0" class="transcript-empty">
             Start the session, then ask about the concern that brought the patient in. Let the history unfold through your questions.
           </p>
-          <article v-for="(message, index) in messages" :key="`${message.turnId}-${message.role}-${index}`" class="message" :class="`message-${message.role}`">
+          <article v-for="(message, index) in messages" :key="`${message.turnId}-${message.role}-${index}`" class="message" :class="`message-${message.role}`" :data-captured-at="message.capturedAt" :data-displayed-at="message.displayedAt">
             <span class="message-label">
               {{ message.role === 'doctor' ? 'You' : message.format === 'written' ? 'Patient · written note' : 'Patient' }}
             </span>
@@ -214,19 +200,58 @@
         <v-alert v-if="errorMessage" class="api-error" type="warning" variant="tonal" role="status">
           {{ errorMessage }}
         </v-alert>
+        </section>
+      </v-card>
+
+      <v-card class="profile-card" rounded="xl" variant="flat">
+        <div class="profile-image-wrap">
+          <v-img height="100%" :src="patientImage" :alt="profile ? `Portrait representing ${profile.fullName}` : 'Closed examination-room door'" position="center 20%" cover />
+        </div>
+        <v-card-text>
+          <div class="status-row">
+            <span class="status-dot" :class="`status-${turnLed}`" aria-hidden="true" />
+            <span role="status" aria-live="polite">{{ turnStatusLabel }}</span>
+          </div>
+          <ol class="setup-readiness" aria-label="Patient setup readiness">
+            <li :data-ready="backendReady" :class="{ 'is-ready': backendReady }">
+              Patient profile and Redis state
+            </li>
+            <li :data-ready="imageReady" :class="{ 'is-ready': imageReady }">
+              Patient portrait loaded
+            </li>
+            <li :data-ready="inputReady" :class="{ 'is-ready': inputReady }">
+              Interview input available
+            </li>
+          </ol>
+          <p v-if="profile" class="privacy-note">The diagnosis and educator answer key stay hidden during the interview.</p>
+
+          <v-btn v-if="!profile" color="primary" :loading="pending" :disabled="pending" block @click="beginSession">
+            Create patient session
+          </v-btn>
+          <v-btn v-else color="primary" :disabled="!canEnterRoom" block @click="enterRoom">
+            {{ status === 'error' ? 'Retry readiness' : 'Enter Room' }}
+          </v-btn>
+        </v-card-text>
       </v-card>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onBeforeUnmount, ref, shallowRef } from 'vue'
+import { computed, nextTick, onBeforeUnmount, ref, shallowRef } from 'vue'
 import { usePatientApi, type PatientProfile } from '../composables/usePatientApi'
 import type { AssessmentFields } from '../schemas/patient-api'
-import { classifyVoiceRepair, isAssessmentTransitionCue, shouldSpeakPatientReply, VoiceTurnBuffer } from '../utils/voice-turn'
+import { classifyVoiceRepair, isAssessmentTransitionCue, MicrophoneSilenceCommitter, shouldSpeakPatientReply, VoiceTurnBuffer } from '../utils/voice-turn'
 
 type EncounterStatus = 'idle' | 'creating' | 'preloading' | 'ready' | 'active' | 'working' | 'error'
-type Message = { turnId: string; role: 'doctor' | 'patient'; text: string; format?: 'written' }
+type Message = {
+  turnId: string
+  role: 'doctor' | 'patient'
+  text: string
+  format?: 'written'
+  capturedAt: string
+  displayedAt?: string
+}
 type InteractionMode = 'transcript' | 'audio'
 const api = usePatientApi()
 const sessionId = ref<string | null>(null)
@@ -257,18 +282,24 @@ const speechListening = ref(false)
 const speechMessage = ref('')
 const voiceConversationActive = ref(false)
 const patientSpeaking = ref(false)
+const ttsRequestedAt = ref<number | null>(null)
+const ttsStartedAt = ref<number | null>(null)
+const ttsEndedAt = ref<number | null>(null)
 const lastPatientReply = ref('')
 const speechVolume = ref(0.78)
 const speechRate = ref(1)
+const patientPanel = ref<'interview' | 'chart'>('interview')
 let restartVoiceTimer: ReturnType<typeof setTimeout> | undefined
 let voiceLimitTimer: ReturnType<typeof setTimeout> | undefined
 let silenceMonitor: number | undefined
-let lastAudioAt = 0
-let audioSpeechDetected = false
-let audioCommitSent = false
-const voiceTurnBuffer = new VoiceTurnBuffer((text) => {
+const microphoneSilenceCommitter = new MicrophoneSilenceCommitter(() => {
+  if (realtimeEvents.value?.readyState === 'open') {
+    realtimeEvents.value.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
+  }
+})
+const voiceTurnBuffer = new VoiceTurnBuffer((text, capturedAt) => {
   stopRecognition()
-  void handleVoiceUtterance(text)
+  void handleVoiceUtterance(text, capturedAt)
 })
 const pending = computed(() => ['creating', 'preloading', 'working'].includes(status.value))
 const canContinue = computed(() => fictionalDetailsConfirmed.value &&
@@ -318,10 +349,10 @@ const phaseLabel = computed(() => ({
 })[phase.value])
 
 const patientImage = computed(() => {
-  if (!profile.value) return '/assets/images/door.webp'
+  if (!profile.value) return '/assets/images/exam-room-entry-hallway-v3.webp'
   const age = calculateAge(profile.value.dateOfBirth)
   const decade = age < 20 ? '1019' : age < 30 ? '2029' : age < 40 ? '3039' : age < 50 ? '4049' : '5059'
-  return `/assets/images/${decade}-${profile.value.bodyType}/01.png`
+  return `/assets/images/${decade}-${profile.value.bodyType}/portrait-prototype.webp`
 })
 
 function continueWithMode(): void {
@@ -421,7 +452,6 @@ async function startRealtimeTranscription(): Promise<void> {
   try {
     const stream = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } })
     microphoneStream.value = stream
-    const grant = await api.createAudioTranscriptionGrant(sessionId.value)
     const peer = new RTCPeerConnection()
     realtimeConnection.value = peer
     for (const track of stream.getAudioTracks()) peer.addTrack(track, stream)
@@ -451,17 +481,12 @@ async function startRealtimeTranscription(): Promise<void> {
     await waitForIceGathering(peer)
     const sdp = peer.localDescription?.sdp
     if (!sdp) throw new Error('The browser could not prepare a secure audio connection.')
-    const response = await fetch('https://api.openai.com/v1/realtime/calls', {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${grant.clientSecret}`, 'Content-Type': 'application/sdp' },
-      body: sdp
-    })
-    if (!response.ok) throw new Error('OpenAI could not start live transcription for this browser.')
-    await peer.setRemoteDescription({ type: 'answer', sdp: await response.text() })
+    const call = await api.createAudioTranscriptionCall(sessionId.value, sdp)
+    await peer.setRemoteDescription({ type: 'answer', sdp: call.answerSdp })
     voiceLimitTimer = setTimeout(() => {
       stopVoiceConversation()
       speechMessage.value = 'The 15-minute voice limit was reached. Start another voice session or use Transcript mode.'
-    }, grant.maxDurationSeconds * 1_000)
+    }, call.maxDurationSeconds * 1_000)
   } catch (error) {
     fallbackToTranscript(error instanceof Error ? error.message : 'Live transcription is unavailable.')
   }
@@ -495,17 +520,7 @@ function monitorMicrophoneSilence(): void {
     let energy = 0
     for (const value of samples) energy += (value - 128) ** 2
     const rms = Math.sqrt(energy / samples.length) / 128
-    if (rms > 0.025) {
-      lastAudioAt = Date.now()
-      audioSpeechDetected = true
-      audioCommitSent = false
-    } else if (audioSpeechDetected && !audioCommitSent && Date.now() - lastAudioAt >= 700) {
-      if (realtimeEvents.value?.readyState === 'open') {
-        realtimeEvents.value.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
-      }
-      audioCommitSent = true
-      audioSpeechDetected = false
-    }
+    microphoneSilenceCommitter.sample(rms, Date.now())
     silenceMonitor = requestAnimationFrame(sample)
   }
   silenceMonitor = requestAnimationFrame(sample)
@@ -544,6 +559,7 @@ function stopVoiceConversation(): void {
   if (silenceMonitor !== undefined) cancelAnimationFrame(silenceMonitor)
   silenceMonitor = undefined
   voiceTurnBuffer.cancel()
+  microphoneSilenceCommitter.reset()
   stopRecognition()
   realtimeEvents.value?.close()
   realtimeConnection.value?.close()
@@ -575,8 +591,15 @@ function speakPatientReply(text: string): void {
   utterance.lang = 'en-US'
   utterance.volume = speechVolume.value
   utterance.rate = speechRate.value
+  ttsRequestedAt.value = performance.now()
+  ttsStartedAt.value = null
+  ttsEndedAt.value = null
   patientSpeaking.value = true
+  utterance.onstart = () => {
+    ttsStartedAt.value = performance.now()
+  }
   utterance.onend = () => {
+    ttsEndedAt.value = performance.now()
     patientSpeaking.value = false
     status.value = 'active'
     scheduleVoiceRecognition()
@@ -592,27 +615,42 @@ function speakPatientReply(text: string): void {
   window.speechSynthesis.speak(utterance)
 }
 
-async function handleVoiceUtterance(text: string): Promise<void> {
+function appendTranscriptMessage(
+  message: Omit<Message, 'capturedAt' | 'displayedAt'>,
+  capturedAt = new Date().toISOString()
+): void {
+  messages.value.push({ ...message, capturedAt })
+  void nextTick().then(() => new Promise<void>((resolve) => {
+    requestAnimationFrame(() => {
+      const renderedMessage = messages.value.find((candidate) =>
+        candidate.turnId === message.turnId && candidate.role === message.role)
+      if (renderedMessage) renderedMessage.displayedAt = new Date().toISOString()
+      resolve()
+    })
+  }))
+}
+
+async function handleVoiceUtterance(text: string, capturedAt: string): Promise<void> {
   if (phase.value === 'history' && isAssessmentTransitionCue(text)) {
-    messages.value.push({ turnId: createTurnId(), role: 'doctor', text })
+    appendTranscriptMessage({ turnId: createTurnId(), role: 'doctor', text }, capturedAt)
     openAssessmentConfirmation()
     speechMessage.value = 'Confirm whether you want to end history taking and begin the written assessment.'
     return
   }
   const action = classifyVoiceRepair(text)
   if (/\bsee you next time\b/i.test(text)) {
-    messages.value.push({ turnId: createTurnId(), role: 'doctor', text })
+    appendTranscriptMessage({ turnId: createTurnId(), role: 'doctor', text }, capturedAt)
     stopVoiceConversation()
     return
   }
   if (action === 'repeat' || action === 'louder' || action === 'slower') {
-    messages.value.push({ turnId: createTurnId(), role: 'doctor', text })
+    appendTranscriptMessage({ turnId: createTurnId(), role: 'doctor', text }, capturedAt)
     if (action === 'louder') speechVolume.value = 1
     if (action === 'slower') speechRate.value = 0.78
     repeatLastReply(action === 'repeat' ? 'Repeating the last reply.' : action === 'louder' ? 'I’ll speak louder.' : 'I’ll speak more slowly.')
     return
   }
-  await submitQuestion(text, true, action === 'write-note')
+  await submitQuestion(text, true, action === 'write-note', capturedAt)
 }
 
 function repeatLastReply(statusText = 'Repeating the last reply.'): void {
@@ -658,6 +696,7 @@ async function beginSession(): Promise<void> {
 
 function enterRoom(): void {
   if (!canEnterRoom.value) return
+  patientPanel.value = 'interview'
   roomEntered.value = true
   status.value = 'active'
 }
@@ -685,12 +724,17 @@ async function sendQuestion(): Promise<void> {
   await submitQuestion(question.value, false)
 }
 
-async function submitQuestion(input: string, voiceReply: boolean, writtenReply = false): Promise<void> {
+async function submitQuestion(
+  input: string,
+  voiceReply: boolean,
+  writtenReply = false,
+  capturedAt = new Date().toISOString()
+): Promise<void> {
   const text = input.trim()
   if (!sessionId.value || !profile.value || !roomEntered.value || !text || pending.value) return
 
   const turnId = createTurnId()
-  messages.value.push({ turnId, role: 'doctor', text })
+  appendTranscriptMessage({ turnId, role: 'doctor', text }, capturedAt)
   question.value = ''
   errorMessage.value = ''
   status.value = 'working'
@@ -700,7 +744,12 @@ async function submitQuestion(input: string, voiceReply: boolean, writtenReply =
       sessionId.value, turnId, text, voiceReply ? 'realtime_transcription' : 'typed'
     )
     lastPatientReply.value = result.text
-    messages.value.push({ turnId, role: 'patient', text: result.text, ...(writtenReply ? { format: 'written' as const } : {}) })
+    appendTranscriptMessage({
+      turnId,
+      role: 'patient',
+      text: result.text,
+      ...(writtenReply ? { format: 'written' as const } : {})
+    })
     if (voiceReply && writtenReply) {
       status.value = 'active'
       speechMessage.value = 'The patient wrote a note. Listening will resume.'
@@ -871,26 +920,6 @@ function readableError(error: unknown): string {
   padding: clamp(1.25rem, 4vw, 3rem) 1rem;
 }
 
-.intro {
-  margin: 0 auto 1.5rem;
-  max-width: 820px;
-  text-align: center;
-}
-
-.intro h1 {
-  color: var(--app-text-strong);
-  font-size: clamp(1.9rem, 4vw, 3rem);
-  line-height: 1.1;
-  margin: 0.35rem 0 0.7rem;
-}
-
-.intro > p:last-child {
-  color: var(--app-text-muted);
-  font-size: 1.06rem;
-  margin: 0 auto;
-  max-width: 680px;
-}
-
 .eyebrow {
   color: var(--app-accent);
   font-size: 0.77rem;
@@ -903,8 +932,9 @@ function readableError(error: unknown): string {
 .encounter-grid {
   align-items: start;
   display: grid;
-  gap: 1.25rem;
-  grid-template-columns: minmax(270px, 0.8fr) minmax(0, 1.4fr);
+  gap: 1rem;
+  grid-template-areas: "conversation profile";
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .profile-card, .conversation-card {
@@ -913,20 +943,53 @@ function readableError(error: unknown): string {
   box-shadow: 0 14px 36px var(--app-shadow);
 }
 
-.patient-presentation {
-  align-items: stretch;
-  display: grid;
-  gap: 0.85rem;
-  grid-template-columns: minmax(0, 1.15fr) minmax(130px, 0.85fr);
-  padding: 1rem 1rem 0;
+.profile-card {
+  grid-area: profile;
+}
+
+.conversation-card {
+  grid-area: conversation;
+}
+
+.patient-tabs {
+  border-bottom: 1px solid var(--app-border-soft);
+  display: flex;
+  gap: 0.35rem;
+  padding: 0.75rem 0.85rem 0;
+}
+
+.patient-tabs button {
+  background: transparent;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  color: var(--app-text-muted);
+  cursor: pointer;
+  font: inherit;
+  font-size: 0.9rem;
+  font-weight: 700;
+  min-height: 2.7rem;
+  padding: 0 0.9rem;
+}
+
+.patient-tabs button[aria-selected="true"] {
+  border-bottom-color: var(--app-accent);
+  color: var(--app-text-strong);
+}
+
+.patient-tabs button:focus-visible {
+  border-radius: 0.25rem;
+  outline: 2px solid var(--app-accent);
+  outline-offset: -3px;
 }
 
 .patient-chart {
   background: var(--app-surface-muted);
   border: 1px solid var(--app-border-soft);
   border-radius: 0.8rem;
+  margin: 1rem;
+  min-height: 440px;
   min-width: 0;
-  padding: 0.9rem;
+  padding: 1rem;
 }
 
 .chart-header {
@@ -952,9 +1015,7 @@ function readableError(error: unknown): string {
 
 .profile-image-wrap {
   background: var(--app-surface-muted);
-  border-radius: 0.8rem;
-  height: 100%;
-  min-height: 260px;
+  height: clamp(420px, 60vh, 680px);
   overflow: hidden;
 }
 
@@ -994,33 +1055,37 @@ function readableError(error: unknown): string {
 .status-dot {
   background: #94a3b8;
   border-radius: 50%;
-  height: 0.66rem;
-  width: 0.66rem;
+  height: 0.82rem;
+  width: 0.82rem;
 }
 
 .status-listening {
   background: var(--app-success);
-  box-shadow: 0 0 0 4px var(--app-success-soft);
+  box-shadow: 0 0 0 5px var(--app-success-soft);
 }
 
 .status-processing {
   background: var(--app-warning);
-  box-shadow: 0 0 0 4px var(--app-warning-soft);
+  box-shadow: 0 0 0 5px var(--app-warning-soft);
 }
 
 .status-inactive, .status-error {
   background: var(--app-error);
-  box-shadow: 0 0 0 4px var(--app-error-soft);
+  box-shadow: 0 0 0 5px var(--app-error-soft);
 }
 
 .status-complete {
   background: #456a8c;
 }
 
-.profile-card h2, .conversation-card h2 {
+.profile-card h2, .conversation-card h1 {
   color: var(--app-text-strong);
   font-size: 1.3rem;
   margin: 0 0 1rem;
+}
+
+.conversation-card h1 {
+  margin: 0.3rem 0 0;
 }
 
 .patient-chart h2 {
@@ -1059,7 +1124,7 @@ function readableError(error: unknown): string {
 }
 
 .conversation-card {
-  min-height: 650px;
+  min-height: 100%;
   padding: clamp(1rem, 2.5vw, 1.6rem);
 }
 
@@ -1308,16 +1373,17 @@ function readableError(error: unknown): string {
 
 @media (width <= 760px) {
   .encounter-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .patient-presentation {
+    grid-template-areas: "profile" "conversation";
     grid-template-columns: minmax(0, 1fr);
   }
 
   .profile-image-wrap {
-    height: min(65vw, 360px);
-    min-height: 220px;
+    height: min(112vw, 500px);
+    min-height: 320px;
+  }
+
+  .patient-chart {
+    min-height: 320px;
   }
 
   .conversation-card {

@@ -1,0 +1,170 @@
+- main [ref=f2e3]:
+  - generic [ref=f2e4]:
+    - link "GPTMD System Explorer home" [ref=f2e5] [cursor=pointer]:
+      - /url: "#top"
+      - generic [aria-hidden] [ref=f2e6]: G
+      - generic [ref=f2e7]:
+        - text: GPTMD
+        - strong [ref=f2e8]: System Explorer
+    - generic [ref=f2e9]:
+      - button "Whole system" [disabled] [ref=f2e11]
+      - button "Play the visit" [ref=f2e12] [cursor=pointer]:
+        - generic [aria-hidden] [ref=f2e13]: ▶
+        - text: Play the visit
+  - generic [ref=f2e14]:
+    - generic [ref=f2e15]:
+      - heading "How GPTMD works" [level=1] [ref=f2e16]
+      - paragraph [ref=f2e17]: Follow a visit from sign in to saved encounter. Select a step to see who does what.
+    - generic "Map controls" [ref=f2e18]:
+      - button "Fit map" [ref=f2e19] [cursor=pointer]
+      - generic [ref=f2e20]: Drag to move · scroll to zoom
+  - generic [ref=f2e21]:
+    - generic [ref=f2e22]:
+      - generic [ref=f2e23]:
+        - generic [ref=f2e24]: The visit, from start to finish
+        - generic [ref=f2e25]: Read left to right · click any step for details
+      - generic "Interactive map showing the GPTMD visit flow" [ref=f2e26]:
+        - generic [ref=f2e27]:
+          - generic [ref=f2e29]:
+            - generic:
+              - img:
+                - group "Edge from learner to sign-in":
+                  - generic [ref=f2e30] [cursor=pointer]: opens GPTMD
+              - img:
+                - group "Edge from sign-in to prepare":
+                  - generic [ref=f2e32] [cursor=pointer]: starts a visit
+              - img:
+                - group "Edge from prepare to talk":
+                  - generic [ref=f2e34] [cursor=pointer]: patient is ready
+              - img:
+                - group "Edge from talk to save":
+                  - generic [ref=f2e36] [cursor=pointer]: accepted exchanges
+              - img:
+                - group "Edge from save to review":
+                  - generic [ref=f2e38] [cursor=pointer]: visit is submitted
+              - img:
+                - group "Edge from talk to learner":
+                  - generic [ref=f2e40] [cursor=pointer]: patient replies
+              - generic:
+                - group [ref=f2e42] [cursor=pointer]:
+                  - article [ref=f2e43]:
+                    - generic [ref=f2e44]:
+                      - generic [ref=f2e45]: PEOPLE
+                      - generic "Works today" [ref=f2e46]
+                    - heading "Learner" [level=2] [ref=f2e47]
+                    - paragraph [ref=f2e48]: You sign in, start a visit, and talk with a simulated patient.
+                    - generic [ref=f2e49]: Works today
+                - group [ref=f2e50] [cursor=pointer]:
+                  - article [ref=f2e51]:
+                    - generic [ref=f2e52]:
+                      - generic [ref=f2e53]: ACCESS
+                      - generic "Works today" [ref=f2e54]
+                    - heading "Sign in" [level=2] [ref=f2e55]
+                    - paragraph [ref=f2e56]: The app checks who you are and which visit you may use.
+                    - generic [ref=f2e57]: Works today
+                - group [ref=f2e58] [cursor=pointer]:
+                  - article [ref=f2e59]:
+                    - generic [ref=f2e60]:
+                      - generic [ref=f2e61]: VISIT SETUP
+                      - generic "Works today" [ref=f2e62]
+                    - heading "Prepare patient" [level=2] [ref=f2e63]
+                    - paragraph [ref=f2e64]: A case is generated once, checked, and made ready for the visit.
+                    - generic [ref=f2e65]: Works today
+                - group [ref=f2e66] [cursor=pointer]:
+                  - article [ref=f2e67]:
+                    - generic [ref=f2e68]:
+                      - generic [ref=f2e69]: CONVERSATION
+                      - generic "Works today" [ref=f2e70]
+                    - heading "Talk to patient" [level=2] [ref=f2e71]
+                    - paragraph [ref=f2e72]: Your question goes to the API; the simulated patient replies.
+                    - generic [ref=f2e73]: Works today
+                - group [ref=f2e74] [cursor=pointer]:
+                  - article [ref=f2e75]:
+                    - generic [ref=f2e76]:
+                      - generic [ref=f2e77]: RECORDS
+                      - generic "Works today" [ref=f2e78]
+                    - heading "Save visit" [level=2] [ref=f2e79]
+                    - paragraph [ref=f2e80]: Live state is saved first; a worker copies lasting events.
+                    - generic [ref=f2e81]: Works today
+                - group [ref=f2e82] [cursor=pointer]:
+                  - article [ref=f2e83]:
+                    - generic [ref=f2e84]:
+                      - generic [ref=f2e85]: AFTER VISIT
+                      - generic "Planned" [ref=f2e86]
+                    - heading "Review answers" [level=2] [ref=f2e87]
+                    - paragraph [ref=f2e88]: An assessment can be submitted; scoring and educator review are next work.
+                    - generic [ref=f2e89]: Planned
+          - generic [ref=f2e90]:
+            - button [ref=f2e91]
+            - button [ref=f2e94]
+            - button [ref=f2e97]
+          - img "Map overview" [ref=f2e101]
+        - generic: Click a stage · double click or use the button to open details
+      - generic [ref=f2e110]:
+        - generic [ref=f2e111]:
+          - text: SELECTED · STEP 4
+          - paragraph [ref=f2e112]: The API assembles only the allowed case context, asks OpenAI to respond as the patient, checks the response, then saves the accepted exchange and newly disclosed facts.
+        - generic "Visit stages" [ref=f2e113]:
+          - button "1 Learner" [ref=f2e114] [cursor=pointer]:
+            - generic [ref=f2e115]: "1"
+            - generic [ref=f2e116]: Learner
+          - button "2 Sign in" [ref=f2e117] [cursor=pointer]:
+            - generic [ref=f2e118]: "2"
+            - generic [ref=f2e119]: Sign in
+          - button "3 Prepare patient" [ref=f2e120] [cursor=pointer]:
+            - generic [ref=f2e121]: "3"
+            - generic [ref=f2e122]: Prepare patient
+          - button "4 Talk to patient" [ref=f2e123] [cursor=pointer]:
+            - generic [ref=f2e124]: "4"
+            - generic [ref=f2e125]: Talk to patient
+          - button "5 Save visit" [ref=f2e126] [cursor=pointer]:
+            - generic [ref=f2e127]: "5"
+            - generic [ref=f2e128]: Save visit
+          - button "6 Review answers" [ref=f2e129] [cursor=pointer]:
+            - generic [ref=f2e130]: "6"
+            - generic [ref=f2e131]: Review answers
+        - generic [ref=f2e132]:
+          - button "Previous" [disabled] [ref=f2e133]
+          - button "Next step →" [ref=f2e134] [cursor=pointer]
+    - complementary "Selected stage details" [ref=f2e135]:
+      - generic [ref=f2e136]:
+        - generic [ref=f2e137]:
+          - generic [ref=f2e138]: SELECTED STEP
+          - generic [ref=f2e139]: STEP 1
+        - heading "Talk to patient" [level=2] [ref=f2e140]
+        - generic [ref=f2e141]: Works today
+      - paragraph [ref=f2e144]: The API assembles only the allowed case context, asks OpenAI to respond as the patient, checks the response, then saves the accepted exchange and newly disclosed facts.
+      - generic [ref=f2e145]:
+        - heading "Parts involved" [level=3] [ref=f2e146]
+        - list [ref=f2e147]:
+          - listitem [ref=f2e148]: Nuxt encounter screen
+          - listitem [ref=f2e149]: Express API
+          - listitem [ref=f2e150]: OpenAI Responses
+          - listitem [ref=f2e151]: Redis live session
+      - button "Open this part in detail" [ref=f2e152] [cursor=pointer]:
+        - text: Open this part in detail
+        - generic [aria-hidden] [ref=f2e153]: ↗
+      - generic [ref=f2e154]:
+        - heading "How to read the colors" [level=3] [ref=f2e155]
+        - generic [ref=f2e158]:
+          - strong [ref=f2e159]: Works today
+          - generic [ref=f2e160]: Implemented in the current app
+        - generic [ref=f2e163]:
+          - strong [ref=f2e164]: Partly verified
+          - generic [ref=f2e165]: A live provider step still needs checking
+        - generic [ref=f2e168]:
+          - strong [ref=f2e169]: Planned
+          - generic [ref=f2e170]: Shown for context; not implemented yet
+  - generic [ref=f2e171]:
+    - paragraph [ref=f2e172]:
+      - strong [ref=f2e173]: "Current system:"
+      - text: The learner can sign in, prepare a patient, complete text conversation turns, save visit events, and submit an unscored assessment.
+    - generic [ref=f2e174]:
+      - checkbox "Reduce animation" [ref=f2e175]
+      - text: Reduce animation
+    - generic [ref=f2e176]:
+      - text: Tour speed
+      - combobox "Tour speed" [ref=f2e177]:
+        - option "Slow"
+        - option "Normal" [selected]
+        - option "Fast"

@@ -4,6 +4,7 @@ import type { AuthenticatedPrincipal, TenantRole } from './auth.ts'
 import {
   ImmutablePatientScenarioSchema,
   SessionStateSchema,
+  SessionVersionPinsSchema,
   SessionTurnSchema,
   SessionAuditEventSchema,
   AssessmentSubmissionSchema,
@@ -11,6 +12,7 @@ import {
   TerminalEventSchema,
   type AssessmentFields,
   type AssessmentSubmission,
+  type ProviderUsageSample,
   type SessionTurn,
   type TerminalEvent,
   type LearnerInputModality
@@ -26,12 +28,12 @@ import {
 } from './patient-profile.ts'
 import { derivePatientSetup, toLearnerPatientProfile } from './patient-setup.ts'
 import { canonicalJsonStringify } from './canonical-json.ts'
-import type { LivePatientState, PatientStateStore } from './patient-state-store.ts'
+import type { LivePatientState, PatientStateStore, SessionCommitTimingRecorder } from './patient-state-store.ts'
+import { PATIENT_TURN_SCHEMA_VERSION } from './session-contracts.ts'
 import {
   validatePatientTurnOutput,
   PATIENT_TURN_POLICY_VERSION,
   PATIENT_TURN_PROMPT_VERSION,
-  PATIENT_TURN_SCHEMA_VERSION,
   type AcceptedPatientTurnContent,
   type PatientTurnGenerationContext
 } from './patient-turn.ts'
@@ -81,6 +83,7 @@ export type AssessmentResult =
   | { assessmentId: string; status: 'unscored'; submittedAt: string }
   | 'not_found'
   | 'not_ready'
+  | 'turn_in_progress'
   | 'state_unavailable'
   | 'phase_conflict'
 
@@ -93,7 +96,7 @@ export interface SessionStore {
     sessionId: string,
     consentVersion: string
   ): Promise<StoreResult | { grantId: string }>
-  recordAudioProviderSession(grantId: string, providerSessionId: string): Promise<void>
+  recordAudioProviderSession(grantId: string, providerSessionId: string, providerCallId: string): Promise<void>
   createSession(
     principal: AuthenticatedPrincipal,
     versions: PatientScenarioVersionPins
@@ -105,7 +108,8 @@ export interface SessionStore {
     generateScenario: (
       versions: PatientScenarioVersionPins,
       asOf: Date,
-      scenarioSeed: string
+      scenarioSeed: string,
+      recordProviderUsage: (usage: ProviderUsageSample) => Promise<void>
     ) => Promise<GeneratedPatientScenario>
   ): Promise<ScenarioSetupResult>
   submitPatientTurn(
@@ -113,15 +117,22 @@ export interface SessionStore {
     sessionId: string,
     turnId: string,
     learnerMessage: string,
-    generateTurn: (context: PatientTurnGenerationContext) => Promise<{ responseId: string; output: unknown }>,
-    learnerModality?: LearnerInputModality
+    generateTurn: (context: PatientTurnGenerationContext) => Promise<{
+      responseId: string
+      output: unknown
+      providerUsage: ProviderUsageSample | null
+    }>,
+    learnerModality?: LearnerInputModality,
+    onLockAttemptMeasured?: (waitMs: number) => void,
+    recordCommitTiming?: SessionCommitTimingRecorder
   ): Promise<PatientTurnResult>
-  beginAssessment(principal: AuthenticatedPrincipal, sessionId: string): Promise<'not_found' | 'not_ready' | 'state_unavailable' | 'phase_conflict' | 'assessment'>
+  beginAssessment(principal: AuthenticatedPrincipal, sessionId: string, recordCommitTiming?: SessionCommitTimingRecorder): Promise<'not_found' | 'not_ready' | 'turn_in_progress' | 'state_unavailable' | 'phase_conflict' | 'assessment'>
   submitAssessment(
     principal: AuthenticatedPrincipal,
     sessionId: string,
     assessmentId: string,
-    fields: AssessmentFields
+    fields: AssessmentFields,
+    recordCommitTiming?: SessionCommitTimingRecorder
   ): Promise<AssessmentResult>
   getOwnedSession(
     principal: AuthenticatedPrincipal,
@@ -162,7 +173,7 @@ type ScenarioRow = {
 
 const toVersionPins = (row: Pick<SetupSessionRow,
   'prompt_version' | 'model_version' | 'schema_version' | 'policy_version'
->): PatientScenarioVersionPins => ({
+>): PatientScenarioVersionPins => SessionVersionPinsSchema.parse({
   promptVersion: row.prompt_version,
   modelVersion: row.model_version,
   schemaVersion: row.schema_version,
@@ -198,27 +209,60 @@ function queueTurnAudit(
     'patient_turn_recovered_after_validation_retry' | 'patient_turn_lock_release_failure',
   sessionId: string,
   turnId: string,
-  attemptCount = 1
+  attemptCount = 1,
+  recordHandoffTiming?: SessionCommitTimingRecorder
 ): void {
   const event = SessionAuditEventSchema.parse({
     eventId: randomUUID(), sessionId, eventType, occurredAt: new Date().toISOString(),
     payload: { turnIdHash: createHash('sha256').update(turnId).digest('hex'), attemptCount }
   })
   const turnIdHash = event.payload.turnIdHash
+  const enqueueStartedAt = performance.now()
+  const reportHandoffTiming = () => {
+    try {
+      recordHandoffTiming?.('audit_event_enqueue', Math.max(0, performance.now() - enqueueStartedAt))
+    } catch {
+      // Observability must not affect the learner-facing response or audit enqueue.
+    }
+  }
   setImmediate(() => {
     if (!stateStore?.appendAuditEvent) {
+      reportHandoffTiming()
       console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_unavailable', sessionId, turnIdHash, eventType }))
       return
     }
-    void stateStore.appendAuditEvent(event).catch(() => {
+    try {
+      void stateStore.appendAuditEvent(event).then(
+        () => reportHandoffTiming(),
+        () => {
+          reportHandoffTiming()
+          console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_failed', sessionId, turnIdHash, eventType }))
+        }
+      )
+    } catch {
+      reportHandoffTiming()
       console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_failed', sessionId, turnIdHash, eventType }))
-    })
+    }
   })
+}
+
+async function releaseSessionMutationLock(
+  stateStore: PatientStateStore,
+  sessionId: string,
+  lockToken: string,
+  operation: 'assessment_phase' | 'assessment_submission'
+): Promise<void> {
+  try {
+    await stateStore.releaseTurnLock(sessionId, lockToken)
+  } catch {
+    console.warn(JSON.stringify({ event: 'session_mutation_lock_release_failed', sessionId, operation }))
+  }
 }
 
 export function createPostgresSessionStore(
   pool: Pool,
-  patientStateStore: PatientStateStore | null = null
+  patientStateStore: PatientStateStore | null = null,
+  options: { recordHandoffTiming?: SessionCommitTimingRecorder } = {}
 ): SessionStore {
   return {
     async getActiveTenantIds(subjectId) {
@@ -357,12 +401,15 @@ export function createPostgresSessionStore(
       }
     },
 
-    async recordAudioProviderSession(grantId, providerSessionId) {
-      await pool.query(
-        `UPDATE app_audio_transcription_sessions SET provider_session_id = $2
-         WHERE grant_id = $1`,
-        [grantId, providerSessionId]
+    async recordAudioProviderSession(grantId, providerSessionId, providerCallId) {
+      const result = await pool.query(
+        `UPDATE app_audio_transcription_sessions
+         SET provider_session_id = $2, provider_call_id = $3,
+             disconnect_after = now() + interval '15 minutes'
+         WHERE grant_id = $1 AND provider_call_id IS NULL`,
+        [grantId, providerSessionId, providerCallId]
       )
+      if (result.rowCount !== 1) throw new Error('Audio transcription grant could not be bound to its provider call')
     },
 
     async createSession(principal, versions) {
@@ -476,6 +523,11 @@ export function createPostgresSessionStore(
           return 'entitlement_denied'
         }
 
+        if (session.schema_version !== PATIENT_SCENARIO_SCHEMA_VERSION) {
+          await client.query('ROLLBACK')
+          return 'version_unavailable'
+        }
+
         const patientProfileId = session.patient_profile_id ?? randomBytes(32).toString('base64url')
         const scenarioSeed = session.scenario_seed ?? randomBytes(32).toString('base64url')
         if (!session.scenario_seed) {
@@ -492,6 +544,13 @@ export function createPostgresSessionStore(
         }
 
         const versions = toVersionPins(session)
+        if (
+          versions.promptVersion !== PATIENT_SCENARIO_PROMPT_VERSION ||
+          versions.policyVersion !== PATIENT_SCENARIO_POLICY_VERSION
+        ) {
+          await client.query('ROLLBACK')
+          return 'version_unavailable'
+        }
         if (session.setup_idempotency_key_hash && session.setup_idempotency_key_hash !== idempotencyHash) {
           await client.query('ROLLBACK')
           return 'idempotency_conflict'
@@ -544,22 +603,30 @@ export function createPostgresSessionStore(
           await client.query('ROLLBACK')
           return 'invalid_state'
         }
-        if (
-          versions.promptVersion !== PATIENT_SCENARIO_PROMPT_VERSION ||
-          versions.policyVersion !== PATIENT_SCENARIO_POLICY_VERSION ||
-          versions.schemaVersion !== PATIENT_SCENARIO_SCHEMA_VERSION
-        ) {
-          await client.query('ROLLBACK')
-          return 'version_unavailable'
-        }
-
         if (!patientStateStore) {
           await client.query('ROLLBACK')
           return 'state_unavailable'
         }
         await patientStateStore.initialize(sessionId, patientProfileId)
 
-        const generated = await generateScenario(versions, session.created_at, scenarioSeed)
+        const queuedProviderResponseIds = new Set<string>()
+        const recordProviderUsage = async (usage: ProviderUsageSample): Promise<void> => {
+          if (queuedProviderResponseIds.has(usage.responseId)) return
+          const usageEventId = `usage_${createHash('sha256').update(`openai\0${usage.responseId}`).digest('hex')}`
+          await patientStateStore.appendProviderUsage({
+            eventId: usageEventId,
+            sessionId,
+            eventType: 'provider_usage',
+            operation: 'scenario_generation',
+            occurredAt: new Date().toISOString(),
+            usage
+          })
+          queuedProviderResponseIds.add(usage.responseId)
+        }
+        const generated = await generateScenario(versions, session.created_at, scenarioSeed, recordProviderUsage)
+        if (generated.usage && !queuedProviderResponseIds.has(generated.usage.responseId)) {
+          await recordProviderUsage(generated.usage)
+        }
         const profile = PatientScenarioProfileSchema.parse(generated.profile)
         if (!isPatientScenarioConsistent(profile, session.created_at)) {
           throw new Error('Generated patient profile failed session-time consistency validation')
@@ -629,7 +696,10 @@ export function createPostgresSessionStore(
       }
     },
 
-    async submitPatientTurn(principal, sessionId, turnId, learnerMessage, generateTurn, learnerModality = 'typed') {
+    async submitPatientTurn(
+      principal, sessionId, turnId, learnerMessage, generateTurn, learnerModality = 'typed', onLockAttemptMeasured,
+      recordCommitTiming
+    ) {
       const owner = await pool.query(
         `SELECT s.status, s.prompt_version, s.model_version, s.schema_version, s.policy_version
          FROM app_sessions s
@@ -646,7 +716,18 @@ export function createPostgresSessionStore(
 
       await this.ensureLiveState?.(principal, sessionId)
       const lockToken = randomUUID()
-      if (!await patientStateStore.acquireTurnLock(sessionId, lockToken)) return 'turn_in_progress'
+      const lockAttemptStartedAt = performance.now()
+      let lockAcquired: boolean
+      try {
+        lockAcquired = await patientStateStore.acquireTurnLock(sessionId, lockToken)
+      } finally {
+        try {
+          onLockAttemptMeasured?.(Math.max(0, performance.now() - lockAttemptStartedAt))
+        } catch {
+          // Observability must not alter lock ownership or strand an acquired lock.
+        }
+      }
+      if (!lockAcquired) return 'turn_in_progress'
 
       try {
         const current = await patientStateStore.read(sessionId)
@@ -687,14 +768,16 @@ export function createPostgresSessionStore(
 
         let acceptedContent: AcceptedPatientTurnContent | undefined
         let validationFailed = false
+        const providerUsage: ProviderUsageSample[] = []
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          let generated: { responseId: string; output: unknown }
+          let generated: { responseId: string; output: unknown; providerUsage: ProviderUsageSample | null }
           try {
             generated = await generateTurn({ ...context, retryAfterValidationFailure: attempt > 0 })
           } catch {
-            queueTurnAudit(patientStateStore, 'patient_turn_model_failure', sessionId, turnId, attempt + 1)
+            queueTurnAudit(patientStateStore, 'patient_turn_model_failure', sessionId, turnId, attempt + 1, options.recordHandoffTiming)
             return 'provider_error'
           }
+          if (generated.providerUsage) providerUsage.push(generated.providerUsage)
           try {
             acceptedContent = validatePatientTurnOutput(
               generated.output, context, turnId, sequence, acceptedAt
@@ -705,7 +788,7 @@ export function createPostgresSessionStore(
           }
         }
         if (!acceptedContent) {
-          queueTurnAudit(patientStateStore, 'patient_turn_validation_failure', sessionId, turnId, 2)
+          queueTurnAudit(patientStateStore, 'patient_turn_validation_failure', sessionId, turnId, 2, options.recordHandoffTiming)
           acceptedContent = {
             patientResponse: 'Sorry, could you please repeat or clarify that?',
             patientReportedFacts: [],
@@ -734,9 +817,9 @@ export function createPostgresSessionStore(
           clinicalActions: []
         })
         if (validationFailed && acceptedContent.patientResponse !== 'Sorry, could you please repeat or clarify that?') {
-          queueTurnAudit(patientStateStore, 'patient_turn_recovered_after_validation_retry', sessionId, turnId, 2)
+          queueTurnAudit(patientStateStore, 'patient_turn_recovered_after_validation_retry', sessionId, turnId, 2, options.recordHandoffTiming)
         }
-        const committed = await patientStateStore.acceptTurn(turn)
+        const committed = await patientStateStore.acceptTurn(turn, providerUsage, recordCommitTiming)
         if (committed.status === 'accepted' || committed.status === 'duplicate') return committed
         if (committed.status === 'terminal') return 'not_ready'
         if (committed.status === 'not_ready') return 'not_ready'
@@ -746,12 +829,12 @@ export function createPostgresSessionStore(
         try {
           await patientStateStore.releaseTurnLock(sessionId, lockToken)
         } catch {
-          queueTurnAudit(patientStateStore, 'patient_turn_lock_release_failure', sessionId, turnId)
+          queueTurnAudit(patientStateStore, 'patient_turn_lock_release_failure', sessionId, turnId, 1, options.recordHandoffTiming)
         }
       }
     },
 
-    async beginAssessment(principal, sessionId) {
+    async beginAssessment(principal, sessionId, recordCommitTiming) {
       if (!patientStateStore) return 'state_unavailable'
       const owner = await pool.query<{ status: SessionStatus }>(
         `SELECT s.status FROM app_sessions s
@@ -764,39 +847,45 @@ export function createPostgresSessionStore(
       if (!session) return 'not_found'
       if (!['ready', 'active'].includes(session.status)) return 'not_ready'
       await this.ensureLiveState?.(principal, sessionId)
-      const current = await patientStateStore.read(sessionId)
-      if (!current) return 'state_unavailable'
-      if (current.state.phase === 'assessment') return 'assessment'
-      if (current.state.phase !== 'history' || current.state.currentTurnSequence < 1) return 'not_ready'
+      const lockToken = randomUUID()
+      if (!await patientStateStore.acquireTurnLock(sessionId, lockToken)) return 'turn_in_progress'
+      try {
+        const current = await patientStateStore.read(sessionId)
+        if (!current) return 'state_unavailable'
+        if (current.state.phase === 'assessment') return 'assessment'
+        if (current.state.phase !== 'history' || current.state.currentTurnSequence < 1) return 'not_ready'
 
-      const lastTurn = current.acceptedTurns.at(-1)
-      if (!lastTurn) return 'state_unavailable'
-      const occurredAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
-      const transitionId = randomUUID()
-      const event = {
-        eventId: transitionId,
-        sessionId,
-        sequence: current.state.currentTurnSequence,
-        eventOrdinal: lastTurn.disclosedHistoryFields.length + 1,
-        eventType: 'phase_changed' as const,
-        occurredAt,
-        payload: {
-          transitionId,
+        const lastTurn = current.acceptedTurns.at(-1)
+        if (!lastTurn) return 'state_unavailable'
+        const occurredAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
+        const transitionId = randomUUID()
+        const event = {
+          eventId: transitionId,
           sessionId,
-          turnSequence: current.state.currentTurnSequence,
-          from: 'history' as const,
-          to: 'assessment' as const,
-          occurredAt
+          sequence: current.state.currentTurnSequence,
+          eventOrdinal: lastTurn.disclosedHistoryFields.length + 1,
+          eventType: 'phase_changed' as const,
+          occurredAt,
+          payload: {
+            transitionId,
+            sessionId,
+            turnSequence: current.state.currentTurnSequence,
+            from: 'history' as const,
+            to: 'assessment' as const,
+            occurredAt
+          }
         }
+        const result = await patientStateStore.changePhase(event, recordCommitTiming)
+        if (result === 'accepted' || result === 'duplicate') return 'assessment'
+        if (result === 'missing_state') return 'state_unavailable'
+        if (result === 'not_ready') return 'not_ready'
+        return 'phase_conflict'
+      } finally {
+        await releaseSessionMutationLock(patientStateStore, sessionId, lockToken, 'assessment_phase')
       }
-      const result = await patientStateStore.changePhase(event)
-      if (result === 'accepted' || result === 'duplicate') return 'assessment'
-      if (result === 'missing_state') return 'state_unavailable'
-      if (result === 'not_ready') return 'not_ready'
-      return 'phase_conflict'
     },
 
-    async submitAssessment(principal, sessionId, assessmentId, inputFields) {
+    async submitAssessment(principal, sessionId, assessmentId, inputFields, recordCommitTiming) {
       if (!patientStateStore) return 'state_unavailable'
       const owner = await pool.query<{ status: SessionStatus }>(
         `SELECT s.status FROM app_sessions s
@@ -809,71 +898,77 @@ export function createPostgresSessionStore(
       if (!session) return 'not_found'
       if (!['ready', 'active', 'completed'].includes(session.status)) return 'not_ready'
       await this.ensureLiveState?.(principal, sessionId)
-      const current = await patientStateStore.read(sessionId)
-      if (!current) return 'state_unavailable'
-      if (current.assessment) {
-        if (current.assessment.assessmentId !== assessmentId) return 'phase_conflict'
-        const fields = AssessmentFieldsSchema.parse(inputFields)
-        if (Object.keys(fields).some((key) => fields[key as keyof typeof fields] !== current.assessment?.[key as keyof AssessmentSubmission])) {
-          return 'phase_conflict'
-        }
-        if (current.terminalEvent) {
-          return {
-            assessmentId,
-            status: 'unscored',
-            submittedAt: current.assessment.submittedAt
+      const lockToken = randomUUID()
+      if (!await patientStateStore.acquireTurnLock(sessionId, lockToken)) return 'turn_in_progress'
+      try {
+        const current = await patientStateStore.read(sessionId)
+        if (!current) return 'state_unavailable'
+        if (current.assessment) {
+          if (current.assessment.assessmentId !== assessmentId) return 'phase_conflict'
+          const fields = AssessmentFieldsSchema.parse(inputFields)
+          if (Object.keys(fields).some((key) => fields[key as keyof typeof fields] !== current.assessment?.[key as keyof AssessmentSubmission])) {
+            return 'phase_conflict'
+          }
+          if (current.terminalEvent) {
+            return {
+              assessmentId,
+              status: 'unscored',
+              submittedAt: current.assessment.submittedAt
+            }
           }
         }
-      }
-      if (!current.assessment && (current.state.phase !== 'assessment' || current.state.currentTurnSequence < 1)) return 'not_ready'
+        if (!current.assessment && (current.state.phase !== 'assessment' || current.state.currentTurnSequence < 1)) return 'not_ready'
 
-      const fields = AssessmentFieldsSchema.parse(inputFields)
-      const submission = current.assessment ?? (() => {
-        const lastTurn = current.acceptedTurns.at(-1)
-        if (!lastTurn) return null
-        const submittedAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
-        return AssessmentSubmissionSchema.parse({
-          assessmentId,
-          sessionId,
-          turnSequence: current.state.currentTurnSequence,
-          submittedAt,
-          ...fields
-        })
-      })()
-      if (!submission) return 'state_unavailable'
-      if (!current.assessment) {
-        const lastTurn = current.acceptedTurns.at(-1)
-        if (!lastTurn) return 'state_unavailable'
-        const assessmentEvent = {
-          eventId: assessmentId,
-          sessionId,
-          sequence: current.state.currentTurnSequence,
-          eventOrdinal: lastTurn.disclosedHistoryFields.length + 2,
-          eventType: 'assessment_submitted' as const,
-          occurredAt: submission.submittedAt,
-          payload: submission
+        const fields = AssessmentFieldsSchema.parse(inputFields)
+        const submission = current.assessment ?? (() => {
+          const lastTurn = current.acceptedTurns.at(-1)
+          if (!lastTurn) return null
+          const submittedAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
+          return AssessmentSubmissionSchema.parse({
+            assessmentId,
+            sessionId,
+            turnSequence: current.state.currentTurnSequence,
+            submittedAt,
+            ...fields
+          })
+        })()
+        if (!submission) return 'state_unavailable'
+        if (!current.assessment) {
+          const lastTurn = current.acceptedTurns.at(-1)
+          if (!lastTurn) return 'state_unavailable'
+          const assessmentEvent = {
+            eventId: assessmentId,
+            sessionId,
+            sequence: current.state.currentTurnSequence,
+            eventOrdinal: lastTurn.disclosedHistoryFields.length + 2,
+            eventType: 'assessment_submitted' as const,
+            occurredAt: submission.submittedAt,
+            payload: submission
+          }
+          const committed = await patientStateStore.acceptAssessment(assessmentEvent, recordCommitTiming)
+          if (committed === 'missing_state') return 'state_unavailable'
+          if (committed === 'not_ready') return 'not_ready'
+          if (committed === 'conflict') return 'phase_conflict'
         }
-        const committed = await patientStateStore.acceptAssessment(assessmentEvent)
-        if (committed === 'missing_state') return 'state_unavailable'
-        if (committed === 'not_ready') return 'not_ready'
-        if (committed === 'conflict') return 'phase_conflict'
-      }
 
-      const latest = await patientStateStore.read(sessionId)
-      if (!latest) return 'state_unavailable'
-      if (!latest.terminalEvent) {
-        const terminal: TerminalEvent = {
-          eventId: randomUUID(),
-          sessionId,
-          outcome: 'completed',
-          occurredAt: submission.submittedAt,
-          reason: null,
-          finalTurnSequence: current.state.currentTurnSequence
+        const latest = await patientStateStore.read(sessionId)
+        if (!latest) return 'state_unavailable'
+        if (!latest.terminalEvent) {
+          const terminal: TerminalEvent = {
+            eventId: randomUUID(),
+            sessionId,
+            outcome: 'completed',
+            occurredAt: submission.submittedAt,
+            reason: null,
+            finalTurnSequence: current.state.currentTurnSequence
+          }
+          const completed = await patientStateStore.recordTerminal(terminal, recordCommitTiming)
+          if (completed !== 'accepted' && completed !== 'duplicate') return 'state_unavailable'
         }
-        const completed = await patientStateStore.recordTerminal(terminal)
-        if (completed !== 'accepted' && completed !== 'duplicate') return 'state_unavailable'
+        return { assessmentId, status: 'unscored', submittedAt: submission.submittedAt }
+      } finally {
+        await releaseSessionMutationLock(patientStateStore, sessionId, lockToken, 'assessment_submission')
       }
-      return { assessmentId, status: 'unscored', submittedAt: submission.submittedAt }
     },
 
     async getOwnedSession(principal, sessionId) {
@@ -929,6 +1024,9 @@ export function createPostgresSessionStore(
       const session = selected.rows[0]
       if (!session || !session.patient_profile_id || !session.profile_json ||
           !session.profile_digest || !session.provider_conversation_id) return
+      if (session.schema_version !== PATIENT_SCENARIO_SCHEMA_VERSION) {
+        throw new Error(`Stored patient scenario schema version ${session.schema_version} is unsupported`)
+      }
 
       const profile = PatientScenarioProfileSchema.parse(session.profile_json)
       const profileDigest = createHash('sha256').update(canonicalJsonStringify(profile)).digest('hex')

@@ -2,6 +2,7 @@
   "cSpell.words": [
     "Agevar",
     "AKIA",
+    "arecord",
     "automatable",
     "Bodytype",
     "chatid",
@@ -30,6 +31,7 @@
     "nutriceutical",
     "operatorname",
     "outputjson",
+    "pannable",
     "PCOS",
     "PKCE",
     "playaudio",
@@ -54,6 +56,7 @@
     "softmax",
     "speechrecognition",
     "Supabase",
+    "topbar",
     "Tpatient",
     "transactionally",
     "ttsstt",
@@ -61,7 +64,8 @@
     "Vuetify",
     "wich",
     "worktree",
-    "Yxmz"
+    "Yxmz",
+    "zoomable"
   ],
   "curatormdStatus.profile": "gptmd-coding",
   "curatormdStatus.pollSeconds": 25,

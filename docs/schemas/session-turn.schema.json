@@ -51,9 +51,8 @@
           "maxLength": 200
         },
         "schemaVersion": {
-          "type": "integer",
-          "exclusiveMinimum": 0,
-          "maximum": 9007199254740991
+          "type": "number",
+          "const": 3
         },
         "policyVersion": {
           "type": "string",
@@ -136,10 +135,12 @@
               "surgicalHistory",
               "obstetricalHistory",
               "numberPregnancies",
+              "numberPriorPregnanciesReaching20Weeks",
               "numberMiscarriage",
               "numberStillbirths",
               "numberAbortions",
               "numberEctopicPregnancies",
+              "numberPregnanciesWithLiveBirth",
               "numberLiveBirths",
               "numberChildren",
               "tubalLigation",
@@ -236,7 +237,7 @@
       }
     },
     "historyCoverage": {
-      "maxItems": 67,
+      "maxItems": 69,
       "type": "array",
       "items": {
         "type": "string",
@@ -271,10 +272,12 @@
           "surgicalHistory",
           "obstetricalHistory",
           "numberPregnancies",
+          "numberPriorPregnanciesReaching20Weeks",
           "numberMiscarriage",
           "numberStillbirths",
           "numberAbortions",
           "numberEctopicPregnancies",
+          "numberPregnanciesWithLiveBirth",
           "numberLiveBirths",
           "numberChildren",
           "tubalLigation",
@@ -312,7 +315,7 @@
       }
     },
     "disclosedHistoryFields": {
-      "maxItems": 67,
+      "maxItems": 69,
       "type": "array",
       "items": {
         "type": "string",
@@ -347,10 +350,12 @@
           "surgicalHistory",
           "obstetricalHistory",
           "numberPregnancies",
+          "numberPriorPregnanciesReaching20Weeks",
           "numberMiscarriage",
           "numberStillbirths",
           "numberAbortions",
           "numberEctopicPregnancies",
+          "numberPregnanciesWithLiveBirth",
           "numberLiveBirths",
           "numberChildren",
           "tubalLigation",
@@ -397,7 +402,7 @@
       }
     },
     "historyCoverageState": {
-      "maxItems": 67,
+      "maxItems": 69,
       "type": "array",
       "items": {
         "type": "object",
@@ -435,10 +440,12 @@
               "surgicalHistory",
               "obstetricalHistory",
               "numberPregnancies",
+              "numberPriorPregnanciesReaching20Weeks",
               "numberMiscarriage",
               "numberStillbirths",
               "numberAbortions",
               "numberEctopicPregnancies",
+              "numberPregnanciesWithLiveBirth",
               "numberLiveBirths",
               "numberChildren",
               "tubalLigation",

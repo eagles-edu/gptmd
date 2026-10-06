@@ -1,0 +1,170 @@
+- main [ref=e3]:
+  - generic [ref=e4]:
+    - link "GPTMD System Explorer home" [ref=e5] [cursor=pointer]:
+      - /url: "#top"
+      - generic [aria-hidden] [ref=e6]: G
+      - generic [ref=e7]:
+        - text: GPTMD
+        - strong [ref=e8]: System Explorer
+    - generic [ref=e9]:
+      - button "Whole system" [disabled] [ref=e11]
+      - button "Play the visit" [ref=e12] [cursor=pointer]:
+        - generic [aria-hidden] [ref=e13]: ▶
+        - text: Play the visit
+  - generic [ref=e14]:
+    - generic [ref=e15]:
+      - heading "How GPTMD works" [level=1] [ref=e16]
+      - paragraph [ref=e17]: Follow a visit from sign in to saved encounter. Select a step to see who does what.
+    - generic "Map controls" [ref=e18]:
+      - button "Fit map" [ref=e19] [cursor=pointer]
+      - generic [ref=e20]: Drag to move · scroll to zoom
+  - generic [ref=e21]:
+    - generic [ref=e22]:
+      - generic [ref=e23]:
+        - generic [ref=e24]: The visit, from start to finish
+        - generic [ref=e25]: Read left to right · click any step for details
+      - generic "Interactive map showing the GPTMD visit flow" [ref=e26]:
+        - generic [ref=e27]:
+          - generic [ref=e29]:
+            - generic:
+              - img:
+                - group "Edge from learner to sign-in":
+                  - generic [ref=e30] [cursor=pointer]: opens GPTMD
+              - img:
+                - group "Edge from sign-in to prepare":
+                  - generic [ref=e32] [cursor=pointer]: starts a visit
+              - img:
+                - group "Edge from prepare to talk":
+                  - generic [ref=e34] [cursor=pointer]: patient is ready
+              - img:
+                - group "Edge from talk to save":
+                  - generic [ref=e36] [cursor=pointer]: accepted exchanges
+              - img:
+                - group "Edge from save to review":
+                  - generic [ref=e38] [cursor=pointer]: visit is submitted
+              - img:
+                - group "Edge from talk to learner":
+                  - generic [ref=e40] [cursor=pointer]: patient replies
+              - generic:
+                - group [ref=e42] [cursor=pointer]:
+                  - article [ref=e43]:
+                    - generic [ref=e44]:
+                      - generic [ref=e45]: PEOPLE
+                      - generic "Works today" [ref=e46]
+                    - heading "Learner" [level=2] [ref=e47]
+                    - paragraph [ref=e48]: You sign in, start a visit, and talk with a simulated patient.
+                    - generic [ref=e49]: Works today
+                - group [ref=e50] [cursor=pointer]:
+                  - article [ref=e51]:
+                    - generic [ref=e52]:
+                      - generic [ref=e53]: ACCESS
+                      - generic "Works today" [ref=e54]
+                    - heading "Sign in" [level=2] [ref=e55]
+                    - paragraph [ref=e56]: The app checks who you are and which visit you may use.
+                    - generic [ref=e57]: Works today
+                - group [ref=e58] [cursor=pointer]:
+                  - article [ref=e59]:
+                    - generic [ref=e60]:
+                      - generic [ref=e61]: VISIT SETUP
+                      - generic "Works today" [ref=e62]
+                    - heading "Prepare patient" [level=2] [ref=e63]
+                    - paragraph [ref=e64]: A case is generated once, checked, and made ready for the visit.
+                    - generic [ref=e65]: Works today
+                - group [ref=e66] [cursor=pointer]:
+                  - article [ref=e67]:
+                    - generic [ref=e68]:
+                      - generic [ref=e69]: CONVERSATION
+                      - generic "Works today" [ref=e70]
+                    - heading "Talk to patient" [level=2] [ref=e71]
+                    - paragraph [ref=e72]: Your question goes to the API; the simulated patient replies.
+                    - generic [ref=e73]: Works today
+                - group [ref=e74] [cursor=pointer]:
+                  - article [ref=e75]:
+                    - generic [ref=e76]:
+                      - generic [ref=e77]: RECORDS
+                      - generic "Works today" [ref=e78]
+                    - heading "Save visit" [level=2] [ref=e79]
+                    - paragraph [ref=e80]: Live state is saved first; a worker copies lasting events.
+                    - generic [ref=e81]: Works today
+                - group [ref=e82] [cursor=pointer]:
+                  - article [ref=e83]:
+                    - generic [ref=e84]:
+                      - generic [ref=e85]: AFTER VISIT
+                      - generic "Planned" [ref=e86]
+                    - heading "Review answers" [level=2] [ref=e87]
+                    - paragraph [ref=e88]: An assessment can be submitted; scoring and educator review are next work.
+                    - generic [ref=e89]: Planned
+          - generic [ref=e90]:
+            - button [ref=e91]
+            - button [ref=e94]
+            - button [ref=e97]
+          - img "Map overview" [ref=e101]
+        - generic: Click a stage · double click or use the button to open details
+      - generic [ref=e110]:
+        - generic [ref=e111]:
+          - text: GUIDED TOUR
+          - paragraph [ref=e112]: Play the visit to watch one action move through the system.
+        - generic "Visit stages" [ref=e113]:
+          - button "1 Learner" [ref=e114] [cursor=pointer]:
+            - generic [ref=e115]: "1"
+            - generic [ref=e116]: Learner
+          - button "2 Sign in" [ref=e117] [cursor=pointer]:
+            - generic [ref=e118]: "2"
+            - generic [ref=e119]: Sign in
+          - button "3 Prepare patient" [ref=e120] [cursor=pointer]:
+            - generic [ref=e121]: "3"
+            - generic [ref=e122]: Prepare patient
+          - button "4 Talk to patient" [ref=e123] [cursor=pointer]:
+            - generic [ref=e124]: "4"
+            - generic [ref=e125]: Talk to patient
+          - button "5 Save visit" [ref=e126] [cursor=pointer]:
+            - generic [ref=e127]: "5"
+            - generic [ref=e128]: Save visit
+          - button "6 Review answers" [ref=e129] [cursor=pointer]:
+            - generic [ref=e130]: "6"
+            - generic [ref=e131]: Review answers
+        - generic [ref=e132]:
+          - button "Previous" [disabled] [ref=e133]
+          - button "Next step →" [ref=e134] [cursor=pointer]
+    - complementary "Selected stage details" [ref=e135]:
+      - generic [ref=e136]:
+        - generic [ref=e137]:
+          - generic [ref=e138]: SELECTED STEP
+          - generic [ref=e139]: STEP 1
+        - heading "Talk to patient" [level=2] [ref=e140]
+        - generic [ref=e141]: Works today
+      - paragraph [ref=e144]: The API assembles only the allowed case context, asks OpenAI to respond as the patient, checks the response, then saves the accepted exchange and newly disclosed facts.
+      - generic [ref=e145]:
+        - heading "Parts involved" [level=3] [ref=e146]
+        - list [ref=e147]:
+          - listitem [ref=e148]: Nuxt encounter screen
+          - listitem [ref=e149]: Express API
+          - listitem [ref=e150]: OpenAI Responses
+          - listitem [ref=e151]: Redis live session
+      - button "Open this part in detail" [ref=e152] [cursor=pointer]:
+        - text: Open this part in detail
+        - generic [aria-hidden] [ref=e153]: ↗
+      - generic [ref=e154]:
+        - heading "How to read the colors" [level=3] [ref=e155]
+        - generic [ref=e158]:
+          - strong [ref=e159]: Works today
+          - generic [ref=e160]: Implemented in the current app
+        - generic [ref=e163]:
+          - strong [ref=e164]: Partly verified
+          - generic [ref=e165]: A live provider step still needs checking
+        - generic [ref=e168]:
+          - strong [ref=e169]: Planned
+          - generic [ref=e170]: Shown for context; not implemented yet
+  - generic [ref=e171]:
+    - paragraph [ref=e172]:
+      - strong [ref=e173]: "Current system:"
+      - text: The learner can sign in, prepare a patient, complete text conversation turns, save visit events, and submit an unscored assessment.
+    - generic [ref=e174]:
+      - checkbox "Reduce animation" [ref=e175]
+      - text: Reduce animation
+    - generic [ref=e176]:
+      - text: Tour speed
+      - combobox "Tour speed" [ref=e177]:
+        - option "Slow"
+        - option "Normal" [selected]
+        - option "Fast"

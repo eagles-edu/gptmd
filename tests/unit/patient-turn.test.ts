@@ -1,5 +1,5 @@
 import type OpenAI from 'openai'
-import { describe, expect, it, vi } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import {
   generatePatientTurn,
   matchHistoryCueFields,
@@ -7,6 +7,7 @@ import {
   type PatientTurnGenerationContext
 } from '../../services/api/src/patient-turn.ts'
 import type { PatientScenarioProfile } from '../../services/api/src/patient-profile.ts'
+import { createMockResponsesStream } from './helpers/openai-response-stream.ts'
 
 const profile: PatientScenarioProfile = {
   fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
@@ -26,8 +27,8 @@ const profile: PatientScenarioProfile = {
 const context: PatientTurnGenerationContext = {
   scenarioId: 'scenario-1', profile, conversationId: 'conv_private',
   versions: {
-    promptVersion: 'patient-turn-prompt-v5', modelVersion: 'gpt-6-luna',
-    schemaVersion: 1, policyVersion: 'patient-turn-policy-v4', rubricVersion: null
+    promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
+    schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
   },
   acceptedTurns: [], phase: 'history', learnerMessage: 'Do you have pain?'
 }
@@ -35,23 +36,39 @@ const acceptedAt = '2026-10-03T03:04:05.000Z'
 
 describe('patient turn generation and validation', () => {
   it('omits diagnosis from the turn projection and uses the session Conversation', async () => {
-    const parse = vi.fn().mockResolvedValue({
+    const { streamFactory } = createMockResponsesStream({
       id: 'resp-turn', status: 'completed',
+      usage: {
+        input_tokens: 42, input_tokens_details: { cached_tokens: 12 },
+        output_tokens: 9, total_tokens: 51
+      },
       output_parsed: {
         patientResponse: 'In my lower abdomen.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { parse } } as unknown as OpenAI
+    const client = { responses: { stream: streamFactory } } as unknown as OpenAI
+    const timings: Array<{ stage: string; elapsedMs: number }> = []
 
-    const result = await generatePatientTurn(client, 'gpt-6-luna', context)
+    const result = await generatePatientTurn(client, 'gpt-6-luna', context,
+      (stage, elapsedMs) => timings.push({ stage, elapsedMs }))
 
     expect(result).toEqual({
       responseId: 'resp-turn',
+      providerUsage: {
+        responseId: 'resp-turn', model: 'gpt-6-luna', serviceTier: 'default',
+        inputTokens: 42, cachedInputTokens: 12, cacheWriteTokens: 0,
+        outputTokens: 9, totalTokens: 51, durationMs: expect.any(Number),
+        pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000007620000'
+      },
       output: {
         patientResponse: 'In my lower abdomen.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const request = parse.mock.calls[0]?.[0]
+    const request = streamFactory.mock.calls[0]?.[0] as {
+      conversation?: string; input?: Array<{ content?: unknown }>
+    }
+    expect(timings.map((timing) => timing.stage)).toEqual(['first_token', 'completed'])
+    expect(timings.every((timing) => Number.isFinite(timing.elapsedMs) && timing.elapsedMs >= 0)).toBe(true)
     expect(request).toHaveProperty('conversation', 'conv_private')
     expect(request).not.toHaveProperty('previous_response_id')
     expect(request?.input?.[0]?.content).toContain('patient-centered')
@@ -89,17 +106,17 @@ describe('patient turn generation and validation', () => {
   })
 
   it('does not send profile history when the learner message matches no history cue', async () => {
-    const parse = vi.fn().mockResolvedValue({
+    const { streamFactory } = createMockResponsesStream({
       id: 'resp-turn', status: 'completed',
       output_parsed: {
         patientResponse: 'Good morning.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { parse } } as unknown as OpenAI
+    const client = { responses: { stream: streamFactory } } as unknown as OpenAI
 
     await generatePatientTurn(client, 'gpt-6-luna', { ...context, learnerMessage: 'Good morning.' })
 
-    const request = parse.mock.calls[0]?.[0]
+    const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
       patientScenario: { relevantHistory: unknown[] }
     }
@@ -108,6 +125,12 @@ describe('patient turn generation and validation', () => {
 
   it('routes onset and associated-negative questions to their own hidden fields', () => {
     expect(matchHistoryCueFields('When did the pain begin?')).toEqual(['timePainOnset'])
+    expect(matchHistoryCueFields('How many pregnancies?')).toEqual(['numberPregnancies'])
+    expect(matchHistoryCueFields('How many previous pregnancies reached 20 weeks?'))
+      .toEqual(['numberPriorPregnanciesReaching20Weeks'])
+    expect(matchHistoryCueFields('What is your parity?'))
+      .toEqual(['numberPriorPregnanciesReaching20Weeks'])
+    expect(matchHistoryCueFields('How many children do you have?')).toEqual(['numberChildren'])
     expect(matchHistoryCueFields('Do you have any other associated symptoms, such as fever or nausea?'))
       .toEqual(['miscellaneousDetailsNos'])
   })
@@ -117,13 +140,13 @@ describe('patient turn generation and validation', () => {
     ['Where is the pain, and does it travel anywhere?', 'painLocationRadiationWhere', 'Do not infer an organ or source from location alone'],
     ['Do you have period cramps?', 'dysmenorrheaHistory', 'Do not label primary or secondary dysmenorrhea from the symptom alone']
   ])('sends only PP guidance for the matched, scenario-supported %s field', async (learnerMessage, field, fidelityRule) => {
-    const parse = vi.fn().mockResolvedValue({
+    const { streamFactory } = createMockResponsesStream({
       id: 'resp-turn', status: 'completed',
       output_parsed: {
         patientResponse: 'It feels like cramps.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { parse } } as unknown as OpenAI
+    const client = { responses: { stream: streamFactory } } as unknown as OpenAI
 
     const fieldContext: PatientTurnGenerationContext = {
       ...context,
@@ -135,7 +158,7 @@ describe('patient turn generation and validation', () => {
     }
     await generatePatientTurn(client, 'gpt-6-luna', fieldContext)
 
-    const request = parse.mock.calls[0]?.[0]
+    const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
       matchedFieldResponseGuidance: Record<string, { commonPatientWording: string; clinicianAssistedGuidance: string }>
     }
@@ -145,21 +168,70 @@ describe('patient turn generation and validation', () => {
   })
 
   it('omits matched PP guidance when the case has no corresponding history field', async () => {
-    const parse = vi.fn().mockResolvedValue({
+    const { streamFactory } = createMockResponsesStream({
       id: 'resp-turn', status: 'completed',
       output_parsed: {
         patientResponse: 'I’m not sure.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { parse } } as unknown as OpenAI
+    const client = { responses: { stream: streamFactory } } as unknown as OpenAI
 
     await generatePatientTurn(client, 'gpt-6-luna', { ...context, learnerMessage: 'How would you describe the pain?' })
 
-    const request = parse.mock.calls[0]?.[0]
+    const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
       matchedFieldResponseGuidance: Record<string, unknown>
     }
     expect(userInput.matchedFieldResponseGuidance).toEqual({})
+  })
+
+  it('permits an approximate onset estimate only as an asked, generated patient report', async () => {
+    const onsetContext: PatientTurnGenerationContext = {
+      ...context,
+      learnerMessage: 'When did the pain begin?',
+      profile: {
+        ...profile,
+        history: [{ field: 'timePainOnset', status: 'unknown', value: null }]
+      }
+    }
+    const { streamFactory } = createMockResponsesStream({
+      id: 'resp-onset', status: 'completed',
+      output_parsed: {
+        patientResponse: 'It started about a week ago.',
+        proposedFacts: [{ field: 'timePainOnset', value: 'About a week ago' }],
+        historyCoverage: ['timePainOnset'],
+        disclosedHistoryFields: ['timePainOnset']
+      }
+    })
+    const client = { responses: { stream: streamFactory } } as unknown as OpenAI
+
+    await generatePatientTurn(client, 'gpt-6-luna', onsetContext)
+
+    const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
+    expect(request?.input?.[0]?.content)
+      .toContain('brief, approximate, plausible patient-reported timeframe')
+    expect(request?.input?.[0]?.content)
+      .toContain('never back-calculate an exact date from the encounter date or infer onset from cycle pattern')
+    const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
+      matchedHistoryTopics: string[]
+      matchedFieldResponseGuidance: Record<string, { clinicianAssistedGuidance: string }>
+    }
+    expect(userInput.matchedHistoryTopics).toEqual(['timePainOnset'])
+    expect(userInput.matchedFieldResponseGuidance.timePainOnset?.clinicianAssistedGuidance)
+      .toContain('may give a brief approximate estimate only when asked')
+
+    const accepted = validatePatientTurnOutput({
+      patientResponse: 'It started about a week ago.',
+      proposedFacts: [{ field: 'timePainOnset', value: 'About a week ago' }],
+      historyCoverage: ['timePainOnset'],
+      disclosedHistoryFields: ['timePainOnset']
+    }, onsetContext, 'turn-onset', 1, acceptedAt)
+    expect(accepted.patientReportedFacts).toMatchObject([{
+      field: 'timePainOnset',
+      value: 'About a week ago',
+      source: 'patient_reported',
+      turnId: 'turn-onset'
+    }])
   })
 
   it('accepts an on-demand catchall response only when the learner asks about associated symptoms', () => {
@@ -233,7 +305,7 @@ describe('patient turn generation and validation', () => {
         history: [{ field: 'patientConcern', status: 'unknown', value: null }]
       }
     }
-    const parse = vi.fn().mockResolvedValue({
+    const { streamFactory } = createMockResponsesStream({
       id: 'resp-concern', status: 'completed',
       output_parsed: {
         patientResponse: 'I worry the pain might affect my ability to have children.',
@@ -241,10 +313,10 @@ describe('patient turn generation and validation', () => {
         historyCoverage: ['patientConcern'], disclosedHistoryFields: ['patientConcern']
       }
     })
-    const client = { responses: { parse } } as unknown as OpenAI
+    const client = { responses: { stream: streamFactory } } as unknown as OpenAI
 
     await generatePatientTurn(client, 'gpt-6-luna', concernContext)
-    const request = parse.mock.calls[0]?.[0]
+    const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
       patientScenario: { relevantHistory: unknown[] }
     }
@@ -259,15 +331,16 @@ describe('patient turn generation and validation', () => {
       field: 'patientConcern', source: 'patient_reported'
     }])
 
-    const greetingParse = vi.fn().mockResolvedValue({
+    const { streamFactory: greetingStream } = createMockResponsesStream({
       id: 'resp-greeting', status: 'completed',
       output_parsed: {
         patientResponse: 'Hello.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    await generatePatientTurn({ responses: { parse: greetingParse } } as unknown as OpenAI,
+    await generatePatientTurn({ responses: { stream: greetingStream } } as unknown as OpenAI,
       'gpt-6-luna', { ...concernContext, learnerMessage: 'Hello.' })
-    const greetingInput = JSON.parse(String(greetingParse.mock.calls[0]?.[0]?.input?.[1]?.content)) as {
+    const greetingRequest = greetingStream.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
+    const greetingInput = JSON.parse(String(greetingRequest.input?.[1]?.content)) as {
       patientScenario: { relevantHistory: unknown[] }
     }
     expect(greetingInput.patientScenario.relevantHistory).toEqual([])
@@ -320,13 +393,14 @@ describe('patient turn generation and validation', () => {
 
   it('checks obstetric outcome counts before accepting an expansion', () => {
     const fields = [
-      ['numberPregnancies', 7], ['numberStillbirths', 1], ['numberMiscarriage', 2],
-      ['numberAbortions', 0], ['numberEctopicPregnancies', 0], ['numberLiveBirths', 4],
+      ['numberPregnancies', 7], ['numberPriorPregnanciesReaching20Weeks', 5], ['numberStillbirths', 1], ['numberMiscarriage', 2],
+      ['numberAbortions', 0], ['numberEctopicPregnancies', 0],
+      ['numberPregnanciesWithLiveBirth', 4], ['numberLiveBirths', 5],
       ['numberChildren', 4]
     ] as const
     const obstetricContext: PatientTurnGenerationContext = {
       ...context,
-      learnerMessage: 'How many pregnancies, miscarriages, stillbirths, abortions, ectopic pregnancies, live births, and children?',
+      learnerMessage: 'How many pregnancies have you had, how many previous pregnancies reached 20 weeks, miscarriages, stillbirths, abortions, ectopic pregnancies, pregnancies with a live birth, babies born alive, and children?',
       profile: {
         ...profile,
         currentPregnancyStatus: 'not_pregnant',
@@ -337,7 +411,7 @@ describe('patient turn generation and validation', () => {
     const historyCoverage = fields.map(([field]) => field)
     const disclosedHistoryFields = fields.map(([field]) => field)
     const accepted = validatePatientTurnOutput({
-      patientResponse: 'I have been pregnant seven times with those outcomes and four children.',
+      patientResponse: 'I have been pregnant seven times. Five made it to 20 weeks, five babies were born alive, and I have four children now.',
       proposedFacts, historyCoverage, disclosedHistoryFields
     }, obstetricContext, 'turn-ob-1', 1, acceptedAt)
     expect(accepted.patientReportedFacts).toHaveLength(fields.length)
@@ -349,6 +423,14 @@ describe('patient turn generation and validation', () => {
         : fact),
       historyCoverage, disclosedHistoryFields
     }, obstetricContext, 'turn-ob-2', 1, acceptedAt)).toThrow('do not match the completed pregnancy count')
+
+    expect(() => validatePatientTurnOutput({
+      patientResponse: 'I have been pregnant seven times, and all seven reached 20 weeks.',
+      proposedFacts: proposedFacts.map((fact) => fact.field === 'numberPriorPregnanciesReaching20Weeks'
+        ? { ...fact, value: 8 }
+        : fact),
+      historyCoverage, disclosedHistoryFields
+    }, obstetricContext, 'turn-ob-invalid-parity', 1, acceptedAt)).toThrow('do not match the completed pregnancy count')
   })
 
   it('rejects ISO last-menstrual-period dates outside the birth-to-encounter chronology', () => {
@@ -380,13 +462,13 @@ describe('patient turn generation and validation', () => {
 
   it('excludes the active pregnancy from completed obstetric outcomes', () => {
     const fields = [
-      ['numberPregnancies', 3], ['numberStillbirths', 0], ['numberMiscarriage', 1],
-      ['numberAbortions', 0], ['numberEctopicPregnancies', 0], ['numberLiveBirths', 1],
-      ['numberChildren', 1]
+      ['numberPregnancies', 3], ['numberPriorPregnanciesReaching20Weeks', 1], ['numberStillbirths', 0], ['numberMiscarriage', 1],
+      ['numberAbortions', 0], ['numberEctopicPregnancies', 0],
+      ['numberPregnanciesWithLiveBirth', 1], ['numberLiveBirths', 2], ['numberChildren', 2]
     ] as const
     const obstetricContext: PatientTurnGenerationContext = {
       ...context,
-      learnerMessage: 'How many pregnancies, miscarriages, stillbirths, abortions, ectopic pregnancies, live births, and children?',
+      learnerMessage: 'How many pregnancies have you had, how many previous pregnancies reached 20 weeks, miscarriages, stillbirths, abortions, ectopic pregnancies, pregnancies with a live birth, babies born alive, and children?',
       profile: {
         ...profile,
         currentPregnancyStatus: 'pregnant',
@@ -398,7 +480,7 @@ describe('patient turn generation and validation', () => {
     const disclosedHistoryFields = fields.map(([field]) => field)
 
     expect(() => validatePatientTurnOutput({
-      patientResponse: 'I am pregnant now. I had one miscarriage and one live birth.',
+      patientResponse: 'I am pregnant now. One earlier pregnancy reached 20 weeks and had twins born alive; another ended in miscarriage.',
       proposedFacts, historyCoverage, disclosedHistoryFields
     }, obstetricContext, 'turn-current-pregnancy', 1, acceptedAt)).not.toThrow()
 

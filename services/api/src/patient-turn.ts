@@ -3,6 +3,8 @@ import type OpenAI from 'openai'
 import { zodTextFormat } from 'openai/helpers/zod'
 import { z } from 'zod'
 import { canonicalJsonStringify } from './canonical-json.ts'
+import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.ts'
+import { estimateOpenAiResponseCost } from './provider-cost.ts'
 import {
   PATIENT_PROFILE_RESPONSE_GUIDANCE,
   PATIENT_PROFILE_RESPONSE_POLICY
@@ -21,13 +23,13 @@ import {
   type HistoryCoverageState,
   type EncounterPhase,
   type PatientReportedFactExpansion,
+  type ProviderUsageSample,
   type SessionTurn,
   type SessionTurnVersionPins
 } from './session-contracts.ts'
 
-export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v5'
-export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v4'
-export const PATIENT_TURN_SCHEMA_VERSION = 1
+export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v7'
+export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v7'
 
 const ProposedFactSchema = z.object({
   field: PatientReportedFactExpansionSchema.shape.field,
@@ -94,12 +96,14 @@ const HISTORY_CUES: Record<PatientScenarioProfile['history'][number]['field'], s
   surgicalHistory: ['surgery', 'surgical history', 'operation'],
   obstetricalHistory: ['pregnancy history', 'obstetric history', 'pregnancy outcome', 'birth history'],
   numberPregnancies: ['pregnancies', 'pregnant before', 'gravida'],
+  numberPriorPregnanciesReaching20Weeks: ['pregnancies that reached 20 weeks', 'previous pregnancies reached 20 weeks', 'pregnancies reaching 20 weeks', 'pregnancies that made it to 20 weeks', 'parity'],
   numberMiscarriage: ['miscarriages', 'miscarriage'],
   numberStillbirths: ['stillbirths', 'stillbirth'],
   numberAbortions: ['abortions', 'abortion'],
   numberEctopicPregnancies: ['ectopic pregnancy', 'ectopic pregnancies'],
-  numberLiveBirths: ['live births', 'children born alive'],
-  numberChildren: ['children', 'child', 'parity'],
+  numberPregnanciesWithLiveBirth: ['pregnancies with a live birth', 'pregnancies with live births', 'pregnancies resulting in a live birth'],
+  numberLiveBirths: ['live births', 'children born alive', 'babies born alive'],
+  numberChildren: ['children', 'child'],
   tubalLigation: ['tubal ligation', 'tubes tied'],
   hysterectomyHistory: ['hysterectomy', 'uterus removed'],
   perimenopauseStatus: ['perimenopause', 'perimenopausal'],
@@ -148,8 +152,19 @@ const normalizedWords = (value: string): string => value.toLocaleLowerCase().rep
 
 export function matchHistoryCueFields(learnerMessage: string): PatientScenarioProfile['history'][number]['field'][] {
   const message = ` ${normalizedWords(learnerMessage)} `
-  return PATIENT_HISTORY_FIELDS.filter((field) =>
+  const matched = PATIENT_HISTORY_FIELDS.filter((field) =>
     HISTORY_CUES[field].some((cue) => message.includes(` ${normalizedWords(cue)} `)))
+  const explicitTotalPregnancies = [
+    'how many pregnancies have you had', 'total number of pregnancies',
+    'times have you been pregnant', 'gravida'
+  ].some((cue) => message.includes(` ${normalizedWords(cue)} `))
+  const specificObstetricTopic = matched.some((field) =>
+    field !== 'numberPregnancies' && field !== 'obstetricalHistory' &&
+    ['numberPriorPregnanciesReaching20Weeks', 'numberMiscarriage', 'numberStillbirths',
+      'numberAbortions', 'numberEctopicPregnancies', 'numberPregnanciesWithLiveBirth',
+      'numberLiveBirths', 'numberChildren'].includes(field))
+  return matched.filter((field) =>
+    field !== 'numberPregnancies' || !specificObstetricTopic || explicitTotalPregnancies)
 }
 
 const patientTurnInstructions = [
@@ -158,8 +173,9 @@ const patientTurnInstructions = [
   'Do not reveal or rely on any private diagnosis, answer key, rubric, or clinician-only interpretation, including information already present in this session Conversation.',
   'Do not invent or volunteer details for history fields that are not directly matched to the learner’s question. When a directly matched scenario history field is marked unknown, you may provide a concise, case-consistent patient-reported answer to the asked topic and record it as a proposed fact so it remains stable. Do not create a fact if the patient hesitates or declines to answer.',
   'The unknown miscellaneousDetailsNos history field is an expandable patient-reported catchall: when the learner asks about other or associated symptoms, relevant negatives, or a specific related symptom, create details only for what was asked. If an accepted catchall fact exists, use only its recorded detail and do not add contradictory or unrecorded facts.',
-  'For an unknown timePainOnset field, answer an onset question with a plausible, internally consistent patient-reported timeframe and record it as a proposed fact. Keep it stable in later turns; never derive onset from the encounter date or invent a precise date unless the scenario supports one.',
+  'For an unknown timePainOnset field, answer an onset question with a brief, approximate, plausible patient-reported timeframe and record it as a proposed fact. This is an on-demand generated patient report, not a seeded fact. Keep it stable in later turns; never back-calculate an exact date from the encounter date or infer onset from cycle pattern.',
   'Use matchedFieldResponseGuidance only for fields matched to the latest question. Common patient wording is illustrative, not a required answer. Treat clinician-assisted guidance as an internal fidelity constraint: preserve only the details actually present in the scenario or patient answer, do not infer missing details, and do not speak clinician wording as the patient.',
+  'For an unknown numberPriorPregnanciesReaching20Weeks field, answer only when the learner asks about parity or pregnancies reaching 20 weeks. This patient-reported count covers prior pregnancies reaching 20 weeks or later, once per pregnancy, and excludes the current pregnancy. Keep it within completed gravidity; do not derive it from pregnancy outcomes, infant count, or living children.',
   'Answer naturally in the patient’s voice and disclose relevant information only in response to the learner.',
   'Conversation repair is mutual and follows a volley: answer the other speaker’s repair request so they can hit the conversation back. When you do not understand the learner, use one repair step at a time in this order: first ask them to repeat; they may repeat up to three or four times if needed. If you still do not understand, ask them to speak louder, slower, or more simply. Next ask them to explain an unfamiliar word or phrase another way. Then ask them to spell it. If the conversation still cannot be repaired, ask them to write it down in English. When the learner asks you for repair, respond to that specific request first: repeat the last patient reply, clarify it in simpler or different words, spell the requested word, or provide the patient’s answer as a written English note when asked to write it down. Preserve the original English wording; do not translate it. Do not skip ahead, stack several repair requests together, or pretend to understand; advance only when the current step has not resolved understanding.',
   'For sexual, reproductive, substance-use, mental-health, relationship, home-safety, or abuse history, be respectful, nonjudgmental, and patient-centered.',
@@ -176,8 +192,9 @@ const patientTurnInstructions = [
 export async function generatePatientTurn(
   client: OpenAI,
   model: string,
-  context: PatientTurnGenerationContext
-): Promise<{ responseId: string; output: unknown }> {
+  context: PatientTurnGenerationContext,
+  recordTiming?: ResponsesTimingRecorder
+): Promise<{ responseId: string; output: unknown; providerUsage: ProviderUsageSample | null }> {
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
   const scenarioFields = new Set(context.profile.history.map((entry) => entry.field))
   const acceptedFacts = context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts)
@@ -190,7 +207,9 @@ export async function generatePatientTurn(
         ? { field: entry.field, status: 'known', value: accepted.value, source: 'patient_reported' }
         : { ...entry, source: entry.status === 'unknown' ? 'expandable_seed_cue' : 'scenario_seed' }
     })
-  const response = await client.responses.parse({
+  const startedAt = performance.now()
+  let firstTokenReported = false
+  const stream = client.responses.stream({
     model,
     conversation: context.conversationId,
     input: [
@@ -230,10 +249,47 @@ export async function generatePatientTurn(
     ],
     text: { format: zodTextFormat(PatientTurnModelOutputSchema, 'patient_turn') }
   })
+  const reportFirstToken = () => {
+    if (firstTokenReported) return
+    firstTokenReported = true
+    reportResponsesTiming(recordTiming, 'first_token', startedAt)
+  }
+  stream.on('response.output_text.delta', reportFirstToken)
+  stream.on('response.refusal.delta', reportFirstToken)
+  stream.on('response.completed', () => reportResponsesTiming(recordTiming, 'completed', startedAt))
+  const response = await stream.finalResponse()
   if (response.status !== 'completed' || !response.output_parsed) {
     throw new Error('Patient turn response was incomplete or refused')
   }
-  return { responseId: response.id, output: response.output_parsed }
+  const usage = response.usage
+  const providerUsage: ProviderUsageSample | null = usage ? (() => {
+    const cost = estimateOpenAiResponseCost({
+      model: response.model,
+      serviceTier: response.service_tier ?? null,
+      inputTokens: usage.input_tokens,
+      cachedInputTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+      cacheWriteTokens: usage.input_tokens_details?.cache_write_tokens ?? 0,
+      outputTokens: usage.output_tokens
+    })
+    return {
+      responseId: response.id,
+      model: response.model,
+      serviceTier: response.service_tier ?? null,
+      inputTokens: usage.input_tokens,
+      cachedInputTokens: usage.input_tokens_details?.cached_tokens ?? 0,
+      cacheWriteTokens: usage.input_tokens_details?.cache_write_tokens ?? 0,
+      outputTokens: usage.output_tokens,
+      totalTokens: usage.total_tokens,
+      durationMs: Math.max(0, Math.round(performance.now() - startedAt)),
+      pricingVersion: cost?.pricingVersion ?? null,
+      estimatedCostUsd: cost?.estimatedCostUsd ?? null
+    }
+  })() : null
+  return {
+    responseId: response.id,
+    output: response.output_parsed,
+    providerUsage
+  }
 }
 
 /** Reject unsupported or conflicting expansions before they enter canonical session state. */

@@ -111,3 +111,24 @@ never commits or modifies application source.
 
 <!-- curatormd:record_id=c454d4b1abb9eb376dba5972b0f8d20c;content_sha256=80ddf7c286be290ba1edec30f9f7610b197ce70ae2e3d365666936a7a34d2869 -->
 <!-- curatormd:fingerprint=c652858f314e58e0dadbaa10cb6e04fe83294d1748c44c0d331a9f7533a4b684 -->
+
+## 2026-10-06 — Require the current first-generation patient turn contract
+
+**Decision:** ## Require the current first-generation patient turn contract
+
+**Beginning — trigger and context:** While modernizing the patient encounter checklist, GPTMD connected patient-profile response guidance to question-matched turn generation and added PP section IDs to accepted patient facts. A prior implementation note said older saved turns would remain readable. The user clarified that GPTMD is a refactored first-generation system and explicitly directed that older turn compatibility fallbacks should not be added.
+
+**Middle — decisions and work:** Made the accepted patient turn and its patient-reported fact expansion strict: section, modality, phase, version pins, coverage arrays, and event ordinal must be present in the current contract. Removed defaults that silently filled missing turn arrays, phase, and accepted/terminal event ordinal; removed the duplicate-turn modality fallback to typed; and made patient-state acceptance take phase from the validated turn. Updated generated JSON schemas, checklist/task-plan wording, and regression tests so incomplete records are rejected and malformed stream entries are left pending rather than acknowledged.
+
+**End — outcome and verification:** The focused five-file test selection passed all 59 tests. The full npm run check passed lint, style and HTML validation, type checks, all 135 unit tests, API build, schema and diagram checks, production build, 33 standard Playwright tests, and 15 preflight Playwright tests across Chromium, Firefox, and WebKit. Existing payloads that omit current required fields are intentionally not adapted; no data backfill or destructive cleanup was performed.
+
+**Future utility:** Gives future turn-contract changes a clear first-generation rule: validate the current serialized shape at Redis and PostgreSQL boundaries, and do not add compatibility shims for earlier development records without an explicit product decision.
+
+**Project impact:** Observed: current producers, generated schemas, unit checks, and browser suite pass with required turn fields. Expected: strict parsing prevents incomplete patient disclosures and event metadata from entering the durable history. Older development records missing the new fields will fail validation and remain unacknowledged for repair.
+
+**Rationale:** Gives future turn-contract changes a clear first-generation rule: validate the current serialized shape at Redis and PostgreSQL boundaries, and do not add compatibility shims for earlier development records without an explicit product decision.
+
+**Impact:** Observed: current producers, generated schemas, unit checks, and browser suite pass with required turn fields. Expected: strict parsing prevents incomplete patient disclosures and event metadata from entering the durable history. Older development records missing the new fields will fail validation and remain unacknowledged for repair.
+
+<!-- curatormd:record_id=498fe326fdde3e8e8287cea87042e725;content_sha256=f2a07cb56c718b0cb5e75aaf79971c64cd584f7c7f216fb016b14716db2d40d9 -->
+<!-- curatormd:fingerprint=4be923f12c3b6fc97128ba99eb327d43027f6c429177d3871512b48016055b9b -->

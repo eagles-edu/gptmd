@@ -5,7 +5,8 @@ import { describe, expect, it, vi } from 'vitest'
 import type { AuthenticatedPrincipal } from '../../services/api/src/auth.ts'
 import type { LivePatientState, PatientStateStore, ReadyPatientState } from '../../services/api/src/patient-state-store.ts'
 import { createPostgresSessionStore } from '../../services/api/src/session-store.ts'
-import type { GeneratedPatientScenario } from '../../services/api/src/patient-profile.ts'
+import type { GeneratedPatientScenario, PatientScenarioVersionPins } from '../../services/api/src/patient-profile.ts'
+import type { ProviderUsageSample } from '../../services/api/src/session-contracts.ts'
 
 const principal: AuthenticatedPrincipal = { subjectId: 'learner-a', tenantId: 'tenant-a', role: 'learner' }
 const sessionId = 's'.repeat(43)
@@ -24,7 +25,12 @@ const generated: GeneratedPatientScenario = {
       educationLevel: 'college', willingnessToDisclose: 'gradual'
     }
   },
-  usage: { inputTokens: 100, outputTokens: 50, totalTokens: 150 },
+  usage: {
+    responseId: 'resp_private', model: 'gpt-6-luna', serviceTier: 'default',
+    inputTokens: 100, cachedInputTokens: 12, cacheWriteTokens: 0,
+    outputTokens: 50, totalTokens: 150, durationMs: 620,
+    pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000034920000'
+  },
   abandonedConversationIds: []
 }
 
@@ -62,14 +68,72 @@ describe('tenant membership roles', () => {
     const store = createPostgresSessionStore(pool)
 
     await expect(store.createSession(principal, {
-      promptVersion: 'patient-scenario-prompt-v2', modelVersion: 'gpt-6-luna',
-      schemaVersion: 3, policyVersion: 'patient-scenario-policy-v1'
+      promptVersion: 'patient-scenario-prompt-v6', modelVersion: 'gpt-6-luna',
+      schemaVersion: 5, policyVersion: 'patient-scenario-policy-v3'
     })).resolves.toMatchObject({ status: 'initializing' })
 
     expect(insert).toHaveLength(1)
     expect(insert[0]?.sql).toContain('scenario_seed')
     expect(insert[0]?.values?.[2]).toMatch(/^[A-Za-z0-9_-]{43}$/)
     expect(client.release).toHaveBeenCalledOnce()
+  })
+})
+
+describe('strict patient scenario version', () => {
+  it('rejects an initializing setup session pinned to an older schema without adapting it', async () => {
+    const queries: string[] = []
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql)
+        if (sql.includes('FROM app_sessions')) return { rows: [{
+          session_id: sessionId, patient_profile_id: null, scenario_seed: null,
+          status: 'initializing', created_at: createdAt, setup_idempotency_key_hash: null,
+          prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+          schema_version: 3, policy_version: 'patient-scenario-policy-v3', sessions_enabled: true
+        }], rowCount: 1 }
+        return { rows: [], rowCount: 1 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool
+    const stateStore = { initialize: vi.fn() } as unknown as PatientStateStore
+    const store = createPostgresSessionStore(pool, stateStore)
+    const generate = vi.fn()
+
+    await expect(store.setupScenario(principal, sessionId, 'setup-key', generate))
+      .resolves.toBe('version_unavailable')
+    expect(queries).toContain('ROLLBACK')
+    expect(queries.some((sql) => sql.includes('UPDATE app_sessions'))).toBe(false)
+    expect(queries.some((sql) => sql.includes('FROM patient_scenarios'))).toBe(false)
+    expect(stateStore.initialize).not.toHaveBeenCalled()
+    expect(generate).not.toHaveBeenCalled()
+    expect(client.release).toHaveBeenCalledOnce()
+  })
+
+  it.each([2, 3])('rejects unsupported stored version %s instead of rebuilding it into current Redis state', async (schemaVersion) => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({ rows: [{
+        session_id: sessionId,
+        patient_profile_id: patientProfileId,
+        status: 'ready',
+        created_at: createdAt,
+        updated_at: createdAt,
+        schema_version: schemaVersion,
+        profile_digest: 'a'.repeat(64),
+        profile_json: generated.profile,
+        provider_conversation_id: generated.conversationId
+      }], rowCount: 1 })
+    } as unknown as Pool
+    const stateStore = {
+      read: vi.fn().mockResolvedValue(null),
+      restore: vi.fn()
+    } as unknown as PatientStateStore
+    const store = createPostgresSessionStore(pool, stateStore)
+
+    await expect(store.ensureLiveState?.(principal, sessionId))
+      .rejects.toThrow(`Stored patient scenario schema version ${schemaVersion} is unsupported`)
+    expect(stateStore.restore).not.toHaveBeenCalled()
+    expect(pool.query).toHaveBeenCalledOnce()
   })
 })
 
@@ -117,8 +181,8 @@ describe('scoped quota reservations', () => {
     const store = createPostgresSessionStore(pool)
 
     await expect(store.createSession(principal, {
-      promptVersion: 'patient-scenario-prompt-v2', modelVersion: 'gpt-6-luna',
-      schemaVersion: 3, policyVersion: 'patient-scenario-policy-v1'
+      promptVersion: 'patient-scenario-prompt-v6', modelVersion: 'gpt-6-luna',
+      schemaVersion: 5, policyVersion: 'patient-scenario-policy-v3'
     })).resolves.toBe('quota_exceeded')
 
     expect(statements).toContain('ROLLBACK')
@@ -183,10 +247,11 @@ describe('audio transcription policy reservations', () => {
     const insert = statements.find(({ sql }) => sql.includes('INSERT INTO app_audio_transcription_sessions'))
     expect(insert?.values).toEqual([expect.any(String), sessionId, 'tenant-a', 'learner-a', 'consent-v1'])
     expect(statements.some(({ sql }) => sql === 'COMMIT')).toBe(true)
-    await store.recordAudioProviderSession((result as { grantId: string }).grantId, 'sess_provider')
-    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('provider_session_id = $2'), [
-      (result as { grantId: string }).grantId, 'sess_provider'
+    await store.recordAudioProviderSession((result as { grantId: string }).grantId, 'sess_provider', 'call_provider')
+    expect(pool.query).toHaveBeenCalledWith(expect.stringContaining('provider_call_id = $3'), [
+      (result as { grantId: string }).grantId, 'sess_provider', 'call_provider'
     ])
+    expect(pool.query.mock.calls[0]?.[0]).toContain("disconnect_after = now() + interval '15 minutes'")
   })
 
   it('rejects a grant when the configured monthly per-user audio allowance is exhausted', async () => {
@@ -270,8 +335,8 @@ describe('session entitlement authorization', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: false,
-            prompt_version: 'patient-scenario-prompt-v3', model_version: 'gpt-6-luna',
-            schema_version: 3, policy_version: 'patient-scenario-policy-v1'
+            prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+            schema_version: 5, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         return { rows: [], rowCount: 0 }
@@ -308,6 +373,7 @@ describe('patient setup persistence coordination', () => {
   it('initializes Redis before generation and binds the accepted profile and Conversation to both IDs', async () => {
     const order: string[] = []
     const savedState: ReadyPatientState[] = []
+    const usageEvents: unknown[] = []
     const patientStateStore: PatientStateStore = {
       initialize: vi.fn(async (sid, ppid) => {
         expect(sid).toBe(sessionId)
@@ -322,6 +388,7 @@ describe('patient setup persistence coordination', () => {
       acquireTurnLock: vi.fn(async () => true),
       releaseTurnLock: vi.fn(async () => undefined),
       appendAuditEvent: vi.fn(async () => undefined),
+      appendProviderUsage: vi.fn(async (event) => { usageEvents.push(event); order.push('usage-enqueued') }),
       acceptTurn: vi.fn(async () => ({ status: 'missing_state' as const })),
       recordTerminal: vi.fn(async () => 'missing_state' as const),
       restore: vi.fn(async () => 'restored' as const)
@@ -333,8 +400,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v3', model_version: 'gpt-6-luna',
-            schema_version: 3, policy_version: 'patient-scenario-policy-v1'
+            prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+            schema_version: 5, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return { rows: [], rowCount: 0 }
@@ -344,18 +411,48 @@ describe('patient setup persistence coordination', () => {
     } as unknown as PoolClient
     const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool
     const store = createPostgresSessionStore(pool, patientStateStore)
-    const generate = vi.fn(async () => {
+    const rejectedAttemptUsage = {
+      responseId: 'resp_rejected', model: 'gpt-6-luna', serviceTier: 'default',
+      inputTokens: 80, cachedInputTokens: 0, cacheWriteTokens: 0,
+      outputTokens: 8, totalTokens: 88, durationMs: 125,
+      pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000012000000'
+    }
+    const generate = vi.fn(async (
+      _versions: PatientScenarioVersionPins,
+      _asOf: Date,
+      _seed: string,
+      recordProviderUsage: (usage: ProviderUsageSample) => Promise<void>
+    ) => {
       order.push('generate')
+      await recordProviderUsage(rejectedAttemptUsage)
       return generated
     })
 
     const result = await store.setupScenario(principal, sessionId, 'setup-key', generate)
 
-    expect(order).toEqual(['redis-initialize', 'generate', 'redis-ready'])
+    expect(order).toEqual(['redis-initialize', 'generate', 'usage-enqueued', 'usage-enqueued', 'redis-ready'])
     expect(generate).toHaveBeenCalledOnce()
     expect(generate).toHaveBeenCalledWith(
-      expect.anything(), expect.any(Date), 'r'.repeat(43)
+      expect.anything(), expect.any(Date), 'r'.repeat(43), expect.any(Function)
     )
+    expect(usageEvents).toEqual([
+      expect.objectContaining({
+        eventId: `usage_${createHash('sha256').update('openai\0resp_rejected').digest('hex')}`,
+        sessionId, eventType: 'provider_usage', operation: 'scenario_generation',
+        occurredAt: expect.any(String), usage: rejectedAttemptUsage
+      }),
+      expect.objectContaining({
+        eventId: `usage_${createHash('sha256').update('openai\0resp_private').digest('hex')}`,
+        sessionId, eventType: 'provider_usage', operation: 'scenario_generation',
+        occurredAt: expect.any(String),
+        usage: {
+          responseId: 'resp_private', model: 'gpt-6-luna', serviceTier: 'default',
+          inputTokens: 100, cachedInputTokens: 12, cacheWriteTokens: 0,
+          outputTokens: 50, totalTokens: 150, durationMs: 620,
+          pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000034920000'
+        }
+      })
+    ])
     expect(result).toMatchObject({
       sessionId, status: 'ready',
       patient: {
@@ -369,7 +466,7 @@ describe('patient setup persistence coordination', () => {
     expect(savedState[0]).toMatchObject({
       sessionId, patientProfileId, conversationId: 'conv_private',
       setupProjection: { diagnosis: 'Endometriosis' },
-      profile: { diagnosis: 'Endometriosis' }, schemaVersion: 3
+      profile: { diagnosis: 'Endometriosis' }, schemaVersion: 5
     })
     expect(client.release).toHaveBeenCalledOnce()
   })
@@ -382,8 +479,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v3', model_version: 'gpt-6-luna',
-            schema_version: 3, policy_version: 'patient-scenario-policy-v1'
+            prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+            schema_version: 5, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return { rows: [], rowCount: 0 }
@@ -399,6 +496,7 @@ describe('patient setup persistence coordination', () => {
       acquireTurnLock: vi.fn(async () => true),
       releaseTurnLock: vi.fn(async () => undefined),
       appendAuditEvent: vi.fn(async () => undefined),
+      appendProviderUsage: vi.fn(async () => undefined),
       acceptTurn: vi.fn(async () => ({ status: 'missing_state' as const })),
       recordTerminal: vi.fn(async () => 'missing_state' as const),
       restore: vi.fn(async () => 'restored' as const)
@@ -420,8 +518,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v3', model_version: 'gpt-6-luna',
-            schema_version: 3, policy_version: 'patient-scenario-policy-v1'
+            prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+            schema_version: 5, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return { rows: [], rowCount: 0 }
@@ -462,6 +560,7 @@ describe('patient setup persistence coordination', () => {
       acquireTurnLock: vi.fn(async () => true),
       releaseTurnLock: vi.fn(async () => undefined),
       appendAuditEvent: vi.fn(async () => undefined),
+      appendProviderUsage: vi.fn(async () => undefined),
       acceptTurn: vi.fn(async () => ({ status: 'missing_state' as const })),
       recordTerminal: vi.fn(async () => 'missing_state' as const),
       restore: vi.fn(async () => 'restored' as const)
@@ -473,8 +572,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'ready',
             created_at: createdAt, setup_idempotency_key_hash: idempotencyHash, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v2', model_version: 'gpt-6-luna',
-            schema_version: 3, policy_version: 'patient-scenario-policy-v1'
+            prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+            schema_version: 5, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return {
@@ -536,7 +635,7 @@ describe('serialized patient turns', () => {
         diagnosis: generated.profile.diagnosis
       },
       conversationId: generated.conversationId,
-      profileDigest: 'a'.repeat(64), schemaVersion: 3,
+      profileDigest: 'a'.repeat(64), schemaVersion: 5,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'active', phase: 'assessment',
         interactionMode: 'transcript', openedAt: createdAt.toISOString(), updatedAt: createdAt.toISOString(),
@@ -574,7 +673,7 @@ describe('serialized patient turns', () => {
         diagnosis: generated.profile.diagnosis
       },
       conversationId: generated.conversationId,
-      profileDigest: 'a'.repeat(64), schemaVersion: 3,
+      profileDigest: 'a'.repeat(64), schemaVersion: 5,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'ready', phase: 'history',
         interactionMode: 'transcript',
@@ -594,7 +693,8 @@ describe('serialized patient turns', () => {
       }),
       releaseTurnLock: vi.fn(async () => { locked = false }),
       appendAuditEvent: vi.fn(async () => undefined),
-      acceptTurn: vi.fn(async (turn, phase = 'history') => {
+      appendProviderUsage: vi.fn(async () => undefined),
+      acceptTurn: vi.fn(async (turn, _providerUsage, phase = 'history') => {
         live = {
           ...live,
           state: { ...live.state, status: 'active', phase, updatedAt: turn.acceptedAt, currentTurnSequence: turn.sequence },
@@ -613,14 +713,22 @@ describe('serialized patient turns', () => {
     } as unknown as PoolClient
     const pool = {
       query: vi.fn(async () => ({ rows: [{
-        status: 'ready', prompt_version: 'patient-scenario-prompt-v2', model_version: 'gpt-6-luna',
-        schema_version: 3, policy_version: 'patient-scenario-policy-v1'
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+        schema_version: 5, policy_version: 'patient-scenario-policy-v3'
       }], rowCount: 1 })),
       connect: vi.fn().mockResolvedValue(quotaClient)
     } as unknown as Pool
     const store = createPostgresSessionStore(pool, stateStore)
-    let finishGeneration!: (value: { responseId: string; output: unknown }) => void
-    const generationWait = new Promise<{ responseId: string; output: unknown }>((resolve) => {
+    let finishGeneration!: (value: {
+      responseId: string
+      output: unknown
+      providerUsage: { responseId: string; inputTokens: number; cachedInputTokens: number; outputTokens: number; totalTokens: number; durationMs: number } | null
+    }) => void
+    const generationWait = new Promise<{
+      responseId: string
+      output: unknown
+      providerUsage: { responseId: string; inputTokens: number; cachedInputTokens: number; outputTokens: number; totalTokens: number; durationMs: number } | null
+    }>((resolve) => {
       finishGeneration = resolve
     })
     const generateTurn = vi.fn(() => generationWait)
@@ -629,11 +737,19 @@ describe('serialized patient turns', () => {
     )
     await vi.waitFor(() => expect(generateTurn).toHaveBeenCalledOnce())
 
+    const contendedLockAttempt = vi.fn()
     expect(await store.submitPatientTurn(
-      principal, sessionId, 'turn-0002', 'Any other symptoms?', generateTurn
+      principal, sessionId, 'turn-0002', 'Any other symptoms?', generateTurn, 'typed', contendedLockAttempt
     )).toBe('turn_in_progress')
+    expect(contendedLockAttempt).toHaveBeenCalledOnce()
+    expect(Number.isFinite(contendedLockAttempt.mock.calls[0]?.[0])).toBe(true)
+    expect(contendedLockAttempt.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(0)
     finishGeneration({
       responseId: 'resp-private',
+      providerUsage: {
+        responseId: 'resp-private', inputTokens: 10, cachedInputTokens: 0,
+        outputTokens: 8, totalTokens: 18, durationMs: 450
+      },
       output: {
         patientResponse: 'Mostly on my left side.', proposedFacts: [], historyCoverage: ['anyPain'], disclosedHistoryFields: []
       }
@@ -641,6 +757,10 @@ describe('serialized patient turns', () => {
     expect(await submitting).toMatchObject({
       status: 'accepted', turnId: 'turn-0001', sequence: 1, patientResponse: 'Mostly on my left side.'
     })
+    expect(stateStore.acceptTurn).toHaveBeenCalledWith(expect.any(Object), [{
+      responseId: 'resp-private', inputTokens: 10, cachedInputTokens: 0,
+      outputTokens: 8, totalTokens: 18, durationMs: 450
+    }], undefined)
 
     expect(await store.submitPatientTurn(
       principal, sessionId, 'turn-0001', 'Do you have pain?', generateTurn, 'realtime_transcription'
@@ -662,7 +782,10 @@ describe('serialized patient turns', () => {
     expect(stateStore.acceptTurn).toHaveBeenCalledOnce()
     expect(stateStore.acceptTurn).toHaveBeenCalledWith(expect.objectContaining({
       learnerModality: 'realtime_transcription'
-    }))
+    }), [{
+      responseId: 'resp-private', inputTokens: 10, cachedInputTokens: 0,
+      outputTokens: 8, totalTokens: 18, durationMs: 450
+    }], undefined)
     expect(stateStore.releaseTurnLock).toHaveBeenCalledTimes(4)
   })
 
@@ -676,7 +799,7 @@ describe('serialized patient turns', () => {
         sessionId, patientProfileId, openedAt: createdAt.toISOString(),
         profile: generated.profile,
         setupProjection: { ...generated.profile },
-        conversationId: generated.conversationId, profileDigest: 'a'.repeat(64), schemaVersion: 3,
+        conversationId: generated.conversationId, profileDigest: 'a'.repeat(64), schemaVersion: 5,
         state: {
           sessionId, scenarioId: patientProfileId, status: 'ready', phase: 'history',
           interactionMode: 'transcript',
@@ -699,14 +822,16 @@ describe('serialized patient turns', () => {
     } as unknown as PoolClient
     const pool = {
       query: vi.fn(async () => ({ rows: [{
-        status: 'ready', prompt_version: 'patient-scenario-prompt-v2', model_version: 'gpt-6-luna',
-        schema_version: 3, policy_version: 'patient-scenario-policy-v1'
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v6', model_version: 'gpt-6-luna',
+        schema_version: 5, policy_version: 'patient-scenario-policy-v3'
       }], rowCount: 1 })),
       connect: vi.fn().mockResolvedValue(quotaClient)
     } as unknown as Pool
-    const store = createPostgresSessionStore(pool, stateStore)
+    const recordHandoffTiming = vi.fn()
+    const store = createPostgresSessionStore(pool, stateStore, { recordHandoffTiming })
     const generateTurn = vi.fn().mockResolvedValue({
       responseId: 'resp-private',
+      providerUsage: null,
       output: {
         patientResponse: 'I have a fever.', proposedFacts: [{ field: 'anyPain', value: 'No pain' }],
         historyCoverage: ['anyPain'], disclosedHistoryFields: ['anyPain']
@@ -721,7 +846,7 @@ describe('serialized patient turns', () => {
     expect(stateStore.acceptTurn).toHaveBeenCalledWith(expect.objectContaining({
       patientResponse: 'Sorry, could you please repeat or clarify that?', patientReportedFacts: [],
       historyCoverage: [], disclosedHistoryFields: [], disclosedFactIds: []
-    }))
+    }), [], undefined)
     expect(stateStore.releaseTurnLock).toHaveBeenCalledOnce()
     await new Promise<void>((resolve) => setImmediate(resolve))
     expect(appendAuditEvent).toHaveBeenCalledOnce()
@@ -732,6 +857,74 @@ describe('serialized patient turns', () => {
     }))
     expect(JSON.stringify(appendAuditEvent.mock.calls[0]?.[0])).not.toContain('Do you have a fever?')
     releaseAuditWrite()
+    await new Promise<void>((resolve) => setImmediate(resolve))
+    expect(recordHandoffTiming).toHaveBeenCalledWith('audit_event_enqueue', expect.any(Number))
+  })
+})
+
+describe('serialized assessment mutations', () => {
+  it('does not change phase while another patient turn owns the session lock', async () => {
+    const current = {
+      sessionId, patientProfileId, openedAt: createdAt.toISOString(),
+      profile: generated.profile, setupProjection: { ...generated.profile },
+      conversationId: generated.conversationId, profileDigest: 'a'.repeat(64), schemaVersion: 5,
+      state: {
+        sessionId, scenarioId: patientProfileId, status: 'active', phase: 'history',
+        interactionMode: 'transcript', openedAt: createdAt.toISOString(),
+        updatedAt: createdAt.toISOString(), currentTurnSequence: 1, terminalEventId: null
+      },
+      acceptedTurns: [{ disclosedHistoryFields: [] }], assessment: null, terminalEvent: null
+    } as unknown as LivePatientState
+    const stateStore = {
+      read: vi.fn(async () => current),
+      acquireTurnLock: vi.fn(async () => false),
+      releaseTurnLock: vi.fn(),
+      changePhase: vi.fn(async () => 'accepted' as const)
+    } as unknown as PatientStateStore
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{ status: 'active' }], rowCount: 1 }))
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+
+    await expect(store.beginAssessment(principal, sessionId)).resolves.toBe('turn_in_progress')
+    expect(stateStore.acquireTurnLock).toHaveBeenCalledOnce()
+    expect(stateStore.read).toHaveBeenCalledOnce()
+    expect(stateStore.changePhase).not.toHaveBeenCalled()
+    expect(stateStore.releaseTurnLock).not.toHaveBeenCalled()
+  })
+
+  it('does not submit or complete assessment while another session mutation owns the lock', async () => {
+    const current = {
+      sessionId, patientProfileId, openedAt: createdAt.toISOString(),
+      profile: generated.profile, setupProjection: { ...generated.profile },
+      conversationId: generated.conversationId, profileDigest: 'a'.repeat(64), schemaVersion: 5,
+      state: {
+        sessionId, scenarioId: patientProfileId, status: 'active', phase: 'assessment',
+        interactionMode: 'transcript', openedAt: createdAt.toISOString(),
+        updatedAt: createdAt.toISOString(), currentTurnSequence: 1, terminalEventId: null
+      },
+      acceptedTurns: [{ disclosedHistoryFields: [] }], assessment: null, terminalEvent: null
+    } as unknown as LivePatientState
+    const stateStore = {
+      read: vi.fn(async () => current),
+      acquireTurnLock: vi.fn(async () => false),
+      releaseTurnLock: vi.fn(),
+      acceptAssessment: vi.fn(),
+      recordTerminal: vi.fn()
+    } as unknown as PatientStateStore
+    const pool = {
+      query: vi.fn(async () => ({ rows: [{ status: 'active' }], rowCount: 1 }))
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+
+    await expect(store.submitAssessment(principal, sessionId, 'assessment-1', {
+      summary: 'Pelvic pain', differential: 'Possible cyst', rationale: 'Acute onset', plan: 'Evaluate further'
+    })).resolves.toBe('turn_in_progress')
+    expect(stateStore.acquireTurnLock).toHaveBeenCalledOnce()
+    expect(stateStore.read).toHaveBeenCalledOnce()
+    expect(stateStore.acceptAssessment).not.toHaveBeenCalled()
+    expect(stateStore.recordTerminal).not.toHaveBeenCalled()
+    expect(stateStore.releaseTurnLock).not.toHaveBeenCalled()
   })
 })
 
@@ -750,7 +943,7 @@ describe('assessment submission retries', () => {
         bodyType: generated.profile.bodyType, reasonForVisit: generated.profile.reasonForVisit,
         diagnosis: generated.profile.diagnosis
       },
-      conversationId: generated.conversationId, profileDigest: 'a'.repeat(64), schemaVersion: 3,
+      conversationId: generated.conversationId, profileDigest: 'a'.repeat(64), schemaVersion: 5,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'completed', phase: 'debrief',
         interactionMode: 'transcript', openedAt: createdAt.toISOString(),
@@ -760,6 +953,7 @@ describe('assessment submission retries', () => {
     } as unknown as LivePatientState
     const stateStore = {
       initialize: vi.fn(), saveReady: vi.fn(), read: vi.fn(async () => live),
+      acquireTurnLock: vi.fn(async () => true), releaseTurnLock: vi.fn(),
       acceptAssessment: vi.fn(), recordTerminal: vi.fn(async () => 'accepted' as const), restore: vi.fn()
     } as unknown as PatientStateStore
     const pool = {

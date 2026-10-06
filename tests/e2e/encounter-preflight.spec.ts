@@ -59,7 +59,23 @@ test('preflight explains voice privacy and lets the learner choose transcript or
   await expect(dialog.getByRole('button', { name: 'Continue with voice' })).toBeEnabled()
   await dialog.getByRole('button', { name: 'Continue with voice' }).click()
   await expect(dialog).toBeHidden()
-  await expect(page.getByRole('heading', { name: 'A patient history, one question at a time' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Clinical interview' })).toBeVisible()
+  const placeholderPortrait = page.locator('.profile-image-wrap img')
+  await expect(placeholderPortrait).toHaveAttribute('src', '/assets/images/exam-room-entry-hallway-v3.webp')
+  await expect.poll(() => placeholderPortrait.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  const turnLightBounds = await page.locator('.status-dot').boundingBox()
+  expect(turnLightBounds).not.toBeNull()
+  expect(turnLightBounds!.width).toBeGreaterThan(12)
+  expect(turnLightBounds!.height).toBeGreaterThan(12)
+  await expect(page.locator('.intro')).toHaveCount(0)
+  const encounterColumns = await Promise.all([
+    page.locator('.conversation-card').boundingBox(),
+    page.locator('.profile-card').boundingBox()
+  ])
+  expect(encounterColumns[0]).not.toBeNull()
+  expect(encounterColumns[1]).not.toBeNull()
+  expect(encounterColumns[0]!.x + encounterColumns[0]!.width).toBeLessThanOrEqual(encounterColumns[1]!.x)
+  expect(Math.abs(encounterColumns[0]!.width - encounterColumns[1]!.width)).toBeLessThan(2)
   await expect(page.getByRole('button', { name: 'Create patient session' })).toBeEnabled()
 
   await page.setViewportSize({ width: 390, height: 844 })
@@ -101,8 +117,8 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
     createdAt: '2026-10-01T00:00:00.000Z',
     updatedAt: '2026-10-01T00:00:00.000Z',
     versions: {
-      promptVersion: 'patient-scenario-prompt-v2', modelVersion: 'gpt-6-luna',
-      schemaVersion: 1, policyVersion: 'patient-scenario-policy-v1'
+      promptVersion: 'patient-scenario-prompt-v6', modelVersion: 'gpt-6-luna',
+      schemaVersion: 5, policyVersion: 'patient-scenario-policy-v3'
     }
   }
   const submittedTurns: Array<{ turnId: string; text: string; modality: string }> = []
@@ -115,8 +131,13 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
       __synthesizedReplies?: string[]
       __synthesizedSettings?: Array<{ volume: number; rate: number }>
       __holdSpeech?: boolean
+      __startSpeech?: () => void
       __finishSpeech?: () => void
       __mockMicrophoneTrack?: { enabled: boolean }
+      __mockAudioTrackAdds?: number
+      __mockMicrophoneRms?: number
+      __realtimeClientEvents?: string[]
+      __setMicrophoneRms?: (rms: number) => void
     }
     class MockTrack {
       enabled = true
@@ -127,7 +148,10 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
       onopen: (() => void) | null = null
       onmessage: ((event: { data: string }) => void) | null = null
       close() { this.readyState = 'closed' }
-      send() {}
+      send(data: string) {
+        pageWindow.__realtimeClientEvents ??= []
+        pageWindow.__realtimeClientEvents.push(data)
+      }
     }
     class MockPeerConnection extends EventTarget {
       iceGatheringState = 'complete'
@@ -139,7 +163,7 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
         pageWindow.__mockTranscriptionChannel = channel
         return channel
       }
-      addTrack() {}
+      addTrack() { pageWindow.__mockAudioTrackAdds = (pageWindow.__mockAudioTrackAdds ?? 0) + 1 }
       async createOffer() { return { type: 'offer', sdp: 'mock-offer' } }
       async setLocalDescription(description: { type: string; sdp: string }) { this.localDescription = description }
       async setRemoteDescription() { this.channel?.onopen?.() }
@@ -154,10 +178,19 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
       }
     } })
     Object.defineProperty(window, 'AudioContext', { configurable: true, value: class {
-      createAnalyser() { return { fftSize: 512, getByteTimeDomainData: (samples: Uint8Array) => samples.fill(128) } }
+      createAnalyser() {
+        return {
+          fftSize: 512,
+          getByteTimeDomainData: (samples: Uint8Array) => {
+            const sample = 128 + Math.round((pageWindow.__mockMicrophoneRms ?? 0) * 128)
+            samples.fill(sample)
+          }
+        }
+      }
       createMediaStreamSource() { return { connect: () => undefined } }
       close() { return Promise.resolve() }
     } })
+    pageWindow.__setMicrophoneRms = (rms) => { pageWindow.__mockMicrophoneRms = rms }
     pageWindow.__emitFinalTranscript = (transcript) => {
       pageWindow.__mockTranscriptionChannel?.onmessage?.({
         data: JSON.stringify({ type: 'conversation.item.input_audio_transcription.completed', transcript })
@@ -168,18 +201,23 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
       lang = ''
       volume = 1
       rate = 1
+      onstart: (() => void) | null = null
       onend: (() => void) | null = null
       onerror: (() => void) | null = null
       constructor(text: string) { this.text = text }
     } })
     Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
-      speak: (utterance: { text: string; volume: number; rate: number; onend: (() => void) | null }) => {
+      speak: (utterance: { text: string; volume: number; rate: number; onstart: (() => void) | null; onend: (() => void) | null }) => {
         pageWindow.__synthesizedReplies ??= []
         pageWindow.__synthesizedReplies.push(utterance.text)
         pageWindow.__synthesizedSettings ??= []
         pageWindow.__synthesizedSettings.push({ volume: utterance.volume, rate: utterance.rate })
+        pageWindow.__startSpeech = () => utterance.onstart?.()
         pageWindow.__finishSpeech = () => utterance.onend?.()
-        if (!pageWindow.__holdSpeech) pageWindow.__finishSpeech()
+        if (!pageWindow.__holdSpeech) {
+          pageWindow.__startSpeech()
+          pageWindow.__finishSpeech()
+        }
       },
       cancel: () => undefined
     } })
@@ -216,9 +254,8 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
   })
   await page.route('**/api/sessions/*/audio-transcription', (route) => route.fulfill({
     status: 200, contentType: 'application/json',
-    body: JSON.stringify({ clientSecret: 'ephemeral-test-secret', expiresAt: 1_800_000_000, maxDurationSeconds: 900 })
+    body: JSON.stringify({ answerSdp: 'mock-answer', maxDurationSeconds: 900 })
   }))
-  await page.route('https://api.openai.com/v1/realtime/calls', (route) => route.fulfill({ status: 201, body: 'mock-answer' }))
   await page.context().addCookies([{
     name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax'
   }])
@@ -232,6 +269,8 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
   await dialog.getByRole('button', { name: 'Continue with voice' }).click()
   await page.getByRole('button', { name: 'Create patient session' }).click()
   await page.getByRole('button', { name: 'Enter Room' }).click()
+  const turnLed = page.locator('.status-row .status-dot')
+  await expect(turnLed).toHaveClass(/status-inactive/)
 
   const repairGuide = page.getByRole('region', { name: 'Conversation repair sequence' })
   await expect(repairGuide.locator('li')).toHaveText([
@@ -243,23 +282,59 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
   ])
   await page.getByRole('button', { name: 'Start voice conversation' }).click()
   await expect(page.locator('.speech-message')).toContainText(/listening/i)
+  await expect(turnLed).toHaveClass(/status-listening/)
+  await expect.poll(() => page.evaluate(() => (window as Window & { __mockAudioTrackAdds?: number }).__mockAudioTrackAdds)).toBe(1)
   await expect(page.getByRole('button', { name: 'Send question' })).toHaveCount(0)
+  await page.evaluate(() => (window as Window & { __setMicrophoneRms: (rms: number) => void }).__setMicrophoneRms(0.12))
+  await page.clock.fastForward(100)
+  await page.evaluate(() => (window as Window & { __setMicrophoneRms: (rms: number) => void }).__setMicrophoneRms(0))
+  await page.clock.fastForward(1_000)
+  const audioCommitEvents = await page.evaluate(() => (window as Window & { __realtimeClientEvents?: string[] }).__realtimeClientEvents ?? [])
+  expect(audioCommitEvents.map((event) => JSON.parse(event))).toContainEqual({ type: 'input_audio_buffer.commit' })
   await page.evaluate(() => (window as Window & { __emitFinalTranscript: (transcript: string) => void }).__emitFinalTranscript('When did the pain begin?'))
 
   await page.clock.fastForward(7_000)
   await expect.poll(() => submittedTurns.length).toBe(1)
   await expect(page.getByText('When did the pain begin?')).toBeVisible()
   await expect(page.getByText('Since yesterday.')).toBeVisible()
+  const learnerTranscriptRow = page.locator('.message-doctor').filter({ hasText: 'When did the pain begin?' })
+  const patientTranscriptRow = page.locator('.message-patient').filter({ hasText: 'Since yesterday.' })
+  const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+  await expect(learnerTranscriptRow).toHaveAttribute('data-captured-at', timestampPattern)
+  await expect(learnerTranscriptRow).toHaveAttribute('data-displayed-at', timestampPattern)
+  await expect(patientTranscriptRow).toHaveAttribute('data-captured-at', timestampPattern)
+  await expect(patientTranscriptRow).toHaveAttribute('data-displayed-at', timestampPattern)
+  const transcriptTimes = await page.evaluate(() => Array.from(document.querySelectorAll('.message[data-captured-at][data-displayed-at]'))
+    .slice(0, 2)
+    .map((row) => ({ capturedAt: Date.parse(row.getAttribute('data-captured-at') ?? ''), displayedAt: Date.parse(row.getAttribute('data-displayed-at') ?? '') })))
+  expect(transcriptTimes).toHaveLength(2)
+  expect(transcriptTimes.every((time) => Number.isFinite(time.capturedAt) && time.displayedAt >= time.capturedAt)).toBe(true)
   await expect.poll(() => page.evaluate(() => (window as Window & { __synthesizedReplies?: string[] }).__synthesizedReplies)).toEqual(['Since yesterday.'])
+  const encounter = page.locator('.encounter-page')
+  await expect(encounter).toHaveAttribute('data-tts-requested-at', /^\d+(\.\d+)?$/)
+  await expect(encounter).not.toHaveAttribute('data-tts-started-at', /.+/)
   await expect(page.locator('.status-row [role="status"]')).toContainText(/patient speaking.*wait for the green light/i)
+  await expect(turnLed).toHaveClass(/status-processing/)
   await expect.poll(() => page.evaluate(() => (window as Window & { __mockMicrophoneTrack?: { enabled: boolean } }).__mockMicrophoneTrack?.enabled)).toBe(false)
   const startsWhilePatientSpeaks = await page.locator('.status-row [role="status"]').textContent()
   await page.clock.fastForward(2_000)
   expect(await page.locator('.status-row [role="status"]').textContent()).toBe(startsWhilePatientSpeaks)
 
+  await page.evaluate(() => (window as Window & { __startSpeech?: () => void }).__startSpeech?.())
+  await expect(encounter).toHaveAttribute('data-tts-started-at', /^\d+(\.\d+)?$/)
+  await expect(encounter).not.toHaveAttribute('data-tts-ended-at', /.+/)
   await page.evaluate(() => (window as Window & { __finishSpeech?: () => void }).__finishSpeech?.())
+  await expect(encounter).toHaveAttribute('data-tts-ended-at', /^\d+(\.\d+)?$/)
+  const speechTimes = await encounter.evaluate((element) => ({
+    requested: Number(element.getAttribute('data-tts-requested-at')),
+    started: Number(element.getAttribute('data-tts-started-at')),
+    ended: Number(element.getAttribute('data-tts-ended-at'))
+  }))
+  expect(speechTimes.requested).toBeLessThanOrEqual(speechTimes.started)
+  expect(speechTimes.started).toBeLessThanOrEqual(speechTimes.ended)
   await expect(page.locator('.status-row [role="status"]')).toContainText(/green light.*your turn/i)
   await page.clock.fastForward(350)
+  await expect(turnLed).toHaveClass(/status-listening/)
   await expect.poll(() => page.evaluate(() => (window as Window & { __mockMicrophoneTrack?: { enabled: boolean } }).__mockMicrophoneTrack?.enabled)).toBe(true)
   await page.evaluate(() => (window as Window & { __emitFinalTranscript: (transcript: string) => void }).__emitFinalTranscript('Excuse me. Repeat that please.'))
   await page.clock.fastForward(7_000)
@@ -296,6 +371,7 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
   await page.screenshot({ path: '/tmp/gptmd-voice-input-mobile.png', fullPage: true })
   await endVoiceConversation.click()
   await expect(page.locator('.speech-message')).toContainText(/voice conversation ended/i)
+  await expect(turnLed).toHaveClass(/status-inactive/)
   await page.getByRole('button', { name: 'Start voice conversation' }).click()
   await page.evaluate(() => (window as Window & { __emitFinalTranscript: (transcript: string) => void }).__emitFinalTranscript('See you next time.'))
   await page.clock.fastForward(7_000)
@@ -333,7 +409,7 @@ test('assessment phase is confirmed and keeps the draft editable after field val
     status: 'initializing',
     createdAt: '2026-10-01T00:00:00.000Z',
     updatedAt: '2026-10-01T00:00:00.000Z',
-    versions: { promptVersion: 'patient-scenario-prompt-v2', modelVersion: 'gpt-6-luna', schemaVersion: 1, policyVersion: 'patient-scenario-policy-v1' }
+    versions: { promptVersion: 'patient-scenario-prompt-v6', modelVersion: 'gpt-6-luna', schemaVersion: 5, policyVersion: 'patient-scenario-policy-v3' }
   }
   let assessmentAttempts = 0
   await page.route('**/api/account/tenants', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ tenantIds: ['tenant-test'] }) }))
@@ -399,7 +475,7 @@ test('voice conversation falls back to transcript when Realtime WebRTC is unsupp
     contentType: 'application/json',
     body: JSON.stringify({
       sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
-      versions: { promptVersion: 'patient-scenario-prompt-v2', modelVersion: 'gpt-6-luna', schemaVersion: 1, policyVersion: 'patient-scenario-policy-v1' }
+      versions: { promptVersion: 'patient-scenario-prompt-v6', modelVersion: 'gpt-6-luna', schemaVersion: 5, policyVersion: 'patient-scenario-policy-v3' }
     })
   }))
   await page.route(`**/api/sessions/${sessionId}/setup`, (route) => route.fulfill({
@@ -408,7 +484,7 @@ test('voice conversation falls back to transcript when Realtime WebRTC is unsupp
     body: JSON.stringify({
       sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z',
       patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain' },
-      versions: { promptVersion: 'patient-scenario-prompt-v2', modelVersion: 'gpt-6-luna', schemaVersion: 1, policyVersion: 'patient-scenario-policy-v1' },
+      versions: { promptVersion: 'patient-scenario-prompt-v6', modelVersion: 'gpt-6-luna', schemaVersion: 5, policyVersion: 'patient-scenario-policy-v3' },
       readiness: { profile: true, redis: true, conversation: true }
     })
   }))
@@ -432,10 +508,10 @@ test('voice conversation falls back to transcript when Realtime WebRTC is unsupp
 test('keeps Enter Room amber and disabled until Redis setup and the patient portrait are ready', async ({ page }) => {
   const sessionId = 's'.repeat(43)
   const versionPins = {
-    promptVersion: 'patient-scenario-prompt-v2',
+    promptVersion: 'patient-scenario-prompt-v6',
     modelVersion: 'gpt-6-luna',
-    schemaVersion: 1,
-    policyVersion: 'patient-scenario-policy-v1'
+    schemaVersion: 5,
+    policyVersion: 'patient-scenario-policy-v3'
   }
   let releasePortrait: (() => void) | undefined
   const portraitGate = new Promise<void>((resolve) => { releasePortrait = resolve })
@@ -473,7 +549,7 @@ test('keeps Enter Room amber and disabled until Redis setup and the patient port
       readiness: { profile: true, redis: true, conversation: true }
     })
   }))
-  await page.route('**/assets/images/3039-average/01.png', async (route) => {
+  await page.route('**/assets/images/3039-average/portrait-prototype.webp', async (route) => {
     await portraitGate
     await route.continue()
   })
@@ -492,17 +568,18 @@ test('keeps Enter Room amber and disabled until Redis setup and the patient port
   await dialog.getByRole('button', { name: 'Continue with voice' }).click()
   await page.getByRole('button', { name: 'Create patient session' }).click()
 
-  const patientChart = page.locator('.patient-chart')
   const patientPortrait = page.locator('.profile-image-wrap')
+  const patientPortraitImage = patientPortrait.locator('img')
+  await expect(patientPortraitImage).toHaveAttribute('src', '/assets/images/3039-average/portrait-prototype.webp')
+  const desktopPortraitBounds = await patientPortrait.boundingBox()
+  expect(desktopPortraitBounds).not.toBeNull()
+  await page.getByRole('tab', { name: 'Chart' }).click()
+  const patientChart = page.getByRole('tabpanel', { name: 'Chart' })
   await expect(patientChart).toContainText('Ari Nguyen')
   await expect(patientChart).toContainText('1990-01-01')
   await expect(patientChart).toContainText('Pelvic pain')
   await expect(patientChart).not.toContainText('average')
-  const desktopChartBounds = await patientChart.boundingBox()
-  const desktopPortraitBounds = await patientPortrait.boundingBox()
-  expect(desktopChartBounds).not.toBeNull()
-  expect(desktopPortraitBounds).not.toBeNull()
-  expect(desktopChartBounds!.x + desktopChartBounds!.width).toBeLessThanOrEqual(desktopPortraitBounds!.x)
+  await page.getByRole('tab', { name: 'Interview' }).click()
 
   const readiness = page.getByRole('list', { name: 'Patient setup readiness' })
   const enterRoom = page.getByRole('button', { name: 'Enter Room' })
@@ -515,14 +592,18 @@ test('keeps Enter Room amber and disabled until Redis setup and the patient port
 
   releasePortrait?.()
   await expect(enterRoom).toBeEnabled()
+  await expect.poll(() => patientPortraitImage.evaluate((image) => (image as HTMLImageElement).naturalWidth))
+    .toBeGreaterThan(0)
+  await expect(patientPortraitImage).toHaveCSS('opacity', '1')
   await expect(page.locator('.status-row [role="status"]')).toContainText(/red light.*enter the room/i)
   await page.screenshot({ path: '/tmp/gptmd-patient-setup-ready-desktop.png', fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
-  const mobileChartBounds = await patientChart.boundingBox()
   const mobilePortraitBounds = await patientPortrait.boundingBox()
-  expect(mobileChartBounds).not.toBeNull()
   expect(mobilePortraitBounds).not.toBeNull()
-  expect(mobileChartBounds!.y).toBeLessThan(mobilePortraitBounds!.y)
+  const mobileConversationBounds = await page.locator('.conversation-card').boundingBox()
+  expect(mobileConversationBounds).not.toBeNull()
+  expect(mobilePortraitBounds!.y).toBeLessThan(mobileConversationBounds!.y)
+  await expect(patientPortraitImage).toHaveCSS('object-position', '50% 20%')
   await page.screenshot({ path: '/tmp/gptmd-patient-setup-ready-mobile.png', fullPage: true })
   await enterRoom.click()
   await expect(page.locator('.status-row [role="status"]')).toContainText(/red light.*voice conversation inactive/i)

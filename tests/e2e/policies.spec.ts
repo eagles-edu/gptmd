@@ -1,16 +1,16 @@
 import { expect, test } from '@playwright/test'
 
 const policyPages = [
-  { path: '/privacy', title: 'Privacy policy', vi: 'Chính sách bảo vệ dữ liệu cá nhân' },
-  { path: '/terms', title: 'Terms of service', vi: 'Điều khoản sử dụng dịch vụ' },
-  { path: '/service-provision', title: 'Service provision and activation', vi: 'Chính sách cung cấp và kích hoạt dịch vụ' },
-  { path: '/refunds', title: 'Refunds and cancellation', vi: 'Chính sách hoàn tiền và hủy dịch vụ' }
+  { path: '/privacy', link: 'Privacy', title: 'Privacy policy', vi: 'Chính sách bảo vệ dữ liệu cá nhân' },
+  { path: '/terms', link: 'Terms', title: 'Terms of service', vi: 'Điều khoản sử dụng dịch vụ' },
+  { path: '/service-provision', link: 'Service provision', title: 'Service provision and activation', vi: 'Chính sách cung cấp và kích hoạt dịch vụ' },
+  { path: '/refunds', link: 'Refunds and cancellation', title: 'Refunds and cancellation', vi: 'Chính sách hoàn tiền và hủy dịch vụ' }
 ]
 
 test('policy pages show bilingual current terms and footer navigation', async ({ page }) => {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []
-  page.on('pageerror', (error) => pageErrors.push(error.message))
+  page.on('pageerror', (error) => pageErrors.push(error.stack ?? error.message))
   page.on('console', (message) => {
     if (message.type() === 'error') consoleErrors.push(message.text())
   })
@@ -23,7 +23,10 @@ test('policy pages show bilingual current terms and footer navigation', async ({
   await expect(page).toHaveURL(/\/privacy$/)
 
   for (const policy of policyPages) {
-    await page.goto(policy.path)
+    if (new URL(page.url()).pathname !== policy.path) {
+      await footer.getByRole('link', { name: policy.link }).click()
+    }
+    await expect(page).toHaveURL(new RegExp(`${policy.path}$`))
     await expect(page).toHaveTitle(new RegExp(policy.title))
     await expect(page.getByRole('heading', { level: 1, name: policy.title })).toBeVisible()
     await expect(page.getByText(policy.vi, { exact: true })).toBeVisible()
@@ -36,19 +39,18 @@ test('policy pages show bilingual current terms and footer navigation', async ({
   await expect(page.getByRole('region', { name: 'Merchant information' })).toHaveCount(0)
   await expect(page.getByRole('link', { name: 'MoIT confirmation' })).toHaveCount(0)
 
-  await page.goto('/terms')
+  await footer.getByRole('link', { name: 'Terms' }).click()
   await expect(page.getByRole('heading', { name: 'Age requirement' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Governing law and disputes' })).toBeVisible()
   await expect(page.getByText(/transaction limits, cancellation process, and refund terms/)).toBeVisible()
-  await page.goto('/contact')
+  await page.getByRole('link', { name: 'Contact GPTpatient support' }).click()
   await expect(page.getByRole('heading', { name: 'Complaints and service issues' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Khiếu nại và sự cố dịch vụ' })).toBeVisible()
   await expect(page.getByText(/Complaint intake is not operational/)).toBeVisible()
 
-  await page.goto('/privacy')
+  await footer.getByRole('link', { name: 'Privacy' }).click()
   await page.screenshot({ path: '/tmp/gptmd-policy-desktop.png', fullPage: true })
   await page.setViewportSize({ width: 390, height: 844 })
-  await page.reload()
   await expect(page.getByRole('heading', { level: 1, name: 'Privacy policy' })).toBeVisible()
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true)
   await expect(page.getByRole('heading', { name: 'Tiếng Việt' })).toBeVisible()

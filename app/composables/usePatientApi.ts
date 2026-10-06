@@ -1,6 +1,6 @@
 import {
   CreateSessionResponseSchema,
-  AudioTranscriptionGrantSchema,
+  AudioTranscriptionCallSchema,
   AssessmentSubmittedResponseSchema,
   BeginAssessmentResponseSchema,
   SetupResponseSchema,
@@ -77,17 +77,17 @@ export function usePatientApi() {
     return parsed.data
   }
 
-  async function createAudioTranscriptionGrant(sessionId: string): Promise<import('../schemas/patient-api').AudioTranscriptionGrant> {
+  async function createAudioTranscriptionCall(sessionId: string, sdp: string): Promise<import('../schemas/patient-api').AudioTranscriptionCall> {
     const result = await $fetch<unknown>(
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/audio-transcription`,
       {
         method: 'POST',
         headers: await auth.accessHeaders(),
-        body: { consentVersion: 'gptmd-audio-transcription-v1' }
+        body: { consentVersion: 'gptmd-audio-transcription-v1', sdp }
       }
     )
-    const parsed = AudioTranscriptionGrantSchema.safeParse(result)
-    if (!parsed.success) throw new Error('The speech service returned an invalid transcription grant.')
+    const parsed = AudioTranscriptionCallSchema.safeParse(result)
+    if (!parsed.success) throw new Error('The speech service returned an invalid transcription connection.')
     return parsed.data
   }
 
@@ -121,5 +121,5 @@ export function usePatientApi() {
     return parsed.data
   }
 
-  return { createSession, setupSession, sendTurn, createAudioTranscriptionGrant, beginAssessment, submitAssessment }
+  return { createSession, setupSession, sendTurn, createAudioTranscriptionCall, beginAssessment, submitAssessment }
 }

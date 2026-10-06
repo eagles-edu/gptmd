@@ -8,14 +8,19 @@ import {
 const OpaqueIdSchema = z.string().trim().min(1).max(200)
 export const ApplicationSessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
 const UtcTimestampSchema = z.iso.datetime({ offset: true })
+export const PATIENT_TURN_SCHEMA_VERSION = 3 as const
 export const SessionVersionPinsSchema = z.object({
   promptVersion: z.string().trim().min(1).max(100),
   modelVersion: z.string().trim().min(1).max(200),
-  schemaVersion: z.number().int().positive(),
+  schemaVersion: z.literal(PATIENT_SCENARIO_SCHEMA_VERSION),
   policyVersion: z.string().trim().min(1).max(100)
 }).strict()
 export type SessionVersionPins = z.infer<typeof SessionVersionPinsSchema>
-export const SessionTurnVersionPinsSchema = SessionVersionPinsSchema.extend({
+export const SessionTurnVersionPinsSchema = z.object({
+  promptVersion: z.string().trim().min(1).max(100),
+  modelVersion: z.string().trim().min(1).max(200),
+  schemaVersion: z.literal(PATIENT_TURN_SCHEMA_VERSION),
+  policyVersion: z.string().trim().min(1).max(100),
   rubricVersion: z.string().trim().min(1).max(100).nullable()
 }).strict()
 export type SessionTurnVersionPins = z.infer<typeof SessionTurnVersionPinsSchema>
@@ -196,6 +201,45 @@ export const AssessmentSubmissionSchema = AssessmentFieldsSchema.extend({
 }).strict()
 export type AssessmentSubmission = z.infer<typeof AssessmentSubmissionSchema>
 
+/** Provider-side metering metadata carried only with the private recovery event. */
+export const ProviderUsageSampleSchema = z.object({
+  responseId: z.string().trim().min(1).max(200),
+  model: z.string().trim().min(1).max(200),
+  serviceTier: z.enum(['auto', 'default', 'flex', 'scale', 'priority', 'fast', 'ultrafast']).nullable(),
+  inputTokens: z.number().int().nonnegative(),
+  cachedInputTokens: z.number().int().nonnegative(),
+  cacheWriteTokens: z.number().int().nonnegative(),
+  outputTokens: z.number().int().nonnegative(),
+  totalTokens: z.number().int().nonnegative(),
+  durationMs: z.number().int().nonnegative().nullable(),
+  pricingVersion: z.string().trim().min(1).max(100).nullable(),
+  estimatedCostUsd: z.string().regex(/^\d+\.\d{12}$/).nullable()
+}).strict().superRefine((usage, context) => {
+  if (usage.cachedInputTokens > usage.inputTokens) {
+    context.addIssue({ code: 'custom', message: 'Cached input tokens cannot exceed input tokens' })
+  }
+  if (usage.totalTokens !== usage.inputTokens + usage.outputTokens) {
+    context.addIssue({ code: 'custom', message: 'Total tokens must equal input plus output tokens' })
+  }
+  if (usage.cachedInputTokens + usage.cacheWriteTokens > usage.inputTokens) {
+    context.addIssue({ code: 'custom', message: 'Cached and cache-write input tokens cannot exceed input tokens' })
+  }
+  if ((usage.pricingVersion === null) !== (usage.estimatedCostUsd === null)) {
+    context.addIssue({ code: 'custom', message: 'Cost and pricing version must be recorded together' })
+  }
+})
+export type ProviderUsageSample = z.infer<typeof ProviderUsageSampleSchema>
+
+export const SessionProviderUsageEventSchema = z.object({
+  eventId: OpaqueIdSchema,
+  sessionId: ApplicationSessionIdSchema,
+  eventType: z.literal('provider_usage'),
+  operation: z.literal('scenario_generation'),
+  occurredAt: UtcTimestampSchema,
+  usage: ProviderUsageSampleSchema
+}).strict()
+export type SessionProviderUsageEvent = z.infer<typeof SessionProviderUsageEventSchema>
+
 export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
   z.object({
     eventId: OpaqueIdSchema,
@@ -204,11 +248,15 @@ export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
     eventOrdinal: z.literal(0),
     eventType: z.literal('accepted_turn'),
     occurredAt: UtcTimestampSchema,
+    providerUsage: z.array(ProviderUsageSampleSchema).max(2),
     payload: SessionTurnSchema
   }).strict().superRefine((event, context) => {
     if (event.eventId !== event.payload.turnId || event.sessionId !== event.payload.sessionId ||
         event.sequence !== event.payload.sequence || event.occurredAt !== event.payload.acceptedAt) {
       context.addIssue({ code: 'custom', message: 'Accepted-turn envelope does not match its payload' })
+    }
+    if (new Set(event.providerUsage.map((usage) => usage.responseId)).size !== event.providerUsage.length) {
+      context.addIssue({ code: 'custom', message: 'Provider response IDs must be unique within an accepted turn' })
     }
   }),
   z.object({

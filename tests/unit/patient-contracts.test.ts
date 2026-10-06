@@ -20,6 +20,8 @@ import {
   ClinicalActionSchema,
   ImmutablePatientScenarioSchema,
   PatientReportedFactExpansionSchema,
+  SessionTurnVersionPinsSchema,
+  SessionVersionPinsSchema,
   SessionStateSchema,
   SessionTurnSchema,
   TerminalEventSchema
@@ -44,6 +46,31 @@ const PatientProfileCatalogSchema = z.object({
 }).strict()
 
 describe('shared patient API schemas', () => {
+  it('pins scenario responses and patient turns to their exact schema versions', () => {
+    const scenarioPins = {
+      promptVersion: 'patient-scenario-prompt-v6',
+      modelVersion: 'gpt-6-luna',
+      schemaVersion: 5,
+      policyVersion: 'patient-scenario-policy-v3'
+    }
+    const turnPins = {
+      promptVersion: 'patient-turn-prompt-v7',
+      modelVersion: 'gpt-6-luna',
+      schemaVersion: 3,
+      policyVersion: 'patient-turn-policy-v7',
+      rubricVersion: null
+    }
+
+    expect(SessionVersionPinsSchema.safeParse(scenarioPins).success).toBe(true)
+    for (const schemaVersion of [1, 2, 3, 4, 6]) {
+      expect(SessionVersionPinsSchema.safeParse({ ...scenarioPins, schemaVersion }).success).toBe(false)
+    }
+    expect(SessionTurnVersionPinsSchema.safeParse(turnPins).success).toBe(true)
+    for (const schemaVersion of [1, 2, 4]) {
+      expect(SessionTurnVersionPinsSchema.safeParse({ ...turnPins, schemaVersion }).success).toBe(false)
+    }
+  })
+
   it('keeps the JSON profile catalog aligned and its five-field projection as a template', async () => {
     const path = resolve(process.cwd(), 'services/api/catalog/patient-profile.json')
     const document = PatientProfileCatalogSchema.parse(
@@ -107,15 +134,15 @@ describe('shared patient API schemas', () => {
     } as const
     const scenario = {
       scenarioId: 'scenario-1',
-      schemaVersion: 3,
+      schemaVersion: 5,
       createdAt: '2026-10-01T00:00:00Z',
       profileDigest: 'a'.repeat(64),
       profile
     }
     expect(ImmutablePatientScenarioSchema.safeParse(scenario).success).toBe(true)
-    expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion: 1 }).success).toBe(false)
-    expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion: 2 }).success).toBe(false)
-    expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion: 4 }).success).toBe(false)
+    for (const schemaVersion of [1, 2, 3, 4, 6]) {
+      expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion }).success).toBe(false)
+    }
     expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, profileDigest: 'bad' }).success).toBe(false)
     expect(PatientScenarioProfileSchema.safeParse({
       ...profile,
@@ -171,16 +198,25 @@ describe('shared patient API schemas', () => {
     expect(isHistoryDatePlausible('1990-01-01', 'about three weeks ago', new Date('2026-10-01T00:00:00Z'))).toBe(true)
     const currentPregnancyHistory = [
       { field: 'numberPregnancies', status: 'known', value: 3 },
+      { field: 'numberPriorPregnanciesReaching20Weeks', status: 'known', value: 1 },
       { field: 'numberMiscarriage', status: 'known', value: 1 },
       { field: 'numberStillbirths', status: 'known', value: 0 },
       { field: 'numberAbortions', status: 'known', value: 0 },
       { field: 'numberEctopicPregnancies', status: 'known', value: 0 },
-      { field: 'numberLiveBirths', status: 'known', value: 1 },
+      { field: 'numberPregnanciesWithLiveBirth', status: 'known', value: 1 },
+      { field: 'numberLiveBirths', status: 'known', value: 2 },
       { field: 'numberChildren', status: 'known', value: 1 }
     ] as const
     expect(isPatientScenarioConsistent({
       ...profile, currentPregnancyStatus: 'pregnant', history: [...currentPregnancyHistory]
     }, new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isPatientScenarioConsistent({
+      ...profile,
+      currentPregnancyStatus: 'pregnant',
+      history: currentPregnancyHistory.map((entry) => entry.field === 'numberPriorPregnanciesReaching20Weeks'
+        ? { ...entry, value: 3 }
+        : entry)
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isPatientScenarioConsistent({
       ...profile,
       currentPregnancyStatus: 'pregnant',
@@ -256,8 +292,8 @@ describe('shared patient API schemas', () => {
       acceptedAt: '2026-10-01T00:01:00Z', phase: 'history', learnerModality: 'typed',
       learnerMessage: 'What brings you in?',
       versions: {
-        promptVersion: 'patient-turn-prompt-v5', modelVersion: 'gpt-6-luna',
-        schemaVersion: 1, policyVersion: 'patient-turn-policy-v4', rubricVersion: null
+        promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
+        schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
       },
       patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
       disclosedHistoryFields: [], disclosedFactIds: [], historyCoverageState: [], clinicalActions: [action]

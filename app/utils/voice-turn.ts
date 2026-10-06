@@ -1,4 +1,32 @@
 export const VOICE_TURN_SILENCE_MS = 7_000
+export const MICROPHONE_TURN_SILENCE_MS = 700
+export const MICROPHONE_SPEECH_RMS_THRESHOLD = 0.025
+
+/** Commits one Realtime input-audio buffer after client-detected speech ends. */
+export class MicrophoneSilenceCommitter {
+  private lastSpeechAt: number | null = null
+
+  constructor(
+    private readonly onCommit: () => void,
+    private readonly silenceMs = MICROPHONE_TURN_SILENCE_MS,
+    private readonly speechRmsThreshold = MICROPHONE_SPEECH_RMS_THRESHOLD
+  ) {}
+
+  sample(rms: number, nowMs: number): boolean {
+    if (rms > this.speechRmsThreshold) {
+      this.lastSpeechAt = nowMs
+      return false
+    }
+    if (this.lastSpeechAt === null || nowMs - this.lastSpeechAt < this.silenceMs) return false
+    this.lastSpeechAt = null
+    this.onCommit()
+    return true
+  }
+
+  reset(): void {
+    this.lastSpeechAt = null
+  }
+}
 
 export type VoiceRepairAction = 'repeat' | 'louder' | 'slower' | 'simpler' | 'explain' | 'spell' | 'write-note' | 'question'
 export type VoiceInteractionMode = 'transcript' | 'audio'
@@ -38,9 +66,10 @@ export function classifyVoiceRepair(text: string): VoiceRepairAction {
 export class VoiceTurnBuffer {
   private transcript = ''
   private timer: ReturnType<typeof setTimeout> | undefined
+  private capturedAt = ''
 
   constructor(
-    private readonly onReady: (transcript: string) => void,
+    private readonly onReady: (transcript: string, capturedAt: string) => void,
     private readonly silenceMs = VOICE_TURN_SILENCE_MS
   ) {}
 
@@ -48,10 +77,12 @@ export class VoiceTurnBuffer {
     const text = segment.trim()
     if (!text) return
     this.transcript = [this.transcript, text].filter(Boolean).join(' ').trim()
+    this.capturedAt = new Date().toISOString()
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
+      const capturedAt = this.capturedAt
       const completed = this.flush()
-      if (completed) this.onReady(completed)
+      if (completed) this.onReady(completed, capturedAt)
     }, this.silenceMs)
   }
 
@@ -60,6 +91,7 @@ export class VoiceTurnBuffer {
     this.timer = undefined
     const completed = this.transcript
     this.transcript = ''
+    this.capturedAt = ''
     return completed
   }
 

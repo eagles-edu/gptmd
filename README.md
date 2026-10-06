@@ -17,16 +17,22 @@ chmod 600 .env
 Fill in local credentials in `.env`. The API process receives only the OpenAI,
 Redis, PostgreSQL, host, and port settings it needs. Keep `.env` out of Git.
 
-Start local PostgreSQL and the API in separate terminals:
+Start the local development stack with one command:
 
 ```sh
-npm run db:up
-npm run api:dev
+npm run dev
 ```
 
-The API expects the local Redis Stack service at the `REDIS_URL` endpoint. Start
-the Nuxt frontend in another terminal with `npm run dev`. The API listens only
-on `127.0.0.1:4000` by default.
+This starts PostgreSQL, the API, its session-history/audio-expiry worker, and the Nuxt frontend. The API listens only on
+`127.0.0.1:4000` by default, and Nuxt uses its available local development
+port. Keep the Redis Stack service configured by `REDIS_URL` running separately;
+this repository does not manage that existing service. Apply the API migrations
+from [the API service README](services/api/README.md) when setting up a database
+for the first time. Press Ctrl+C to stop the API, worker, and Nuxt processes;
+PostgreSQL continues running for the next development session.
+
+To start only the frontend, run `npm run dev:web`. PostgreSQL and API can also
+be started separately with `npm run db:up` and `npm run api:dev`.
 
 The project-local MCP configuration is in `.codex/config.toml`. Its launcher
 reads the ignored `.env` file and passes only Redis credentials to Redis MCP

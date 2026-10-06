@@ -5,8 +5,9 @@ import type { ApiDependencies, PostgresProbe, RedisProbe } from './app.js'
 import type { SetupQueueLimits } from './bounded-setup-queue.ts'
 import { generatePatientScenario } from './patient-profile.js'
 import { generatePatientTurn } from './patient-turn.js'
+import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.js'
 import { createPostgresSessionStore } from './session-store.ts'
-import { createRedisPatientStateStore } from './patient-state-store.ts'
+import { createRedisPatientStateStore, type SessionCommitTimingRecorder } from './patient-state-store.ts'
 
 export function realtimeTranscriptionSessionConfig() {
   return {
@@ -50,7 +51,10 @@ function readSetupQueueLimits(env: NodeJS.ProcessEnv): SetupQueueLimits {
   }
 }
 
-export function createServiceClients(env: NodeJS.ProcessEnv = process.env): ServiceClients {
+export function createServiceClients(
+  env: NodeJS.ProcessEnv = process.env,
+  recordSessionCommitTiming?: SessionCommitTimingRecorder
+): ServiceClients {
   const setupQueueLimits = readSetupQueueLimits(env)
   const redisClient = env.REDIS_URL
     ? createClient({
@@ -102,6 +106,12 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
                to_regclass('public.app_audio_transcription_sessions') IS NOT NULL AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'app_audio_transcription_sessions'
+                   AND column_name IN ('provider_call_id', 'disconnect_after', 'disconnect_claimed_at', 'disconnect_attempts', 'disconnect_next_attempt_at', 'disconnected_at')
+                 GROUP BY table_name HAVING count(*) = 6
+               ) AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'tenant_entitlements'
                    AND column_name IN ('audio_transcription_enabled', 'audio_transcription_privacy_approved', 'monthly_audio_transcription_session_quota')
                  GROUP BY table_name HAVING count(*) = 3
@@ -130,6 +140,16 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
                    AND pg_get_constraintdef(oid) LIKE '%assessment_submitted%'
                ) AND
                to_regclass('public.provider_usage') IS NOT NULL AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'provider_usage'
+                   AND column_name IN ('model_id', 'service_tier', 'cache_write_tokens', 'pricing_version')
+                 GROUP BY table_name HAVING count(*) = 4
+               ) AND EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'provider_usage'
+                   AND column_name = 'estimated_cost_usd' AND numeric_scale = 12
+               ) AND
                to_regclass('public.download_engagement') IS NOT NULL AND
                to_regclass('public.session_outcomes') IS NOT NULL AND
                EXISTS (
@@ -154,40 +174,74 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
       postgres,
       openaiConfigured: Boolean(openaiClient),
       generateResponse: openaiClient
-        ? async (input) => {
-            const result = await openaiClient.responses.create({
+        ? async (input, recordTiming?: ResponsesTimingRecorder) => {
+            const startedAt = performance.now()
+            let firstTokenReported = false
+            const stream = openaiClient.responses.stream({
               model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
               input
             })
+            const reportFirstToken = () => {
+              if (firstTokenReported) return
+              firstTokenReported = true
+              reportResponsesTiming(recordTiming, 'first_token', startedAt)
+            }
+            stream.on('response.output_text.delta', reportFirstToken)
+            stream.on('response.refusal.delta', reportFirstToken)
+            stream.on('response.completed', () => reportResponsesTiming(recordTiming, 'completed', startedAt))
+            const result = await stream.finalResponse()
             return { id: result.id, outputText: result.output_text }
           }
         : null,
       generatePatientScenario: openaiClient
-        ? (versions, asOf, scenarioSeed) => generatePatientScenario(openaiClient, versions.modelVersion, {
+        ? (versions, asOf, scenarioSeed, recordTiming, recordProviderUsage) => generatePatientScenario(openaiClient, versions.modelVersion, {
             asOf,
             promptVersion: versions.promptVersion,
             policyVersion: versions.policyVersion,
-            scenarioSeed
+            scenarioSeed,
+            recordTiming,
+            recordProviderUsage
           })
         : null,
       generatePatientTurn: openaiClient
-        ? (context) => generatePatientTurn(
+        ? (context, recordTiming) => generatePatientTurn(
             openaiClient,
             env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
-            context
+            context,
+            recordTiming
           )
         : null,
-      createTranscriptionCredential: openaiClient
-        ? async () => {
-            const result = await openaiClient.realtime.clientSecrets.create({
+      createTranscriptionCall: openaiClient
+        ? async (sdpOffer) => {
+            const credential = await openaiClient.realtime.clientSecrets.create({
               expires_after: { anchor: 'created_at', seconds: 60 },
               session: realtimeTranscriptionSessionConfig()
             })
-            if (result.session.type !== 'transcription') throw new Error('Unexpected Realtime session type')
+            if (credential.session.type !== 'transcription') throw new Error('Unexpected Realtime session type')
+            const response = await fetch('https://api.openai.com/v1/realtime/calls', {
+              method: 'POST',
+              headers: { Authorization: `Bearer ${credential.value}`, 'Content-Type': 'application/sdp' },
+              body: sdpOffer,
+              signal: AbortSignal.timeout(15_000)
+            })
+            if (!response.ok) throw new Error('OpenAI could not start live transcription for this browser')
+            const location = response.headers.get('location')
+            const match = location?.match(/^\/v1\/realtime\/calls\/([A-Za-z0-9_-]+)$/)
+            if (!match?.[1]) throw new Error('OpenAI did not return a valid Realtime call identifier')
             return {
-              clientSecret: result.value,
-              expiresAt: result.expires_at,
-              providerSessionId: result.session.id
+              answerSdp: await response.text(),
+              providerCallId: match[1],
+              providerSessionId: credential.session.id
+            }
+          }
+        : null,
+      hangupTranscriptionCall: openaiClient
+        ? async (providerCallId) => {
+            try {
+              await openaiClient.realtime.calls.hangup(providerCallId)
+            } catch (error) {
+              if (error instanceof OpenAI.APIError && error.status === 404) return
+              throw error
             }
           }
         : null,
@@ -203,7 +257,8 @@ export function createServiceClients(env: NodeJS.ProcessEnv = process.env): Serv
       sessionStore: postgresPool
         ? createPostgresSessionStore(
             postgresPool,
-            redisClient ? createRedisPatientStateStore(redisClient) : null
+            redisClient ? createRedisPatientStateStore(redisClient) : null,
+            { recordHandoffTiming: recordSessionCommitTiming }
           )
         : null
     },

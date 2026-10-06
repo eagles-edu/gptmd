@@ -216,3 +216,73 @@
 
 <!-- curatormd:record_id=e6e8856abdc547e5485c41fa9630723e;content_sha256=526338f3efd1953dacecc0f003d83317f0cae8f3059ec50ead69b819ba094af3 -->
 <!-- curatormd:fingerprint=db280bcb10dde5addcedd003c6ae96406667351bba5248e8e88cef7728964609 -->
+
+- ## Enforce Current-Only Session and Scenario Schemas
+
+**Beginning — trigger and context:** While continuing the line-by-line modernization checklist audit, the user clarified that GPTMD is a refactored first-generation system and must not add compatibility fallbacks for older code. Inspection then found that turn records could still be projected with legacy defaults and that scenario schema versions 1 and 2 were accepted even though current setup creates version 3. The task was to make stored and recovered session data follow the current contracts, while keeping the broader checklist and externally dependent work open.
+
+**Middle — decisions and work:** Removed legacy fallback/default behavior for omitted transcript modality/phase, session mode, and assessment state. Updated the transcript view and added migration 016 so databases that had already applied migration 015 receive the strict projection. Changed immutable-scenario and Redis live-state validation to require the current schema version 3, updated the generated schema and verifier/tests, and added an explicit PostgreSQL recovery check that rejects unsupported stored versions instead of reconstructing them into Redis. Existing unsupported rows are left untouched and must be recreated under v3. Updated the `d03` checklist evidence. The current-version checks reject versions 1, 2, and 4.
+
+**End — outcome and verification:** Migration 016 was applied in the temporary PostgreSQL recovery verification. `npm run verify:phase2` passed, confirming ordered transcript rows retain required phase and modality, event persistence and assessment recovery work, and cleanup succeeds. `npm run check` passed with 137 unit tests, 33 standard E2E tests and 15 preflight E2E tests across Chromium, Firefox and WebKit, plus lint, type checks, API build, generated schema and diagram checks, and production build. `git diff --check` passed. Unsupported persisted scenarios remain unchanged and need recreation under schema v3; the broader modernization checklist remains in progress, including real-microphone verification.
+
+**Rationale:** The user explicitly chose a clean first-generation contract. Keeping strict schema enforcement and the migration step together prevents later cleanup from reintroducing compatibility behavior and distinguishes an unsupported stored row from a missing Redis projection.
+
+**Future utility:** Gives future work one current session and scenario contract, the migration path for strict transcript projection on databases that already ran migration 015, and a tested recovery rule that leaves unsupported stored scenarios untouched instead of silently adapting them.
+
+**Project impact:** Observed: current runtime validation rejects missing legacy fields and unsupported scenario versions, PostgreSQL recovery fails closed for unsupported records, and the project verification gate passed. Expected: strict first-generation contracts prevent silent defaults from changing the meaning of stored transcript/session data and stop old scenario records from re-entering active Redis state.
+
+**Follow-up:** Recreate any persisted scenario rows with schema versions other than 3 before they are used by the current runtime; keep educator rubric, clinical action catalogs, live Google sign-in verification and real microphone/provider verification marked incomplete until their stated prerequisites are met.
+  - **Why:** Gives future work one current session and scenario contract, the migration path for strict transcript projection on databases that already ran migration 015, and a tested recovery rule that leaves unsupported stored scenarios untouched instead of silently adapting them.
+
+<!-- curatormd:record_id=1a0284f6eaaf6cccd0b7743b04ca523e;content_sha256=aa672f56ee39a0065c53c3d4b83147c1a6b2ebf620029889151ed586375c3490 -->
+<!-- curatormd:fingerprint=2e354e66a1afd6e320a947a15c2f6831cbc94790cec04dc5f81d896955b963d3 -->
+
+- ## Expanded GPTMD current-state architecture in IcePanel
+
+**Beginning — trigger and context:** The user requested a complete recreation of GPTMD's current project state in IcePanel, then asked for more detail and additional levels. The existing model had a useful top-level skeleton but sparse deep views and stale status labels.
+
+**Middle — decisions and work:** Compared the saved IcePanel landscape against the GPTMD repository's current routes, data model, and worktree. Corrected implemented versus future statuses, added Supabase Auth, expanded the C4 model to 13 diagrams covering system context, application and data flow, Nuxt and Express components, and nine focused workflows for identity and quotas, setup, turns, persistence, assessment, transcription, and client flows. IcePanel's API rejected component-under-component ownership with HTTP 422, so components stayed at the valid application level. Attempts to save zoomOverrides timed out; finer process views were kept as separate app-level diagrams exposed through the relevant application's child-diagram list. Removed superseded baseline copies and reread the saved remote diagrams and connections.
+
+**End — outcome and verification:** Verified the saved remote model contains 13 diagrams with no broken diagram connections. Updated routes and persistence statuses and included Supabase Auth. Organization/customer profile fields, instructor/admin workflows, clinical orders/exams, rubric scoring, and full audio encounters remain marked future or incomplete. No repository source files were changed. IcePanel zoom override saving remained unavailable due to request timeouts.
+
+**Future utility:** Future project work can use the verified 13-diagram IcePanel landscape as a current architecture reference and preserve its C4 constraint: components belong to applications, while finer process detail is represented in separate linked diagrams when zoom overrides cannot be saved.
+
+**Project impact:** Observed outcome: the remote architecture model now represents current implemented GPTMD state at more levels, with known incomplete capabilities explicitly retained as future/incomplete. This improves architecture review and navigation while avoiding unsupported C4 ownership relationships.
+  - **Why:** Future project work can use the verified 13-diagram IcePanel landscape as a current architecture reference and preserve its C4 constraint: components belong to applications, while finer process detail is represented in separate linked diagrams when zoom overrides cannot be saved.
+
+<!-- curatormd:record_id=38a6cd453c3bec2b71836ec98c4f7f2d;content_sha256=d6d08fc468ebc0e2b70d83172231b0cfecd0b1ab3bb48b15ee362c2c870f2cc9 -->
+<!-- curatormd:fingerprint=c387ec7e4e31e1ebabeafd4588b8cf7a6109edda6bc5c75508664d37c0e61999 -->
+
+- ## Bounded scenario setup and consented Realtime transcription
+
+**Beginning — trigger and context:** The GPTMD modernization checklist left scenario setup without back-pressure and voice interaction dependent on browser speech recognition. The implementation needed bounded retries and a cross-browser transcription path while preserving the user's chosen reuse of the existing server-side OPENAI_API_KEY.
+
+**Middle — decisions and work:** Added a bounded process-local setup queue with configurable active and waiting limits, queue deadlines, provider timeouts/retries, and retryable overload responses that leave sessions initializing for same-key retry. Added Realtime transcription using short-lived client secrets, default-off audio, tenant enablement and privacy approval, finite monthly grant quota, visit-level consent, and finalized text submission; GPTMD does not persist raw audio. Migration 009 was applied locally, and the queue's single-replica scope and client-side 15-minute audio limit were recorded.
+
+**End — outcome and verification:** The earlier pass reported npm run check, local readiness for PostgreSQL, Redis, OpenAI configuration, and authentication, plus desktop/mobile review. Real microphones across target browsers and server-side duration observation remained open; this proposal preserves those limits rather than treating browser tests as microphone evidence.
+
+**Rationale:** This records the user's existing-key decision, the deployment scope of the queue, consent/privacy boundaries, and the remaining microphone verification so later checklist work does not repeat setup or overstate validation.
+
+**Future utility:** Future work can resume microphone compatibility and usage enforcement checks from the established setup queue and transcription contract.
+
+**Project impact:** Observed: the checklist implementation had bounded setup admission and an explicit consented Realtime transcription route, with automated checks and local readiness passing. Expected: overload and provider failures are less likely to leave partially activated sessions, and audio handling is clearer to learners.
+  - **Why:** Future work can resume microphone compatibility and usage enforcement checks from the established setup queue and transcription contract.
+
+<!-- curatormd:record_id=1d062cfff84f5e3c5fea0a600100898e;content_sha256=d67d083b57a80f2ccae41616e5852853526c70b16e7d685493efc91b3ae7566c -->
+<!-- curatormd:fingerprint=0f0edf693ec181233d75a2a7a75fd6df071b1c7298b74af236687e26dea3bf56 -->
+
+- ## Start the GPTMD development stack with one command
+
+**Beginning — trigger and context:** The user asked to make `npm run dev` a one-click GPTMD startup because the frontend, API, and local data services had separate startup requirements. The success criteria were one npm command, visible logs, and clean shutdown of child processes.
+
+**Middle — decisions and work:** Reviewed the repository startup guidance and found that `npm run dev` launched Nuxt only, while PostgreSQL and the API had separate scripts and Redis Stack was an existing external prerequisite. Updated `scripts/dev.mjs` and package scripts so `npm run dev` starts PostgreSQL, waits for API readiness on port 4000, and then starts Nuxt on port 3000; retained `npm run dev:web` for frontend-only use. Documented Redis and first-time migration prerequisites. An initial launch exposed a port race where Nuxt could take port 4000; startup ordering was corrected so the API binds first.
+
+**End — outcome and verification:** Ran `npm run dev`; the API readiness endpoint and Nuxt page both returned HTTP 200. Verified Ctrl+C stops the API and Nuxt while PostgreSQL remains running. The session reported an existing Nuxt DevTools/Vite warning, and Redis Stack plus documented first-time migrations remain prerequisites.
+
+**Future utility:** Provides the current one-command local development workflow, the service startup order, the frontend-only command, and the external Redis and database migration prerequisites.
+
+**Project impact:** Observed: one command launched the API and Nuxt successfully, both endpoints returned HTTP 200, and Ctrl+C stopped both development servers. Expected: startup ordering and readiness waiting reduce port conflicts and make local setup repeatable.
+  - **Why:** Provides the current one-command local development workflow, the service startup order, the frontend-only command, and the external Redis and database migration prerequisites.
+
+<!-- curatormd:record_id=0eda8b096ace82e03860603ed38ecaee;content_sha256=a4ea65bd877477db24a192582abb034a591de2b9656a5bc0bde8a9516630c79a -->
+<!-- curatormd:fingerprint=894ffeaea1c8f5f4885f6cead9ef7a00c78866be4728b086f0ccd548b0fb6fcd -->

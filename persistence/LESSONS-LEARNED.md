@@ -77,3 +77,15 @@ rule. Do not add speculative or transcript-only observations.
 
 <!-- curatormd:record_id=b20a9cc19a624a0eb835fac1920e94c7;content_sha256=215659e3f018033c834c4462b0b25bc4a8b313d6ea0986cf6c910c50392e3266 -->
 <!-- curatormd:fingerprint=71c9db6d6d1b89168e500c99a807e0d837f89275c48f2e702eedad4b7fd454e6 -->
+
+## Preserve scene orientation and confidentiality cues in room images
+
+**Date:** 2026-10-06
+
+**Lesson:** A request to depict an exam-room entry door means the viewer is in the hallway unless the user says otherwise. Reversing the camera into the room changes the scene. Preserve the accepted camera side and composition, then inspect the whole frame against each explicit request before replacing the app asset. Check every visible door, including doors in the background: when they belong to the same room, repeat the exact room label (for example, “EXAM ROOM 4”) and use the same confidentiality treatment. Keep every patient chart fully concealed in a closed opaque jacket, with no patient information visible; do not mistake a bare panel or an open holder for a confidentiality jacket.
+
+## Exercise the Realtime transcription commit boundary
+
+**Date:** 2026-10-06
+
+**Lesson:** A mocked `conversation.item.input_audio_transcription.completed` event can make a voice test pass even when the browser never commits its input audio. With Realtime transcription and `turn_detection: null`, use client-side speech detection to send `input_audio_buffer.commit` after speech ends. Test the microphone-energy-to-commit boundary, the silence threshold, one commit per utterance, and re-arming for the next utterance. Keep synthetic audio tests distinct from live microphone and provider verification.

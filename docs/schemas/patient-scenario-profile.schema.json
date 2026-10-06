@@ -38,7 +38,7 @@
       ]
     },
     "history": {
-      "maxItems": 67,
+      "maxItems": 69,
       "type": "array",
       "items": {
         "type": "object",
@@ -76,10 +76,12 @@
               "surgicalHistory",
               "obstetricalHistory",
               "numberPregnancies",
+              "numberPriorPregnanciesReaching20Weeks",
               "numberMiscarriage",
               "numberStillbirths",
               "numberAbortions",
               "numberEctopicPregnancies",
+              "numberPregnanciesWithLiveBirth",
               "numberLiveBirths",
               "numberChildren",
               "tubalLigation",

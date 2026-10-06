@@ -35,7 +35,7 @@ export const PATIENT_PROFILE_RESPONSE_GUIDANCE = {
   },
   "timePainOnset": {
     "commonPatientWording": "“It began last month.” / “It started this past Monday.” / “It came on all of a sudden yesterday.” / “It usually starts the day before my period.”",
-    "clinicianAssistedGuidance": "Onset date or estimate, sudden versus gradual if reported, and relation to cycle or event when stated. Do not calculate or invent chronology."
+    "clinicianAssistedGuidance": "Preserve the patient's onset estimate and sudden/gradual description or relation to a cycle/event when stated. If the scenario marks onset unknown, the fictional patient may give a brief approximate estimate only when asked; store it as a generated patient report for consistency, not as a seeded fact. Never back-calculate an exact date from the encounter date or infer onset from cycle pattern."
   },
   "constantIntermittentPain": {
     "commonPatientWording": "“It’s there most of the time.” / “It comes and goes.” / “It comes in waves.”",
@@ -111,11 +111,15 @@ export const PATIENT_PROFILE_RESPONSE_GUIDANCE = {
   },
   "obstetricalHistory": {
     "commonPatientWording": "“I’ve been pregnant twice; one pregnancy ended in a miscarriage and I have one child.” / “I’ve never been pregnant.”",
-    "clinicianAssistedGuidance": "Narrative pregnancy history with chronology/outcomes only when given; reconcile with separate count fields without inventing missing outcomes."
+    "clinicianAssistedGuidance": "Narrative pregnancy history with chronology, outcomes, and complications only when reported; reconcile with separate count fields without inventing missing outcomes, gestational ages, parity, or complications."
   },
   "numberPregnancies": {
     "commonPatientWording": "“I’ve been pregnant twice.” / “I’ve never been pregnant.” / “I’m not sure.”",
     "clinicianAssistedGuidance": "Patient-reported total pregnancies, including a current pregnancy if present; record unknown separately."
+  },
+  "numberPriorPregnanciesReaching20Weeks": {
+    "commonPatientWording": "“Two of my previous pregnancies made it to at least 20 weeks.” / “None of them reached 20 weeks.” / “I’m not sure.”",
+    "clinicianAssistedGuidance": "Parity count: prior pregnancies that reached 20 weeks or later, regardless of fetal count or outcome. Count each pregnancy once, including multiple gestations. Exclude a current pregnancy because it has not ended. Do not derive this count from live births, stillbirths, gravidity, or living children unless the patient explicitly reports the value."
   },
   "numberMiscarriage": {
     "commonPatientWording": "“I had one miscarriage.” / “None.” / “I’m not sure how many.”",
@@ -133,9 +137,13 @@ export const PATIENT_PROFILE_RESPONSE_GUIDANCE = {
     "commonPatientWording": "“I had an ectopic pregnancy once.” / “None.” / “I’m not sure.”",
     "clinicianAssistedGuidance": "Patient-reported count; do not infer from surgery or treatment unless the patient states the reason."
   },
+  "numberPregnanciesWithLiveBirth": {
+    "commonPatientWording": "“One pregnancy resulted in a baby being born alive.” / “Both of those pregnancies resulted in live births.”",
+    "clinicianAssistedGuidance": "Count pregnancies that resulted in one or more live-born infants; a twin or triplet pregnancy counts once here. Keep this pregnancy-level outcome separate from the number of infants born alive."
+  },
   "numberLiveBirths": {
     "commonPatientWording": "“I’ve had two babies born alive.” / “None.” / “I don’t remember.”",
-    "clinicianAssistedGuidance": "Patient-reported number of live births; keep separate from current number of children."
+    "clinicianAssistedGuidance": "Patient-reported number of infants born alive; a twin delivery counts two here. Keep separate from pregnancies with a live birth and from the current number of living children."
   },
   "numberChildren": {
     "commonPatientWording": "“I have two children.” / “I don’t have children.”",
@@ -267,6 +275,6 @@ export const PATIENT_PROFILE_RESPONSE_GUIDANCE = {
   },
   "miscellaneousDetailsNos": {
     "commonPatientWording": "“There’s one more thing: the pain also wakes me up.” / “I can’t think of anything else.” / “I’m not sure.”",
-    "clinicianAssistedGuidance": "Catch-all for case-relevant patient-reported details that do not fit another PP field. Keep each detail attributable and cue-gated; do not use it to bypass a dedicated field or disclose unrelated private facts."
+    "clinicianAssistedGuidance": "Catch-all for case-relevant patient-reported details that do not fit another PP field. When unknown, the fictional patient may add a concise, case-consistent detail only when asked about that detail or related symptoms; accepted details stay stable. Keep each detail attributable and cue-gated; do not use it to bypass a dedicated field, create blanket negatives, or disclose unrelated private facts."
   }
 } as const

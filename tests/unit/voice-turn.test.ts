@@ -1,24 +1,36 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { classifyVoiceRepair, isAssessmentTransitionCue, shouldSpeakPatientReply, VoiceTurnBuffer, VOICE_TURN_SILENCE_MS } from '../../app/utils/voice-turn'
+import {
+  classifyVoiceRepair,
+  isAssessmentTransitionCue,
+  MicrophoneSilenceCommitter,
+  MICROPHONE_SPEECH_RMS_THRESHOLD,
+  MICROPHONE_TURN_SILENCE_MS,
+  shouldSpeakPatientReply,
+  VoiceTurnBuffer,
+  VOICE_TURN_SILENCE_MS
+} from '../../app/utils/voice-turn'
 
 afterEach(() => vi.useRealTimers())
 
 describe('VoiceTurnBuffer', () => {
   it('waits for seven seconds of silence, combines speech segments, and submits once', () => {
     vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-10-06T00:00:00.000Z'))
     const onReady = vi.fn()
     const turns = new VoiceTurnBuffer(onReady)
 
     turns.add('Could you repeat')
-    vi.advanceTimersByTime(VOICE_TURN_SILENCE_MS - 1)
+    vi.advanceTimersByTime(1_000)
     expect(onReady).not.toHaveBeenCalled()
-
     turns.add('that please?')
     vi.advanceTimersByTime(VOICE_TURN_SILENCE_MS - 1)
     expect(onReady).not.toHaveBeenCalled()
     vi.advanceTimersByTime(1)
 
-    expect(onReady).toHaveBeenCalledExactlyOnceWith('Could you repeat that please?')
+    expect(onReady).toHaveBeenCalledExactlyOnceWith(
+      'Could you repeat that please?',
+      '2026-10-06T00:00:01.000Z'
+    )
     expect(turns.pendingText).toBe('')
     vi.advanceTimersByTime(VOICE_TURN_SILENCE_MS)
     expect(onReady).toHaveBeenCalledOnce()
@@ -34,6 +46,35 @@ describe('VoiceTurnBuffer', () => {
 
     expect(onReady).not.toHaveBeenCalled()
     expect(turns.pendingText).toBe('')
+  })
+})
+
+describe('MicrophoneSilenceCommitter', () => {
+  it('commits once after the silence boundary and rearms for the next utterance', () => {
+    const onCommit = vi.fn()
+    const committer = new MicrophoneSilenceCommitter(onCommit)
+
+    expect(committer.sample(0, 0)).toBe(false)
+    expect(committer.sample(MICROPHONE_SPEECH_RMS_THRESHOLD + 0.01, 10)).toBe(false)
+    expect(committer.sample(0, 10 + MICROPHONE_TURN_SILENCE_MS - 1)).toBe(false)
+    expect(onCommit).not.toHaveBeenCalled()
+    expect(committer.sample(0, 10 + MICROPHONE_TURN_SILENCE_MS)).toBe(true)
+    expect(committer.sample(0, 10 + MICROPHONE_TURN_SILENCE_MS + 1)).toBe(false)
+    expect(onCommit).toHaveBeenCalledOnce()
+
+    committer.sample(MICROPHONE_SPEECH_RMS_THRESHOLD + 0.01, 2_000)
+    expect(committer.sample(0, 2_000 + MICROPHONE_TURN_SILENCE_MS)).toBe(true)
+    expect(onCommit).toHaveBeenCalledTimes(2)
+  })
+
+  it('resets an unfinished utterance when the voice session ends', () => {
+    const onCommit = vi.fn()
+    const committer = new MicrophoneSilenceCommitter(onCommit)
+    committer.sample(MICROPHONE_SPEECH_RMS_THRESHOLD + 0.01, 10)
+    committer.reset()
+
+    expect(committer.sample(0, 10 + MICROPHONE_TURN_SILENCE_MS)).toBe(false)
+    expect(onCommit).not.toHaveBeenCalled()
   })
 })
 

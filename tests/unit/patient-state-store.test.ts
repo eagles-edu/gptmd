@@ -128,7 +128,7 @@ describe('Redis patient state store', () => {
       },
       conversationId: 'conv_private',
       profileDigest: 'a'.repeat(64),
-      schemaVersion: 3
+      schemaVersion: 5
     })
 
     expect(redis.connect).not.toHaveBeenCalled()
@@ -139,7 +139,7 @@ describe('Redis patient state store', () => {
       sessionId, patientProfileId, state: { status: 'ready' }, acceptedTurns: [],
       profile: { diagnosis: 'Endometriosis' },
       setupProjection: { diagnosis: 'Endometriosis' },
-      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 3
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 5
     })
     expect(redis.sendCommand).toHaveBeenCalledWith(expect.arrayContaining(['EVAL', expect.any(String), '2', `gptmd:session:${sessionId}`]))
 
@@ -160,7 +160,7 @@ describe('Redis patient state store', () => {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
         reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
       },
-      conversationId: 'conv_private', profileDigest: 'digest_private', schemaVersion: 2
+      conversationId: 'conv_private', profileDigest: 'digest_private', schemaVersion: 3
     } as never)).rejects.toThrow()
     expect(redis.sendCommand).toHaveBeenCalledTimes(commandsBeforeUnsupportedVersion)
   })
@@ -209,32 +209,49 @@ describe('Redis patient state store', () => {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
         reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
       },
-      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 3
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 5
     })
     const turn = {
       turnId: 'turn-1', sessionId, sequence: 1, acceptedAt: '2026-10-01T00:01:00.000Z',
       phase: 'history', learnerModality: 'typed',
       versions: {
-        promptVersion: 'patient-turn-prompt-v5', modelVersion: 'gpt-6-luna',
-        schemaVersion: 1, policyVersion: 'patient-turn-policy-v4', rubricVersion: null
+        promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
+        schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
       },
       learnerMessage: 'What brings you in?', patientResponse: 'I have pelvic pain.',
       patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: ['anyPain'],
       disclosedFactIds: ['seed:scenario-1:anyPain'], historyCoverageState: [], clinicalActions: []
     }
 
-    const results = await Promise.all([store.acceptTurn(turn), store.acceptTurn(turn)])
+    const recordTiming = vi.fn()
+    const results = await Promise.all([store.acceptTurn(turn, [], recordTiming), store.acceptTurn(turn, [])])
 
     expect(results).toEqual([
       { status: 'accepted', turnId: 'turn-1', sequence: 1, patientResponse: 'I have pelvic pain.' },
       { status: 'duplicate', turnId: 'turn-1', sequence: 1, patientResponse: 'I have pelvic pain.' }
     ])
+    const turnCommitCommands = redis.sendCommand.mock.calls
+      .map(([command]) => command)
+      .filter((command) => command[0] === 'EVAL' && command[2] === '4')
+    expect(turnCommitCommands).toHaveLength(2)
+    const commitCommand = turnCommitCommands[0]!
+    expect(commitCommand[1]).toContain("redis.call('JSON.SET', KEYS[1], '$', ARGV[5])")
+    expect(commitCommand[1]).toContain("redis.call('JSON.SET', KEYS[2], '$', ARGV[6])")
+    expect(commitCommand[1]).toContain('redis.call(\'HSET\', KEYS[3], ARGV[7], ARGV[8])')
+    expect(commitCommand[1]).toContain("redis.call('XADD', KEYS[4], '*', 'event', streamEvent)")
+    expect(JSON.parse(commitCommand[10]!).map((event: string) => JSON.parse(event).eventType))
+      .toEqual(['accepted_turn', 'disclosure'])
+    expect(commitCommand[13]).toBe('t:turn-1')
+    expect(JSON.parse(commitCommand[14]!)).toEqual({
+      turnId: 'turn-1', sequence: 1, patientResponse: 'I have pelvic pain.'
+    })
     expect(redis.events).toHaveLength(2)
     expect(redis.events.map((serialized) => JSON.parse(serialized!).eventType)).toEqual(['accepted_turn', 'disclosure'])
     expect(JSON.parse(redis.events[1]!)).toMatchObject({
       eventOrdinal: 1,
       payload: { turnId: 'turn-1', turnSequence: 1, field: 'anyPain', factId: 'seed:scenario-1:anyPain', source: 'scenario_seed' }
     })
+    expect(recordTiming).toHaveBeenCalledWith('turn', expect.any(Number))
     expect(await store.read(sessionId)).toMatchObject({
       state: { status: 'active', currentTurnSequence: 1 }, acceptedTurns: [turn]
     })

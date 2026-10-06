@@ -1,0 +1,9 @@
+//# allFunctionsCalledOnLoad
+loaded_h_0(function(_){var window=this;
+_.v("QU9BMd");
+var CVy=class{constructor(a){this.state=a}getId(){return this.state.id}getPushId(){return this.state.pushId}getUrl(){return this.state.url}getUserData(){return this.state.userData}};
+_.mg(_.M3a,class extends _.Qo{static Qa(){return{service:{history:_.zib}}}constructor(a){super();this.history=a.service.history;this.Lx=document.body;this.ka=new Map;this.history.addListener((b,c,d)=>{if(d.Zba)for(let e of d.Zba)if(this.ka.has(e.id)){let f=this.ka.get(e.id);f&&_.me(()=>{f(e.sGa)});this.ka.delete(e.id)}d.userInitiated&&this.Lx.dispatchEvent(new CustomEvent("FWkcec"))})}pushAsync(a,b,c,d){a=d?this.history.oa(a,b):this.history.pushAsync(a,b);return Promise.resolve(a.then(e=>{c&&this.ka.set(e.id,
+c);return e.id}))}pop(a,b){a=b?this.history.Aa(a):this.history.pop(a);return Promise.resolve(a.then(c=>c?new CVy(c):null))}getState(){var a=this.history.getState();return a?new CVy(a):null}getCurrentUrl(){return this.history.getCurrentUrl()}getEventTarget(){return this.Lx}navigate(a,b){a=this.history.navigate(a,b).committed;return Promise.resolve(a.then(c=>new CVy(c)))}});
+_.w();
+});
+// Google Inc.

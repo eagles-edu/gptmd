@@ -7,8 +7,9 @@ are currently available in `package.json`.
 
 | Command | What it does |
 | --- | --- |
-| `npm run dev` | Starts the Nuxt frontend development server with hot reload. By default, Nuxt prints the local URL in the terminal (usually `http://localhost:3000`). Stop it with `Ctrl+C`. |
-| `npm run api:dev` | Starts the Express API from TypeScript; the API launcher loads only service-specific values from the ignored `.env` file and restarts on source changes. Run it separately from Nuxt. |
+| `npm run dev` | Starts PostgreSQL, then the Express API and Nuxt development server together. The API starts before Nuxt so it can claim port 4000; Nuxt uses port 3000 when available. Stop both development processes with `Ctrl+C`; PostgreSQL remains running. |
+| `npm run dev:web` | Starts only the Nuxt frontend development server with hot reload. |
+| `npm run api:dev` | Starts the Express API from TypeScript; the API launcher loads only service-specific values from the ignored `.env` file and restarts on source changes. |
 | `npm run build` | Builds the Nuxt frontend for production. |
 | `npm run api:build` | Compiles the Express API TypeScript project into `services/api/dist/`. |
 | `npm run preview` | Serves the most recent Nuxt production build locally. Run `npm run build` first. |
@@ -17,13 +18,16 @@ are currently available in `package.json`.
 | `npm run db:down` | Stops the local PostgreSQL container without deleting its volume. |
 | `npm run generate` | Runs Nuxt's static generation and writes prerendered output for static hosting. |
 
-For local full-stack development, open two terminals in the repository root:
+For local full-stack development, use one terminal in the repository root:
 
 ```sh
 npm run dev
-npm run api:dev
 ```
 
+The command requires Docker, the ignored `.env` file, and the Redis Stack
+service configured by `REDIS_URL` to be available. It starts the repository's
+PostgreSQL service, but does not apply API schema migrations; apply them as
+described in the [API README](../services/api/README.md) during initial setup.
 The frontend's configured API base defaults to `http://127.0.0.1:4000` and can
 be changed with `NUXT_PUBLIC_API_BASE`.
 

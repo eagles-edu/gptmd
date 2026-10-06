@@ -3,7 +3,7 @@ import { z } from 'zod'
 const SessionVersionPinsSchema = z.object({
   promptVersion: z.string().min(1),
   modelVersion: z.string().min(1),
-  schemaVersion: z.number().int().positive(),
+  schemaVersion: z.literal(5),
   policyVersion: z.string().min(1)
 }).strict()
 
@@ -42,9 +42,8 @@ export const TurnResponseSchema = z.object({
   text: z.string().min(1)
 }).strict()
 
-export const AudioTranscriptionGrantSchema = z.object({
-  clientSecret: z.string().min(1),
-  expiresAt: z.number().int().positive(),
+export const AudioTranscriptionCallSchema = z.object({
+  answerSdp: z.string().min(1),
   maxDurationSeconds: z.number().int().positive().max(900)
 }).strict()
 
@@ -69,6 +68,6 @@ export const AssessmentSubmittedResponseSchema = z.object({
 export type CreateSessionResult = z.infer<typeof CreateSessionResponseSchema>
 export type PatientProfile = z.infer<typeof PatientProfileSchema>
 export type TurnResult = z.infer<typeof TurnResponseSchema>
-export type AudioTranscriptionGrant = z.infer<typeof AudioTranscriptionGrantSchema>
+export type AudioTranscriptionCall = z.infer<typeof AudioTranscriptionCallSchema>
 export type AssessmentFields = z.infer<typeof AssessmentFieldsSchema>
 export type AssessmentSubmittedResult = z.infer<typeof AssessmentSubmittedResponseSchema>

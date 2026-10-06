@@ -1,10 +1,13 @@
+import { createHash } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
 import type { RedisJsonClient } from './patient-state-store.ts'
 import {
   SessionAuditEventSchema,
   SessionHistoryEventSchema,
+  SessionProviderUsageEventSchema,
   type SessionAuditEvent,
-  type SessionHistoryEvent
+  type SessionHistoryEvent,
+  type SessionProviderUsageEvent
 } from './session-contracts.ts'
 
 const STREAM_KEY = 'gptmd:session-events'
@@ -20,14 +23,34 @@ export type SessionEventWorker = {
   run(signal?: AbortSignal): Promise<void>
 }
 
+export type SessionEventWorkerMetrics = {
+  observedAt: string
+  processedEvents: number
+  pendingEvents: number
+  undeliveredEvents: number
+  backlogEvents: number
+  oldestPendingAgeMs: number | null
+  maxPersistenceLagMs: number | null
+}
+
 export function createSessionEventWorker(
   redis: RedisJsonClient,
   pool: Pool,
-  options: { consumerName?: string; blockMs?: number; onError?: (error: unknown) => void } = {}
+  options: {
+    consumerName?: string
+    blockMs?: number
+    metricsIntervalMs?: number
+    onError?: (error: unknown) => void
+    onMetrics?: (metrics: SessionEventWorkerMetrics) => void
+  } = {}
 ): SessionEventWorker {
   const consumerName = options.consumerName ?? `gptmd-${process.pid}`
   const blockMs = options.blockMs ?? 1_000
+  const metricsIntervalMs = options.metricsIntervalMs ?? 30_000
   let groupReady = false
+  let lastMetricsAt = Date.now()
+  let processedEventsSinceMetrics = 0
+  let maxPersistenceLagMsSinceMetrics: number | null = null
 
   return {
     async ensureGroup() {
@@ -58,10 +81,33 @@ export function createSessionEventWorker(
         if (!eventText) throw new Error('Redis session event is missing its event payload')
         const rawEvent: unknown = JSON.parse(eventText)
         const auditEvent = SessionAuditEventSchema.safeParse(rawEvent)
-        if (auditEvent.success) await persistAuditEvent(pool, auditEvent.data)
-        else await persistEvent(pool, SessionHistoryEventSchema.parse(rawEvent))
+        const providerUsageEvent = auditEvent.success ? null : SessionProviderUsageEventSchema.safeParse(rawEvent)
+        let occurredAt: string
+        if (auditEvent.success) {
+          occurredAt = auditEvent.data.occurredAt
+          await persistAuditEvent(pool, auditEvent.data)
+        } else if (providerUsageEvent?.success) {
+          occurredAt = providerUsageEvent.data.occurredAt
+          await persistProviderUsageEvent(pool, providerUsageEvent.data)
+        } else {
+          const historyEvent = SessionHistoryEventSchema.parse(rawEvent)
+          occurredAt = historyEvent.occurredAt
+          await persistEvent(pool, historyEvent)
+        }
+        const persistenceLagMs = Math.max(0, Date.now() - Date.parse(occurredAt))
+        maxPersistenceLagMsSinceMetrics = Math.max(maxPersistenceLagMsSinceMetrics ?? 0, persistenceLagMs)
+        processedEventsSinceMetrics += 1
         await redis.sendCommand(['XACK', STREAM_KEY, CONSUMER_GROUP, entry.id])
         completed += 1
+      }
+      if (options.onMetrics && Date.now() - lastMetricsAt >= metricsIntervalMs) {
+        await reportWorkerMetrics(redis, options, {
+          processedEvents: processedEventsSinceMetrics,
+          maxPersistenceLagMs: maxPersistenceLagMsSinceMetrics
+        })
+        lastMetricsAt = Date.now()
+        processedEventsSinceMetrics = 0
+        maxPersistenceLagMsSinceMetrics = null
       }
       return completed
     },
@@ -78,6 +124,90 @@ export function createSessionEventWorker(
       }
     }
   }
+}
+
+async function reportWorkerMetrics(
+  redis: RedisJsonClient,
+  callbacks: {
+    onError?: (error: unknown) => void
+    onMetrics?: (metrics: SessionEventWorkerMetrics) => void
+  },
+  interval: { processedEvents: number; maxPersistenceLagMs: number | null }
+): Promise<void> {
+  try {
+    const groups = parseInfoGroups(await redis.sendCommand(['XINFO', 'GROUPS', STREAM_KEY]))
+    const group = groups.find((item) => item.name === CONSUMER_GROUP)
+    if (!group) throw new Error('Session event consumer group metrics are unavailable')
+    const pendingEvents = readNonNegativeInteger(group.pending, 'pending')
+    const undeliveredEvents = readNonNegativeInteger(group.lag, 'lag')
+    const pendingSummary = pendingEvents > 0
+      ? parsePendingSummary(await redis.sendCommand(['XPENDING', STREAM_KEY, CONSUMER_GROUP]))
+      : null
+    const oldestPendingAgeMs = pendingSummary?.oldestId
+      ? Math.max(0, Date.now() - redisStreamIdTimestamp(pendingSummary.oldestId))
+      : null
+    callbacks.onMetrics?.({
+      observedAt: new Date().toISOString(),
+      processedEvents: interval.processedEvents,
+      pendingEvents,
+      undeliveredEvents,
+      backlogEvents: pendingEvents + undeliveredEvents,
+      oldestPendingAgeMs,
+      maxPersistenceLagMs: interval.maxPersistenceLagMs
+    })
+  } catch (error) {
+    try {
+      callbacks.onError?.(error)
+    } catch {
+      // Observability errors must not alter event persistence or acknowledgement.
+    }
+  }
+}
+
+function parseInfoGroups(value: unknown): Array<Record<string, unknown>> {
+  const rows = Array.isArray(value)
+    ? value
+    : isRecord(value) ? Object.values(value) : []
+  return rows.map((row) => parseInfoPairs(row)).filter((row) => row.name !== undefined)
+}
+
+function parseInfoPairs(value: unknown): Record<string, unknown> {
+  if (isRecord(value)) return value
+  if (!Array.isArray(value)) return {}
+  const result: Record<string, unknown> = {}
+  for (let index = 0; index + 1 < value.length; index += 2) {
+    const key = value[index]
+    if (typeof key === 'string') result[key] = value[index + 1]
+  }
+  return result
+}
+
+function parsePendingSummary(value: unknown): { oldestId: string | null } {
+  if (Array.isArray(value)) {
+    return { oldestId: typeof value[1] === 'string' ? value[1] : null }
+  }
+  if (isRecord(value)) {
+    const oldestId = value.min
+    return { oldestId: typeof oldestId === 'string' ? oldestId : null }
+  }
+  return { oldestId: null }
+}
+
+function redisStreamIdTimestamp(id: string): number {
+  const timestamp = Number(id.split('-', 1)[0])
+  return Number.isFinite(timestamp) && timestamp >= 0 ? timestamp : Date.now()
+}
+
+function readNonNegativeInteger(value: unknown, field: string): number {
+  const parsed = Number(value)
+  if (!Number.isInteger(parsed) || parsed < 0) {
+    throw new Error(`Session event consumer group ${field} metric is invalid`)
+  }
+  return parsed
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
 async function persistAuditEvent(pool: Pool, event: SessionAuditEvent): Promise<void> {
@@ -121,12 +251,85 @@ async function persistAuditEvent(pool: Pool, event: SessionAuditEvent): Promise<
   }
 }
 
+async function persistProviderUsageEvent(pool: Pool, event: SessionProviderUsageEvent): Promise<void> {
+  const client = await pool.connect()
+  try {
+    await client.query('BEGIN')
+    const session = await client.query<{ tenant_id: string; subject_id: string }>(
+      `SELECT tenant_id, subject_id FROM app_sessions WHERE session_id = $1`,
+      [event.sessionId]
+    )
+    const owner = session.rows[0]
+    if (!owner) throw new Error('Provider usage event references an unknown session')
+    const existing = await client.query<{
+      session_id: string
+      operation: string
+      model_id: string | null
+      service_tier: string | null
+      input_tokens: number
+      cached_input_tokens: number
+      cache_write_tokens: number
+      output_tokens: number
+      total_tokens: number
+      estimated_cost_usd: string | null
+      pricing_version: string | null
+      duration_ms: number | null
+      occurred_at: Date
+    }>(
+      `SELECT session_id, operation, model_id, service_tier, input_tokens, cached_input_tokens,
+              cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd,
+              pricing_version, duration_ms, occurred_at
+       FROM provider_usage WHERE provider = 'openai' AND provider_response_id = $1`,
+      [event.usage.responseId]
+    )
+    const stored = existing.rows[0]
+    if (stored) {
+      const matches = stored.session_id === event.sessionId && stored.operation === event.operation &&
+        stored.model_id === event.usage.model && stored.service_tier === event.usage.serviceTier &&
+        Number(stored.input_tokens) === event.usage.inputTokens &&
+        Number(stored.cached_input_tokens) === event.usage.cachedInputTokens &&
+        Number(stored.cache_write_tokens) === event.usage.cacheWriteTokens &&
+        Number(stored.output_tokens) === event.usage.outputTokens &&
+        Number(stored.total_tokens) === event.usage.totalTokens &&
+        (stored.estimated_cost_usd === null ? null : Number(stored.estimated_cost_usd)) ===
+          (event.usage.estimatedCostUsd === null ? null : Number(event.usage.estimatedCostUsd)) &&
+        stored.pricing_version === event.usage.pricingVersion &&
+        stored.duration_ms === event.usage.durationMs &&
+        stored.occurred_at.getTime() === Date.parse(event.occurredAt)
+      if (!matches) throw new Error('A provider response ID was reused with different usage')
+      await client.query('COMMIT')
+      return
+    }
+
+    const usageId = createHash('sha256').update(`openai\0${event.usage.responseId}`).digest('hex')
+    await client.query(
+      `INSERT INTO provider_usage (
+         usage_id, session_id, tenant_id, subject_id, event_id, provider, operation,
+         provider_response_id, model_id, service_tier, input_tokens, cached_input_tokens,
+         cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd, pricing_version,
+         duration_ms, occurred_at
+       ) VALUES ($1, $2, $3, $4, NULL, 'openai', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+      [usageId, event.sessionId, owner.tenant_id, owner.subject_id, event.operation,
+        event.usage.responseId, event.usage.model, event.usage.serviceTier, event.usage.inputTokens,
+        event.usage.cachedInputTokens, event.usage.cacheWriteTokens, event.usage.outputTokens,
+        event.usage.totalTokens, event.usage.estimatedCostUsd, event.usage.pricingVersion,
+        event.usage.durationMs, event.occurredAt]
+    )
+    await client.query('COMMIT')
+  } catch (error) {
+    await rollback(client)
+    throw error
+  } finally {
+    client.release()
+  }
+}
+
 async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<void> {
   const client = await pool.connect()
   try {
     await client.query('BEGIN')
-    const session = await client.query<{ status: string }>(
-      `SELECT status FROM app_sessions WHERE session_id = $1 FOR UPDATE`,
+    const session = await client.query<{ status: string; tenant_id: string; subject_id: string }>(
+      `SELECT status, tenant_id, subject_id FROM app_sessions WHERE session_id = $1 FOR UPDATE`,
       [event.sessionId]
     )
     if (!session.rows[0]) throw new Error('Event references an unknown session')
@@ -149,6 +352,44 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
         existing.event_type === event.eventType && existing.payload_matches &&
         existing.occurred_at.getTime() === Date.parse(event.occurredAt)
       if (!matches) throw new Error('A durable event ID was reused with different content')
+      if (event.eventType === 'accepted_turn') {
+        const usageRows = await client.query<{
+          provider_response_id: string
+          model_id: string | null
+          service_tier: string | null
+          input_tokens: number
+          cached_input_tokens: number
+          cache_write_tokens: number
+          output_tokens: number
+          total_tokens: number
+          estimated_cost_usd: string | null
+          pricing_version: string | null
+          duration_ms: number | null
+        }>(
+          `SELECT provider_response_id, model_id, service_tier, input_tokens, cached_input_tokens,
+                  cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd,
+                  pricing_version, duration_ms
+           FROM provider_usage WHERE session_id = $1 AND event_id = $2 ORDER BY provider_response_id`,
+          [event.sessionId, event.eventId]
+        )
+        const expected = [...event.providerUsage].sort((a, b) => a.responseId < b.responseId ? -1 : a.responseId > b.responseId ? 1 : 0)
+        const actual = usageRows.rows.map((row) => ({
+          responseId: row.provider_response_id,
+          model: row.model_id,
+          serviceTier: row.service_tier,
+          inputTokens: Number(row.input_tokens),
+          cachedInputTokens: Number(row.cached_input_tokens),
+          cacheWriteTokens: Number(row.cache_write_tokens),
+          outputTokens: Number(row.output_tokens),
+          totalTokens: Number(row.total_tokens),
+          durationMs: row.duration_ms === null ? null : Number(row.duration_ms),
+          pricingVersion: row.pricing_version,
+          estimatedCostUsd: row.estimated_cost_usd === null ? null : Number(row.estimated_cost_usd).toFixed(12)
+        })).sort((a, b) => a.responseId < b.responseId ? -1 : a.responseId > b.responseId ? 1 : 0)
+        if (JSON.stringify(actual) !== JSON.stringify(expected)) {
+          throw new Error('A durable accepted-turn event has different provider usage')
+        }
+      }
       await client.query('COMMIT')
       return
     }
@@ -183,6 +424,21 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
     )
 
     if (event.eventType === 'accepted_turn') {
+      for (const usage of event.providerUsage) {
+        const usageId = createHash('sha256').update(`openai\0${usage.responseId}`).digest('hex')
+        await client.query(
+          `INSERT INTO provider_usage (
+             usage_id, session_id, tenant_id, subject_id, event_id, provider, operation,
+             provider_response_id, model_id, service_tier, input_tokens, cached_input_tokens,
+             cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd, pricing_version,
+             duration_ms, occurred_at
+           ) VALUES ($1, $2, $3, $4, $5, 'openai', 'patient_turn', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+          [usageId, event.sessionId, session.rows[0].tenant_id, session.rows[0].subject_id,
+            event.eventId, usage.responseId, usage.model, usage.serviceTier, usage.inputTokens,
+            usage.cachedInputTokens, usage.cacheWriteTokens, usage.outputTokens, usage.totalTokens,
+            usage.estimatedCostUsd, usage.pricingVersion, usage.durationMs, event.occurredAt]
+        )
+      }
       await client.query(
         `UPDATE app_sessions SET status = 'active', updated_at = $2 WHERE session_id = $1
            AND status IN ('ready', 'active')`,
