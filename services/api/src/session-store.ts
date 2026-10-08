@@ -1,6 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import type { Pool, PoolClient } from 'pg'
-import type { AuthenticatedPrincipal, TenantRole } from './auth.ts'
+import type { AuthenticatedPrincipal, TenantMembership, TenantRole } from './auth.ts'
 import {
   ImmutablePatientScenarioSchema,
   SessionStateSchema,
@@ -8,14 +8,19 @@ import {
   SessionTurnSchema,
   SessionAuditEventSchema,
   AssessmentSubmissionSchema,
+  AssessmentDraftFieldsSchema,
   AssessmentFieldsSchema,
+  LocalTranscriptUtteranceSchema,
   TerminalEventSchema,
   type AssessmentFields,
+  type AssessmentDraftFields,
   type AssessmentSubmission,
   type ProviderUsageSample,
   type SessionTurn,
   type TerminalEvent,
-  type LearnerInputModality
+  type LearnerInputModality,
+  type LocalTranscriptUtterance,
+  type LocalUtteranceRequest
 } from './session-contracts.ts'
 import {
   PATIENT_SCENARIO_POLICY_VERSION,
@@ -26,9 +31,20 @@ import {
   type GeneratedPatientScenario,
   type PatientScenarioVersionPins
 } from './patient-profile.ts'
-import { derivePatientSetup, toLearnerPatientProfile } from './patient-setup.ts'
+import {
+  derivePatientSetup,
+  toLearnerPatientProfile,
+  type LearnerPatientProfile
+} from './patient-setup.ts'
 import { canonicalJsonStringify } from './canonical-json.ts'
 import type { LivePatientState, PatientStateStore, SessionCommitTimingRecorder } from './patient-state-store.ts'
+import {
+  createSessionIdentityBinding,
+  fingerprintScenario,
+  SessionIdentityBindingSchema,
+  verifySessionIdentityBinding,
+  type SessionIdentityBinding
+} from './session-identity.ts'
 import { PATIENT_TURN_SCHEMA_VERSION } from './session-contracts.ts'
 import {
   validatePatientTurnOutput,
@@ -46,6 +62,30 @@ export type SessionRecord = {
   createdAt: string
   updatedAt: string
   versions: PatientScenarioVersionPins
+}
+export type CurrentEncounterRecord = {
+  sessionId: string
+  status: 'initializing' | 'ready' | 'active'
+  createdAt: string
+  updatedAt: string
+  versions: PatientScenarioVersionPins
+  patient: LearnerPatientProfile | null
+  phase: 'history' | 'assessment' | 'debrief' | null
+  currentTurnSequence: number
+  transcript: Array<Pick<SessionTurn,
+    'turnId' | 'sequence' | 'acceptedAt' | 'phase' | 'learnerModality' | 'learnerMessage' | 'patientResponse'
+  >>
+  localUtterances: LocalTranscriptUtterance[]
+  assessmentDraft: {
+    revision: number
+    fields: AssessmentDraftFields
+    updatedAt: string
+  } | null
+  assessment: {
+    assessmentId: string
+    fields: AssessmentFields
+    submittedAt: string
+  } | null
 }
 
 export type PatientScenarioSetupResult = {
@@ -86,10 +126,26 @@ export type AssessmentResult =
   | 'turn_in_progress'
   | 'state_unavailable'
   | 'phase_conflict'
+export type AssessmentDraftRecord = {
+  revision: number
+  fields: AssessmentDraftFields
+  updatedAt: string
+}
+export type AssessmentDraftSaveResult = AssessmentDraftRecord
+  | 'not_found'
+  | 'not_ready'
+  | 'turn_in_progress'
+  | 'state_unavailable'
+  | 'phase_conflict'
+export type LocalUtteranceResult = LocalTranscriptUtterance
+  | 'not_found'
+  | 'not_ready'
+  | 'turn_in_progress'
+  | 'state_unavailable'
+  | 'phase_conflict'
 
 export interface SessionStore {
-  getActiveTenantIds(subjectId: string): Promise<string[]>
-  getActiveMembershipRole(subjectId: string, tenantId: string): Promise<TenantRole | null>
+  getActiveMemberships(subjectId: string): Promise<TenantMembership[]>
   consumeQuota(principal: AuthenticatedPrincipal, feature: QuotaFeature, sessionId?: string): Promise<StoreResult>
   createAudioTranscriptionGrant(
     principal: AuthenticatedPrincipal,
@@ -127,6 +183,17 @@ export interface SessionStore {
     recordCommitTiming?: SessionCommitTimingRecorder
   ): Promise<PatientTurnResult>
   beginAssessment(principal: AuthenticatedPrincipal, sessionId: string, recordCommitTiming?: SessionCommitTimingRecorder): Promise<'not_found' | 'not_ready' | 'turn_in_progress' | 'state_unavailable' | 'phase_conflict' | 'assessment'>
+  saveAssessmentDraft(
+    principal: AuthenticatedPrincipal,
+    sessionId: string,
+    revision: number,
+    fields: AssessmentDraftFields
+  ): Promise<AssessmentDraftSaveResult>
+  recordLocalUtterance(
+    principal: AuthenticatedPrincipal,
+    sessionId: string,
+    input: LocalUtteranceRequest
+  ): Promise<LocalUtteranceResult>
   submitAssessment(
     principal: AuthenticatedPrincipal,
     sessionId: string,
@@ -138,6 +205,7 @@ export interface SessionStore {
     principal: AuthenticatedPrincipal,
     sessionId: string
   ): Promise<SessionRecord | null>
+  getCurrentOwnedEncounter(principal: AuthenticatedPrincipal): Promise<CurrentEncounterRecord | null>
   ensureLiveState?(principal: AuthenticatedPrincipal, sessionId: string): Promise<void>
 }
 
@@ -195,12 +263,44 @@ function toSetupResponse(
   }
 }
 
+async function persistSessionIdentityBinding(
+  client: PoolClient,
+  binding: SessionIdentityBinding
+): Promise<void> {
+  const saved = await client.query(
+    `INSERT INTO session_identity_binding (
+       session_id, tenant_id, subject_id, patient_profile_id, provider_conversation_id,
+       scenario_fingerprint, schema_version
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ON CONFLICT (session_id) DO UPDATE
+       SET last_verification_status = session_identity_binding.last_verification_status
+       WHERE session_identity_binding.tenant_id = EXCLUDED.tenant_id
+         AND session_identity_binding.subject_id = EXCLUDED.subject_id
+         AND session_identity_binding.patient_profile_id = EXCLUDED.patient_profile_id
+         AND session_identity_binding.provider_conversation_id = EXCLUDED.provider_conversation_id
+         AND session_identity_binding.scenario_fingerprint = EXCLUDED.scenario_fingerprint
+         AND session_identity_binding.schema_version = EXCLUDED.schema_version
+     RETURNING session_id`,
+    [
+      binding.sessionId, binding.tenantId, binding.subjectId, binding.patientProfileId,
+      binding.providerConversationId, binding.scenarioFingerprint, binding.schemaVersion
+    ]
+  )
+  if (saved.rowCount !== 1) {
+    throw new Error('Session identity binding does not match the immutable patient scenario')
+  }
+}
+
 async function rollback(client: PoolClient): Promise<void> {
   try {
     await client.query('ROLLBACK')
   } catch {
     // Preserve the original transaction error.
   }
+}
+
+function hashSessionIdForLog(sessionId: string): string {
+  return createHash('sha256').update(sessionId).digest('hex').slice(0, 16)
 }
 
 function queueTurnAudit(
@@ -228,7 +328,7 @@ function queueTurnAudit(
   setImmediate(() => {
     if (!stateStore?.appendAuditEvent) {
       reportHandoffTiming()
-      console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_unavailable', sessionId, turnIdHash, eventType }))
+      console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_unavailable', sessionIdHash: hashSessionIdForLog(sessionId), turnIdHash, eventType }))
       return
     }
     try {
@@ -236,12 +336,12 @@ function queueTurnAudit(
         () => reportHandoffTiming(),
         () => {
           reportHandoffTiming()
-          console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_failed', sessionId, turnIdHash, eventType }))
+          console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_failed', sessionIdHash: hashSessionIdForLog(sessionId), turnIdHash, eventType }))
         }
       )
     } catch {
       reportHandoffTiming()
-      console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_failed', sessionId, turnIdHash, eventType }))
+      console.warn(JSON.stringify({ event: 'session_turn_audit_enqueue_failed', sessionIdHash: hashSessionIdForLog(sessionId), turnIdHash, eventType }))
     }
   })
 }
@@ -250,12 +350,12 @@ async function releaseSessionMutationLock(
   stateStore: PatientStateStore,
   sessionId: string,
   lockToken: string,
-  operation: 'assessment_phase' | 'assessment_submission'
+  operation: 'assessment_phase' | 'assessment_submission' | 'local_utterance'
 ): Promise<void> {
   try {
     await stateStore.releaseTurnLock(sessionId, lockToken)
   } catch {
-    console.warn(JSON.stringify({ event: 'session_mutation_lock_release_failed', sessionId, operation }))
+    console.warn(JSON.stringify({ event: 'session_mutation_lock_release_failed', sessionIdHash: hashSessionIdForLog(sessionId), operation }))
   }
 }
 
@@ -265,23 +365,14 @@ export function createPostgresSessionStore(
   options: { recordHandoffTiming?: SessionCommitTimingRecorder } = {}
 ): SessionStore {
   return {
-    async getActiveTenantIds(subjectId) {
-      const result = await pool.query<{ tenant_id: string }>(
-        `SELECT tenant_id FROM tenant_memberships
+    async getActiveMemberships(subjectId) {
+      const result = await pool.query<{ tenant_id: string; role: TenantRole }>(
+        `SELECT tenant_id, role FROM tenant_memberships
          WHERE subject_id = $1 AND status = 'active'
          ORDER BY tenant_id`,
         [subjectId]
       )
-      return result.rows.map((row) => row.tenant_id)
-    },
-
-    async getActiveMembershipRole(subjectId, tenantId) {
-      const result = await pool.query<{ role: TenantRole }>(
-        `SELECT role FROM tenant_memberships
-         WHERE tenant_id = $1 AND subject_id = $2 AND status = 'active'`,
-        [tenantId, subjectId]
-      )
-      return result.rows[0]?.role ?? null
+      return result.rows.map((row) => ({ tenantId: row.tenant_id, role: row.role }))
     },
 
     async consumeQuota(principal, feature, sessionId) {
@@ -580,11 +671,21 @@ export function createPostgresSessionStore(
             await client.query('ROLLBACK')
             throw new Error('Stored patient scenario digest does not match its profile')
           }
+          await persistSessionIdentityBinding(client, createSessionIdentityBinding({
+            sessionId,
+            tenantId: principal.tenantId,
+            subjectId: principal.subjectId,
+            patientProfileId: scenario.scenarioId,
+            providerConversationId: savedRow.provider_conversation_id,
+            scenarioFingerprint: fingerprintScenario(scenario.profile),
+            schemaVersion: scenario.schemaVersion
+          }))
           if (!patientStateStore) {
             await client.query('ROLLBACK')
             return 'state_unavailable'
           }
           await patientStateStore.initialize(sessionId, scenario.scenarioId)
+          await patientStateStore.rememberOwnedSession(principal.tenantId, principal.subjectId, sessionId)
           await client.query('COMMIT')
           await patientStateStore.saveReady({
             sessionId,
@@ -608,6 +709,7 @@ export function createPostgresSessionStore(
           return 'state_unavailable'
         }
         await patientStateStore.initialize(sessionId, patientProfileId)
+        await patientStateStore.rememberOwnedSession(principal.tenantId, principal.subjectId, sessionId)
 
         const queuedProviderResponseIds = new Set<string>()
         const recordProviderUsage = async (usage: ProviderUsageSample): Promise<void> => {
@@ -660,6 +762,15 @@ export function createPostgresSessionStore(
             versions.policyVersion
           ]
         )
+        await persistSessionIdentityBinding(client, createSessionIdentityBinding({
+          sessionId,
+          tenantId: principal.tenantId,
+          subjectId: principal.subjectId,
+          patientProfileId: scenario.scenarioId,
+          providerConversationId: generated.conversationId,
+          scenarioFingerprint: fingerprintScenario(scenario.profile),
+          schemaVersion: scenario.schemaVersion
+        }))
         await client.query(
           `UPDATE app_sessions
            SET status = 'ready', setup_idempotency_key_hash = $2, updated_at = now()
@@ -792,10 +903,13 @@ export function createPostgresSessionStore(
           acceptedContent = {
             patientResponse: 'Sorry, could you please repeat or clarify that?',
             patientReportedFacts: [],
+            patientReportedPainFacts: [],
             historyCoverage: [],
             disclosedHistoryFields: [],
             disclosedFactIds: [],
-            historyCoverageState: []
+            historyCoverageState: [],
+            painHistoryCoverage: [],
+            painDisclosures: []
           }
         }
 
@@ -810,10 +924,13 @@ export function createPostgresSessionStore(
           learnerMessage,
           patientResponse: acceptedContent.patientResponse,
           patientReportedFacts: acceptedContent.patientReportedFacts,
+          patientReportedPainFacts: acceptedContent.patientReportedPainFacts,
           historyCoverage: acceptedContent.historyCoverage,
           disclosedHistoryFields: acceptedContent.disclosedHistoryFields,
           disclosedFactIds: acceptedContent.disclosedFactIds,
           historyCoverageState: acceptedContent.historyCoverageState,
+          painHistoryCoverage: acceptedContent.painHistoryCoverage,
+          painDisclosures: acceptedContent.painDisclosures,
           clinicalActions: []
         })
         if (validationFailed && acceptedContent.patientResponse !== 'Sorry, could you please repeat or clarify that?') {
@@ -863,7 +980,7 @@ export function createPostgresSessionStore(
           eventId: transitionId,
           sessionId,
           sequence: current.state.currentTurnSequence,
-          eventOrdinal: lastTurn.disclosedHistoryFields.length + 1,
+          eventOrdinal: lastTurn.disclosedHistoryFields.length + lastTurn.painDisclosures.length + 1,
           eventType: 'phase_changed' as const,
           occurredAt,
           payload: {
@@ -882,6 +999,165 @@ export function createPostgresSessionStore(
         return 'phase_conflict'
       } finally {
         await releaseSessionMutationLock(patientStateStore, sessionId, lockToken, 'assessment_phase')
+      }
+    },
+
+    async saveAssessmentDraft(principal, sessionId, revision, inputFields) {
+      if (!patientStateStore) return 'state_unavailable'
+      const owner = await pool.query<{ status: SessionStatus }>(
+        `SELECT s.status FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         JOIN tenant_memberships m ON m.tenant_id = s.tenant_id AND m.subject_id = s.subject_id AND m.status = 'active'
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      const session = owner.rows[0]
+      if (!session) return 'not_found'
+      if (!['ready', 'active'].includes(session.status)) return 'not_ready'
+      await this.ensureLiveState?.(principal, sessionId)
+      const lockToken = randomUUID()
+      if (!await patientStateStore.acquireTurnLock(sessionId, lockToken)) return 'turn_in_progress'
+      try {
+        const current = await patientStateStore.read(sessionId)
+        if (!current) return 'state_unavailable'
+        if (current.state.phase !== 'assessment' || current.assessment || current.terminalEvent) return 'phase_conflict'
+        const fields = AssessmentDraftFieldsSchema.parse(inputFields)
+        const saved = await pool.query<{
+          revision: number
+          fields: unknown
+          updated_at: Date
+        }>(
+          `INSERT INTO app_assessment_drafts
+             (session_id, tenant_id, subject_id, revision, fields, updated_at)
+           SELECT s.session_id, s.tenant_id, s.subject_id, $4, $5::jsonb, now()
+           FROM app_sessions s
+           JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+           JOIN tenant_memberships m ON m.tenant_id = s.tenant_id
+             AND m.subject_id = s.subject_id AND m.status = 'active'
+           WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3
+             AND s.status IN ('ready', 'active')
+           ON CONFLICT (session_id) DO UPDATE
+             SET revision = EXCLUDED.revision, fields = EXCLUDED.fields, updated_at = EXCLUDED.updated_at
+             WHERE app_assessment_drafts.revision < EXCLUDED.revision
+           RETURNING revision, fields, updated_at`,
+          [sessionId, principal.tenantId, principal.subjectId, revision, JSON.stringify(fields)]
+        )
+        const row = saved.rows[0] ?? (await pool.query<{
+          revision: number
+          fields: unknown
+          updated_at: Date
+        }>(
+          `SELECT revision, fields, updated_at FROM app_assessment_drafts
+           WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+          [sessionId, principal.tenantId, principal.subjectId]
+        )).rows[0]
+        if (!row) return 'not_found'
+        return {
+          revision: Number(row.revision),
+          fields: AssessmentDraftFieldsSchema.parse(row.fields),
+          updatedAt: row.updated_at.toISOString()
+        }
+      } finally {
+        await releaseSessionMutationLock(patientStateStore, sessionId, lockToken, 'assessment_submission')
+      }
+    },
+
+    async recordLocalUtterance(principal, sessionId, input) {
+      if (!patientStateStore) return 'state_unavailable'
+      const owner = await pool.query<{ status: SessionStatus }>(
+        `SELECT s.status FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         JOIN tenant_memberships m ON m.tenant_id = s.tenant_id AND m.subject_id = s.subject_id AND m.status = 'active'
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      const session = owner.rows[0]
+      if (!session) return 'not_found'
+
+      const findPrior = async () => pool.query<{
+        utterance_id: string
+        ordinal: number
+        sequence: number
+        kind: string
+        speaker: 'learner' | 'patient'
+        phase: 'history' | 'assessment' | 'debrief'
+        modality: 'typed' | 'realtime_transcription' | 'text'
+        content: string
+        occurred_at: Date
+      }>(
+        `SELECT utterance_id, ordinal, sequence, kind, speaker, phase, modality, content, occurred_at
+         FROM session_local_utterances
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3 AND utterance_id = $4`,
+        [sessionId, principal.tenantId, principal.subjectId, input.utteranceId]
+      )
+      const toTranscriptRecord = (row: NonNullable<Awaited<ReturnType<typeof findPrior>>['rows'][number]>) =>
+        LocalTranscriptUtteranceSchema.parse({
+          utteranceId: row.utterance_id,
+          ordinal: Number(row.ordinal),
+          sequence: Number(row.sequence),
+          kind: row.kind,
+          speaker: row.speaker,
+          phase: row.phase,
+          modality: row.modality,
+          content: row.content,
+          occurredAt: row.occurred_at.toISOString()
+        })
+      const matchesInput = (record: LocalTranscriptUtterance) =>
+        record.kind === input.kind && record.speaker === input.speaker && record.content === input.content
+      const prior = (await findPrior()).rows[0]
+      if (prior) {
+        const record = toTranscriptRecord(prior)
+        return matchesInput(record) ? record : 'phase_conflict'
+      }
+      if (!['ready', 'active'].includes(session.status)) return 'not_ready'
+      await this.ensureLiveState?.(principal, sessionId)
+      const lockToken = randomUUID()
+      if (!await patientStateStore.acquireTurnLock(sessionId, lockToken)) return 'turn_in_progress'
+      try {
+        const current = await patientStateStore.read(sessionId)
+        if (!current) return 'state_unavailable'
+        const retry = (await findPrior()).rows[0]
+        if (retry) {
+          const record = toTranscriptRecord(retry)
+          return matchesInput(record) ? record : 'phase_conflict'
+        }
+        if (current.state.phase !== 'history' ||
+            current.state.status === 'completed' || current.state.status === 'cancelled') return 'phase_conflict'
+        const sequence = current.state.currentTurnSequence
+        const phase = current.state.phase
+        const modality = input.speaker === 'patient' ? 'text' as const : 'realtime_transcription' as const
+        const occurredAt = new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString()
+        const inserted = await pool.query<{
+          utterance_id: string
+          ordinal: number
+          sequence: number
+          kind: string
+          speaker: 'learner' | 'patient'
+          phase: 'history' | 'assessment' | 'debrief'
+          modality: 'typed' | 'realtime_transcription' | 'text'
+          content: string
+          occurred_at: Date
+        }>(
+          `WITH next_ordinal AS (
+             SELECT coalesce(max(ordinal), 0) + 1 AS ordinal
+             FROM session_local_utterances WHERE session_id = $1
+           )
+           INSERT INTO session_local_utterances
+             (session_id, tenant_id, subject_id, utterance_id, ordinal, sequence,
+              kind, speaker, phase, modality, content, occurred_at)
+           SELECT $1, $2, $3, $4, next_ordinal.ordinal, $5, $6, $7, $8, $9, $10, $11::timestamptz
+           FROM next_ordinal
+           ON CONFLICT (session_id, utterance_id) DO NOTHING
+           RETURNING utterance_id, ordinal, sequence, kind, speaker, phase, modality, content, occurred_at`,
+          [sessionId, principal.tenantId, principal.subjectId, input.utteranceId, sequence,
+            input.kind, input.speaker, phase, modality, input.content, occurredAt]
+        )
+        const row = inserted.rows[0] ?? (await findPrior()).rows[0]
+        if (!row) return 'state_unavailable'
+        const record = toTranscriptRecord(row)
+        return matchesInput(record) ? record : 'phase_conflict'
+      } finally {
+        await releaseSessionMutationLock(patientStateStore, sessionId, lockToken, 'local_utterance')
       }
     },
 
@@ -940,7 +1216,7 @@ export function createPostgresSessionStore(
             eventId: assessmentId,
             sessionId,
             sequence: current.state.currentTurnSequence,
-            eventOrdinal: lastTurn.disclosedHistoryFields.length + 2,
+            eventOrdinal: lastTurn.disclosedHistoryFields.length + lastTurn.painDisclosures.length + 2,
             eventType: 'assessment_submitted' as const,
             occurredAt: submission.submittedAt,
             payload: submission
@@ -950,6 +1226,12 @@ export function createPostgresSessionStore(
           if (committed === 'not_ready') return 'not_ready'
           if (committed === 'conflict') return 'phase_conflict'
         }
+
+        await pool.query(
+          `DELETE FROM app_assessment_drafts
+           WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+          [sessionId, principal.tenantId, principal.subjectId]
+        )
 
         const latest = await patientStateStore.read(sessionId)
         if (!latest) return 'state_unavailable'
@@ -999,9 +1281,199 @@ export function createPostgresSessionStore(
       } : null
     },
 
+    async getCurrentOwnedEncounter(principal) {
+      let indexedSessionId: string | null = null
+      try {
+        indexedSessionId = await patientStateStore?.findOwnedSession(principal.tenantId, principal.subjectId) ?? null
+      } catch {
+        // Redis may have restarted or be temporarily unavailable; PostgreSQL remains the recovery index.
+      }
+      const queryCurrent = (sessionId: string | null) => pool.query<{
+        session_id: string
+        status: 'initializing' | 'ready' | 'active'
+        created_at: Date
+        updated_at: Date
+        prompt_version: string
+        model_version: string
+        schema_version: number
+        policy_version: string
+      }>(
+        `SELECT s.session_id, s.status, s.created_at, s.updated_at,
+                s.prompt_version, s.model_version, s.schema_version, s.policy_version
+         FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         JOIN tenant_memberships m ON m.tenant_id = s.tenant_id
+           AND m.subject_id = s.subject_id AND m.status = 'active'
+         WHERE s.tenant_id = $1 AND s.subject_id = $2
+           AND s.status IN ('initializing', 'ready', 'active')
+           AND ($3::text IS NULL OR s.session_id = $3)
+           AND ($3::text IS NULL OR NOT EXISTS (
+             SELECT 1
+             FROM app_sessions newer
+             WHERE newer.tenant_id = s.tenant_id AND newer.subject_id = s.subject_id
+               AND newer.status IN ('initializing', 'ready', 'active')
+               AND ROW(newer.updated_at, newer.created_at, newer.session_id) >
+                   ROW(s.updated_at, s.created_at, s.session_id)
+           ))
+         ORDER BY s.updated_at DESC, s.created_at DESC, s.session_id DESC
+         LIMIT 1`,
+        [principal.tenantId, principal.subjectId, sessionId]
+      )
+      let row = indexedSessionId ? (await queryCurrent(indexedSessionId)).rows[0] : undefined
+      if (!row) row = (await queryCurrent(null)).rows[0]
+      if (!row) return null
+      if (indexedSessionId !== row.session_id) {
+        try {
+          await patientStateStore?.rememberOwnedSession(principal.tenantId, principal.subjectId, row.session_id)
+        } catch {
+          // The next resume can use PostgreSQL again and rebuild this Redis lookup.
+        }
+      }
+
+      const base = {
+        sessionId: row.session_id,
+        status: row.status,
+        createdAt: row.created_at.toISOString(),
+        updatedAt: row.updated_at.toISOString(),
+        versions: toVersionPins(row)
+      } as const
+      if (row.status === 'initializing') {
+        return {
+          ...base,
+          patient: null,
+          phase: null,
+          currentTurnSequence: 0,
+          transcript: [],
+          localUtterances: [],
+          assessmentDraft: null,
+          assessment: null
+        }
+      }
+
+      await this.ensureLiveState?.(principal, row.session_id)
+      const live = await patientStateStore?.read(row.session_id)
+      if (!live) throw new Error('An active owned encounter has no recoverable live state')
+      if (live.state.status === 'completed' || live.state.status === 'cancelled') return null
+      const assessment = live.assessment
+      const draftQuery = assessment ? null : await pool.query<{
+        revision: number
+        fields: unknown
+        updated_at: Date
+      }>(
+        `SELECT revision, fields, updated_at FROM app_assessment_drafts
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+        [row.session_id, principal.tenantId, principal.subjectId]
+      )
+      const draftRow = draftQuery?.rows[0]
+      const localUtterancesQuery = await pool.query<{
+        utterance_id: string
+        ordinal: number
+        sequence: number
+        kind: string
+        speaker: 'learner' | 'patient'
+        phase: 'history' | 'assessment' | 'debrief'
+        modality: 'typed' | 'realtime_transcription' | 'text'
+        content: string
+        occurred_at: Date
+      }>(
+        `SELECT utterance_id, ordinal, sequence, kind, speaker, phase, modality, content, occurred_at
+         FROM session_local_utterances
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3
+         ORDER BY sequence, ordinal`,
+        [row.session_id, principal.tenantId, principal.subjectId]
+      )
+      return {
+        ...base,
+        status: live.state.status,
+        updatedAt: live.state.updatedAt,
+        patient: toLearnerPatientProfile(live.setupProjection),
+        phase: live.state.phase,
+        currentTurnSequence: live.state.currentTurnSequence,
+        transcript: live.acceptedTurns.map((turn) => ({
+          turnId: turn.turnId,
+          sequence: turn.sequence,
+          acceptedAt: turn.acceptedAt,
+          phase: turn.phase,
+          learnerModality: turn.learnerModality,
+          learnerMessage: turn.learnerMessage,
+          patientResponse: turn.patientResponse
+        })),
+        localUtterances: localUtterancesQuery.rows.map((utterance) => LocalTranscriptUtteranceSchema.parse({
+          utteranceId: utterance.utterance_id,
+          ordinal: Number(utterance.ordinal),
+          sequence: Number(utterance.sequence),
+          kind: utterance.kind,
+          speaker: utterance.speaker,
+          phase: utterance.phase,
+          modality: utterance.modality,
+          content: utterance.content,
+          occurredAt: utterance.occurred_at.toISOString()
+        })),
+        assessmentDraft: draftRow ? {
+          revision: Number(draftRow.revision),
+          fields: AssessmentDraftFieldsSchema.parse(draftRow.fields),
+          updatedAt: draftRow.updated_at.toISOString()
+        } : null,
+        assessment: assessment ? {
+          assessmentId: assessment.assessmentId,
+          fields: {
+            summary: assessment.summary,
+            differential: assessment.differential,
+            rationale: assessment.rationale,
+            plan: assessment.plan
+          },
+          submittedAt: assessment.submittedAt
+        } : null
+      }
+    },
+
     async ensureLiveState(principal, sessionId) {
       if (!patientStateStore) return
-      if (await patientStateStore.read(sessionId)) return
+      const verifyAndRecordIdentity = async (live: LivePatientState): Promise<void> => {
+        if (live.state.status === 'initializing') return
+        const selectedIdentity = await pool.query<{
+          session_id: string
+          tenant_id: string
+          subject_id: string
+          patient_profile_id: string
+          provider_conversation_id: string
+          scenario_fingerprint: string
+          schema_version: number
+        }>(
+          `SELECT session_id, tenant_id, subject_id, patient_profile_id,
+                  provider_conversation_id, scenario_fingerprint, schema_version
+           FROM session_identity_binding
+           WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+          [sessionId, principal.tenantId, principal.subjectId]
+        )
+        const identityRow = selectedIdentity.rows[0]
+        if (!identityRow) throw new Error('The active owned encounter has no durable identity binding')
+        const identity = SessionIdentityBindingSchema.parse({
+          sessionId: identityRow.session_id,
+          tenantId: identityRow.tenant_id,
+          subjectId: identityRow.subject_id,
+          patientProfileId: identityRow.patient_profile_id,
+          providerConversationId: identityRow.provider_conversation_id,
+          scenarioFingerprint: identityRow.scenario_fingerprint,
+          schemaVersion: identityRow.schema_version
+        })
+        const status = verifySessionIdentityBinding(identity, live)
+        await pool.query(
+          `UPDATE session_identity_binding
+           SET last_check_at = now(),
+               last_verified_at = CASE WHEN $2 = 'verified' THEN now() ELSE last_verified_at END,
+               last_verification_status = $2
+           WHERE session_id = $1`,
+          [sessionId, status]
+        )
+        if (status !== 'verified') throw new Error(`The active owned encounter identity check returned ${status}`)
+      }
+
+      const existingLive = await patientStateStore.read(sessionId)
+      if (existingLive) {
+        await verifyAndRecordIdentity(existingLive)
+        return
+      }
       const selected = await pool.query<{
         session_id: string
         patient_profile_id: string | null
@@ -1088,6 +1560,9 @@ export function createPostgresSessionStore(
         terminalEvent
       }
       await patientStateStore.restore(liveState)
+      const restoredLive = await patientStateStore.read(sessionId)
+      if (!restoredLive) throw new Error('PostgreSQL recovery did not restore the live session state')
+      await verifyAndRecordIdentity(restoredLive)
     }
   }
 }

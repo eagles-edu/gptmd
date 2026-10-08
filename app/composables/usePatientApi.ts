@@ -1,16 +1,29 @@
 import {
+  AssessmentDraftResponseSchema,
   CreateSessionResponseSchema,
+  CurrentEncounterResponseSchema,
+  OwnedSessionResponseSchema,
+  LocalTranscriptUtteranceSchema,
   AudioTranscriptionCallSchema,
   AssessmentSubmittedResponseSchema,
   BeginAssessmentResponseSchema,
   SetupResponseSchema,
   TurnResponseSchema,
   type CreateSessionResult,
+  type CurrentEncounterResult,
+  type OwnedSessionResult,
   type PatientSetupResult,
   type TurnResult
 } from '../schemas/patient-api'
 
-export type { CreateSessionResult, PatientProfile, PatientSetupResult, TurnResult } from '../schemas/patient-api'
+export type {
+  CreateSessionResult,
+  CurrentEncounterResult,
+  OwnedSessionResult,
+  PatientProfile,
+  PatientSetupResult,
+  TurnResult
+} from '../schemas/patient-api'
 
 function getApiBase(): string {
   const config = useRuntimeConfig()
@@ -31,6 +44,28 @@ export function usePatientApi() {
       throw new Error('The session service returned an invalid session response.')
     }
 
+    return parsed.data
+  }
+
+  async function getSession(sessionId: string): Promise<OwnedSessionResult> {
+    const result = await $fetch<unknown>(`${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}`, {
+      headers: await auth.accessHeaders()
+    })
+    const parsed = OwnedSessionResponseSchema.safeParse(result)
+
+    if (!parsed.success || parsed.data.sessionId !== sessionId) {
+      throw new Error('The session service returned an invalid session response.')
+    }
+
+    return parsed.data
+  }
+
+  async function getCurrentEncounter(): Promise<CurrentEncounterResult> {
+    const result = await $fetch<unknown>(`${getApiBase()}/api/encounters/current`, {
+      headers: await auth.accessHeaders()
+    })
+    const parsed = CurrentEncounterResponseSchema.safeParse(result)
+    if (!parsed.success) throw new Error('The encounter service returned an invalid recovery snapshot.')
     return parsed.data
   }
 
@@ -74,6 +109,30 @@ export function usePatientApi() {
       throw new Error('The conversation service returned an invalid turn response.')
     }
 
+    return parsed.data
+  }
+
+  async function recordLocalUtterance(
+    sessionId: string,
+    utterance: {
+      utteranceId: string
+      kind: 'repair' | 'stop' | 'phase_transition' | 'patient_repeat'
+      speaker: 'learner' | 'patient'
+      content: string
+    }
+  ): Promise<import('../schemas/patient-api').LocalTranscriptUtterance> {
+    const result = await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/local-utterances`,
+      {
+        method: 'POST',
+        headers: await auth.accessHeaders(),
+        body: utterance
+      }
+    )
+    const parsed = LocalTranscriptUtteranceSchema.safeParse(result)
+    if (!parsed.success || parsed.data.utteranceId !== utterance.utteranceId) {
+      throw new Error('The transcript service returned an invalid local utterance.')
+    }
     return parsed.data
   }
 
@@ -121,5 +180,34 @@ export function usePatientApi() {
     return parsed.data
   }
 
-  return { createSession, setupSession, sendTurn, createAudioTranscriptionCall, beginAssessment, submitAssessment }
+  async function saveAssessmentDraft(
+    sessionId: string,
+    revision: number,
+    fields: import('../schemas/patient-api').AssessmentFields
+  ): Promise<import('../schemas/patient-api').AssessmentDraft> {
+    const result = await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/assessment-draft`,
+      {
+        method: 'PUT',
+        headers: await auth.accessHeaders(),
+        body: { revision, ...fields }
+      }
+    )
+    const parsed = AssessmentDraftResponseSchema.safeParse(result)
+    if (!parsed.success) throw new Error('The encounter service returned an invalid assessment draft.')
+    return parsed.data
+  }
+
+  return {
+    createSession,
+    getSession,
+    getCurrentEncounter,
+    setupSession,
+    sendTurn,
+    recordLocalUtterance,
+    createAudioTranscriptionCall,
+    beginAssessment,
+    saveAssessmentDraft,
+    submitAssessment
+  }
 }

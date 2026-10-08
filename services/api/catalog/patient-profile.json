@@ -71,6 +71,77 @@
     "dnaStudies",
     "miscellaneousDetailsNos"
   ],
+  "painEpisodePolicy": {
+    "maximumInstances": 2,
+    "identityFields": ["pain-1", "pain-2"],
+    "details": [
+      "whatProvokesPalliatesPain",
+      "painQuality",
+      "painLocationRadiationWhere",
+      "painSeverity0-10",
+      "timePainOnset",
+      "constantIntermittentPain",
+      "durationPain"
+    ],
+    "scope": "Each pain episode has independent PQRST values and known/negative/unknown/not_applicable status. Never place pain fields in flat history or merge episodes."
+  },
+  "obstetricTerminology": {
+    "gravidity": "Total number of confirmed pregnancies, including a current pregnancy; corresponds to numberPregnancies.",
+    "terms": {
+      "nulligravida": "0 pregnancies",
+      "primigravida": "1 pregnancy; first pregnancy",
+      "multigravida": "2 or more pregnancies, regardless of outcomes"
+    },
+    "parity": "In this PP, the number of prior pregnancies reaching 20 weeks or later, counted once per pregnancy regardless of fetal count or outcome. A current pregnancy is excluded. Stillbirths after the threshold count toward parity.",
+    "example": "If exactly two of three pregnancies reached 20 weeks, shorthand is G3P2. If a fourth pregnancy is current, gravidity is G4 and parity remains P2.",
+    "countSeparation": "Do not infer parity from live-born infant count. Keep numberPregnanciesWithLiveBirth, numberLiveBirths, and numberChildren distinct; a multiple pregnancy counts once as a pregnancy but each live-born infant counts separately.",
+    "thresholdNote": "This PP uses 20 weeks; follow local documentation standards when their threshold differs."
+  },
+  "chartFindings": {
+    "fields": [
+      "currentPulse",
+      "bpSitting",
+      "respiratoryRate",
+      "axillaryTemp",
+      "oralTemp",
+      "analTemp",
+      "dermalTemp",
+      "auralTemp"
+    ],
+    "display": "Shown on the simulated patient chart: pulse rate, sitting blood pressure, respiratory rate, and measured temperature",
+    "examOnlyVitalFindings": ["pulseIrregular", "pulseQuality", "bpOrthostaticSupine"],
+    "units": {
+      "currentPulse": "beats per minute",
+      "bpSitting": "mmHg, systolic and diastolic",
+      "respiratoryRate": "breaths per minute",
+      "axillaryTemp": "degrees Celsius",
+      "oralTemp": "degrees Celsius",
+      "analTemp": "degrees Celsius; labeled rectal",
+      "dermalTemp": "degrees Celsius",
+      "auralTemp": "degrees Celsius"
+    },
+    "examOnlyPulseQualityValues": ["normal", "thready", "pounding", "weak", "absent_radial", "absent_carotid", "absent_radial_and_carotid"],
+    "temperatureRule": "Populate only sites measured in the case; leave unmeasured sites null. Do not derive or fabricate readings from another site.",
+    "clinicalCoherenceRule": "Select displayed vitals in context of patient age, pregnancy status, current presentation, relevant history, acuity, and established diagnosis when available. Keep pulse, blood pressure, respiratory rate, temperature, and exam findings coherent with one another and the overall clinical picture. A chronic or non-acute condition does not itself require abnormal vitals. Significant abnormalities or apparent contradictions require a scenario-based reason; do not force abnormalities to signal the diagnosis or use one generic vital set for every case."
+  },
+  "physicalExamFindings": {
+    "fields": ["lungAuscultation", "skinLipsSclera", "skinBlanche"],
+    "display": "Not sent in the learner setup response; intended for a completed patient-exam workflow, which is not yet implemented",
+    "skinBlanche": "Capillary refill time in seconds, 0–3; lower is faster/better and higher is slower/worse",
+    "lungAuscultation": {
+      "breathSounds": ["normal", "wheeze", "fine_rales", "coarse_rales", "rhonchi"],
+      "ralesDistribution": ["basilar", "diffuse"],
+      "rhonchiSeverity": ["none", "mild", "moderate", "marked", "critical"],
+      "effectOfCoughing": ["clears", "partially_clears", "unchanged", "worsens", "not_assessed"],
+      "accessoryMuscleUse": "boolean",
+      "postureTolerance": ["tolerates_supine", "prefers_upright", "unable_to_tolerate_supine", "not_assessed"]
+    },
+    "skinLipsSclera": {
+      "skin": ["normal", "pale", "cyanotic", "pink", "red", "yellow"],
+      "lips": ["normal", "pale", "cyanotic", "pink", "red"],
+      "sclera": ["normal", "white", "red", "yellow"]
+    }
+  },
   "templateNote": "Template only: replace placeholders using a validated profile. diagnosis is null here because this template supplies no diagnosis; this is not patient data.",
   "setupProfileFields": [
     "fullName",

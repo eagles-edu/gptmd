@@ -286,3 +286,23 @@
 
 <!-- curatormd:record_id=0eda8b096ace82e03860603ed38ecaee;content_sha256=a4ea65bd877477db24a192582abb034a591de2b9656a5bc0bde8a9516630c79a -->
 <!-- curatormd:fingerprint=894ffeaea1c8f5f4885f6cead9ef7a00c78866be4728b086f0ccd548b0fb6fcd -->
+
+- ## Strengthen scenario chronology and cleanup
+
+**Beginning — trigger and context:** The ongoing line-one modernization audit found clinical consistency gaps in the scenario setup and patient-turn paths, alongside a privacy risk when provider setup failed. The success condition was to complete changes supported by the existing patient-profile and persistence contracts, keep educator-dependent behavior open, and verify each implemented slice.
+
+**Middle — decisions and work:** Extended t21 validation across generated setup profiles and accepted patient disclosures to reject explicit LMP and symptom-onset dates before birth or after the scenario/encounter date. Added bounded exact relative-day handling while leaving unsupported approximate, weekday, and cycle-relative phrases uninterpreted. Strengthened t22 PP-defined pregnancy/live-birth count invariants and corrected the unqualified parity cue so it does not also disclose living-child count. For t23, failed or rejected setup Conversations have their items deleted and verified before Conversation deletion; cleanup failures enqueue only the Conversation ID in PostgreSQL for bounded worker retries. Added migration 019 and updated checklist evidence. The separate cache review kept the complete PP catalog intact, placed the variable scenario seed after the cache boundary, and measured two warm synthetic setup calls.
+
+**End — outcome and verification:** The latest full npm run check passed with 183 unit tests, 33 browser tests, 15 preflight tests across Chromium, Firefox, and WebKit, and a warning-free production build; git diff --check and the Phase 2 migration verifier passed. Migration 019 was applied to local PostgreSQL. The API was not running for live readiness verification. t21 remains open for broader onset prose and educator-defined age rules; t22 remains open for pregnancy-by-pregnancy chronology, complications, and child-count meaning; t23 remains open for fixed-result workflow and educator-approved rubric. The modernization checklist remains in progress.
+
+**Rationale:** The implementation follows existing schema and persistence contracts without inventing new PP fields or clinical semantics.
+
+**Future utility:** Preserves the implemented chronology boundaries, PP-defined invariant, privacy cleanup sequence, and the exact limits that future checklist work must respect.
+
+**Project impact:** Observed: unit, browser, preflight, migration, and diff checks passed for the implemented slices. Expected: rejecting impossible dates/counts reduces scenario contradictions, and retryable Conversation cleanup reduces persistence of failed setup data. Clinical chronology and rubric correctness remain unverified until educator-reviewed cases are available.
+
+**Follow-up:** Continue the checklist in order. Obtain educator-reviewed chronology/rubric cases and live provider/microphone evidence before closing dependent nodes.
+  - **Why:** Preserves the implemented chronology boundaries, PP-defined invariant, privacy cleanup sequence, and the exact limits that future checklist work must respect.
+
+<!-- curatormd:record_id=3b2a61010745ff2f49443612714dd433;content_sha256=c9780463ee8d2aaa97ff77ab5339b43aadb6ecbb7c70cb7b2e9c224ea58c22c4 -->
+<!-- curatormd:fingerprint=57eba1bce9d8eb851b17e96f78f8054e3e7cdaeeabf6ef0a593e494c1bfcc4e0 -->

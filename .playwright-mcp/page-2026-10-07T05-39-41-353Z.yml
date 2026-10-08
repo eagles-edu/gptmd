@@ -1,0 +1,49 @@
+- main [ref=f6e3]:
+  - generic [ref=f6e6]:
+    - generic:
+      - generic [ref=f6e7]:
+        - generic [ref=f6e9]:
+          - link [ref=f6e13] [cursor=pointer]:
+            - /url: /landscapes/8HVekIQWI4O6n7B9Jp8r/versions/latest
+          - button "Diagrams" [ref=f6e28] [cursor=pointer]
+          - 'button "Visit path: sign in to submitted assessment" [ref=f6e34] [cursor=pointer]':
+            - 'generic "Visit path: sign in to submitted assessment" [ref=f6e40]'
+        - button "Drafts" [ref=f6e44] [cursor=pointer]
+      - generic [ref=f6e51]:
+        - 'link "Trial: 7 days" [ref=f6e54] [cursor=pointer]':
+          - /url: /landscapes/8HVekIQWI4O6n7B9Jp8r/versions/latest/diagrams/editor?diagram=7hEenCniFj&model=JMl1Z2w2U7&overlay_tab=tags&x1=-488&y1=-392.9&x2=1844&y2=918.9&organization_upgrade_dialog=appbar_pricing
+        - link "Ctrl+K" [ref=f6e62] [cursor=pointer]:
+          - /url: /landscapes/8HVekIQWI4O6n7B9Jp8r/versions/latest/diagrams/editor?diagram=7hEenCniFj&model=JMl1Z2w2U7&overlay_tab=tags&x1=-488&y1=-392.9&x2=1844&y2=918.9&global_search_dialog=1
+        - button "0" [ref=f6e71] [cursor=pointer]
+        - button [ref=f6e82] [cursor=pointer]
+        - button "A" [ref=f6e89] [cursor=pointer]
+        - generic [ref=f6e104]:
+          - link "Share" [ref=f6e108] [cursor=pointer]:
+            - /url: /landscapes/8HVekIQWI4O6n7B9Jp8r/versions/latest/diagrams/editor?diagram=7hEenCniFj&model=JMl1Z2w2U7&overlay_tab=tags&x1=-488&y1=-392.9&x2=1844&y2=918.9&share_dialog=link
+          - link [ref=f6e111] [cursor=pointer]:
+            - /url: /landscapes/8HVekIQWI4O6n7B9Jp8r/versions/latest/diagrams/editor?diagram=7hEenCniFj&model=JMl1Z2w2U7&overlay_tab=tags&x1=-488&y1=-392.9&x2=1844&y2=918.9&export_dialog=1
+    - generic [ref=f6e112]:
+      - button "Flows 1" [ref=f6e116] [cursor=pointer]:
+        - generic [ref=f6e122]:
+          - text: Flows
+          - generic [ref=f6e123]: "1"
+      - generic [ref=f6e126]:
+        - slider [ref=f6e136]: "0.5489"
+        - generic [ref=f6e141] [cursor=pointer]
+    - generic [ref=f6e143]:
+      - button [ref=f6e148] [cursor=pointer]
+      - button [ref=f6e154] [cursor=pointer]
+    - generic [ref=f6e155]:
+      - generic [ref=f6e156]:
+        - generic [ref=f6e157]: Tags
+        - generic [ref=f6e164]: Technology
+        - generic [ref=f6e171]: Status
+        - generic [ref=f6e178]: Teams
+      - generic [ref=f6e187]:
+        - list [ref=f6e191]:
+          - listitem [ref=f6e192]:
+            - link "Risk 3" [ref=f6e194] [cursor=pointer]:
+              - /url: /landscapes/8HVekIQWI4O6n7B9Jp8r/versions/latest/diagrams/editor?diagram=7hEenCniFj&model=JMl1Z2w2U7&overlay_tab=tags&x1=-488&y1=-392.9&x2=1844&y2=918.9&overlay_group=CmHbmeCMdE
+              - textbox "Risk" [ref=f6e199]
+              - generic [ref=f6e200]: "3"
+        - generic [ref=f6e201]: New group

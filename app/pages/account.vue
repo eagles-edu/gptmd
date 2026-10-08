@@ -10,18 +10,19 @@
     </div>
     <NuxtLink v-else-if="isConfigured" class="sign-in-link" to="/login?redirect=/account">Sign in with Google</NuxtLink>
 
-    <section v-if="user && tenantIds.length" class="workspace-picker" aria-labelledby="workspace-title">
+    <section v-if="user && memberships.length" class="workspace-picker" aria-labelledby="workspace-title">
       <label id="workspace-title" for="workspace-select">GPTpatient workspace</label>
       <select id="workspace-select" v-model="selectedTenantId">
-        <option v-for="(tenantId, index) in tenantIds" :key="tenantId" :value="tenantId">
+        <option v-for="(membership, index) in memberships" :key="membership.tenantId" :value="membership.tenantId">
           Workspace {{ index + 1 }}
         </option>
       </select>
     </section>
+    <p v-if="selectedRoleLabel" class="membership-status" role="status">Your role in this workspace: {{ selectedRoleLabel }}<template v-if="selectedRole !== 'learner'">. Role-specific tools are not available yet.</template></p>
     <div v-if="user" class="membership-status" aria-live="polite">
       <span v-if="membershipState === 'loading'">Loading workspace access…</span>
-      <span v-else-if="membershipState === 'ready' && tenantIds.length === 1">Workspace access is ready.</span>
-      <span v-else-if="membershipState === 'ready' && tenantIds.length > 1">{{ tenantIds.length }} workspaces are available.</span>
+      <span v-else-if="membershipState === 'ready' && memberships.length === 1">Workspace access is ready.</span>
+      <span v-else-if="membershipState === 'ready' && memberships.length > 1">{{ memberships.length }} workspaces are available.</span>
       <button v-else-if="membershipState === 'error'" class="retry-button" type="button" @click="loadMemberships">Retry workspace access</button>
     </div>
     <v-alert v-if="membershipMessage" type="info" variant="tonal" class="connection-note">
@@ -90,7 +91,7 @@
 </template>
 
 <script setup lang="ts">
-const { user, isConfigured, loadTenantIds, selectedTenantId, signOut } = useGptmdAuth()
+const { user, isConfigured, memberships, loadTenantMemberships, selectedTenantId, signOut } = useGptmdAuth()
 const runtimeConfig = useRuntimeConfig()
 const safePaymentUrl = (value: string): string => {
   try {
@@ -104,7 +105,14 @@ const paymentPortalUrl = safePaymentUrl(runtimeConfig.public.paymentPortalUrl)
 const paymentCheckout6MonthUrl = safePaymentUrl(runtimeConfig.public.paymentCheckout6MonthUrl)
 const paymentCheckout12MonthUrl = safePaymentUrl(runtimeConfig.public.paymentCheckout12MonthUrl)
 const hasPaymentCheckout = Boolean(paymentCheckout6MonthUrl || paymentCheckout12MonthUrl)
-const tenantIds = ref<string[]>([])
+const tenantIds = computed(() => memberships.value.map((membership) => membership.tenantId))
+const selectedRole = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role)
+const selectedRoleLabel = computed(() => {
+  const role = selectedRole.value
+  return role === 'customer_admin' ? 'Customer administrator'
+    : role === 'instructor' ? 'Instructor'
+      : role === 'learner' ? 'Learner' : ''
+})
 const membershipMessage = ref('')
 const membershipState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 
@@ -119,7 +127,7 @@ async function loadMemberships(): Promise<void> {
   membershipState.value = 'loading'
   membershipMessage.value = ''
   try {
-    tenantIds.value = await loadTenantIds()
+    memberships.value = await loadTenantMemberships()
     if (selectedTenantId.value && !tenantIds.value.includes(selectedTenantId.value)) selectedTenantId.value = null
     if (tenantIds.value.length === 0) {
       membershipMessage.value = 'This Google account is signed in, but it has no active GPTpatient workspace. Contact support to request access.'

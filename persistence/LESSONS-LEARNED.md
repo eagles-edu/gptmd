@@ -89,3 +89,9 @@ rule. Do not add speculative or transcript-only observations.
 **Date:** 2026-10-06
 
 **Lesson:** A mocked `conversation.item.input_audio_transcription.completed` event can make a voice test pass even when the browser never commits its input audio. With Realtime transcription and `turn_detection: null`, use client-side speech detection to send `input_audio_buffer.commit` after speech ends. Test the microphone-energy-to-commit boundary, the silence threshold, one commit per utterance, and re-arming for the next utterance. Keep synthetic audio tests distinct from live microphone and provider verification.
+
+## Delete rejected scenario content before deleting its Conversation
+
+**Date:** 2026-10-06
+
+**Lesson:** OpenAI Conversation deletion leaves its items behind. When setup generation fails or returns an invalid profile, delete and verify every Conversation item first, then delete the empty Conversation. If provider cleanup fails, persist only the Conversation ID for a retry worker; do not retain the profile or prompt in the cleanup queue. Keep the valid session Conversation only after setup items, including the answer key, have been cleared and verified.

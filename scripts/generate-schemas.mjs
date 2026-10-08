@@ -9,13 +9,19 @@ import {
 } from '../app/schemas/patient-api.ts'
 import {
   PATIENT_HISTORY_FIELDS,
+  PAIN_PROFILE_FIELDS,
+  PATIENT_CHART_FIELDS,
+  PATIENT_PHYSICAL_EXAM_FINDING_FIELDS,
   PATIENT_PROFILE_FIELDS,
+  PAIN_EPISODE_FIELDS,
+  MAX_PAIN_EPISODES,
   PatientScenarioProfileSchema
 } from '../services/api/src/patient-profile.ts'
 import {
   ArchiveStatusSchema,
   AssessmentSubmissionSchema,
   ClinicalActionSchema,
+  CurrentEncounterResponseSchema,
   ImmutablePatientScenarioSchema,
   PatientScenarioSetupResponseSchema,
   PatientReportedFactExpansionSchema,
@@ -34,6 +40,7 @@ const schemas = [
   ['session-version-pins', 'SessionVersionPins', SessionVersionPinsSchema],
   ['api-session-created-response', 'SessionCreatedResponse', SessionCreatedResponseSchema],
   ['patient-scenario-setup-response', 'PatientScenarioSetupResponse', PatientScenarioSetupResponseSchema],
+  ['current-encounter-response', 'CurrentEncounterResponse', CurrentEncounterResponseSchema],
   ['patient-reported-fact-expansion', 'PatientReportedFactExpansion', PatientReportedFactExpansionSchema],
   ['session-state', 'SessionState', SessionStateSchema],
   ['session-turn', 'SessionTurn', SessionTurnSchema],
@@ -51,6 +58,26 @@ await mkdir(outputDirectory, { recursive: true })
 const patientProfilePath = new URL('../services/api/catalog/patient-profile.json', import.meta.url)
 const patientProfileDocument = z.object({
   patientProfileFields: z.array(z.string().min(1)),
+  painEpisodePolicy: z.object({
+    maximumInstances: z.literal(2),
+    identityFields: z.array(z.enum(['pain-1', 'pain-2'])).length(2),
+    details: z.array(z.string().min(1)).length(7),
+    scope: z.string().min(1)
+  }).strict(),
+  obstetricTerminology: z.object({
+    gravidity: z.string().min(1),
+    terms: z.object({
+      nulligravida: z.string().min(1),
+      primigravida: z.string().min(1),
+      multigravida: z.string().min(1)
+    }).strict(),
+    parity: z.string().min(1),
+    example: z.string().min(1),
+    countSeparation: z.string().min(1),
+    thresholdNote: z.string().min(1)
+  }).strict(),
+  chartFindings: z.object({ fields: z.array(z.string().min(1)) }).passthrough(),
+  physicalExamFindings: z.object({ fields: z.array(z.string().min(1)) }).passthrough(),
   setupProfileFields: z.array(z.string().min(1)).length(5),
   setupProfileTemplate: z.object({
     fullName: z.string().min(1),
@@ -67,6 +94,17 @@ if (
   JSON.stringify(PATIENT_PROFILE_FIELDS)
 ) {
   throw new Error('services/api/src/patient-profile.ts must match services/api/catalog/patient-profile.json.')
+}
+if (patientProfileDocument.painEpisodePolicy.maximumInstances !== MAX_PAIN_EPISODES ||
+    JSON.stringify(patientProfileDocument.painEpisodePolicy.details) !== JSON.stringify(PAIN_EPISODE_FIELDS) ||
+    JSON.stringify(patientProfileDocument.painEpisodePolicy.identityFields) !== JSON.stringify(['pain-1', 'pain-2'])) {
+  throw new Error('Pain episode limits and fields must match the canonical patient-profile catalog.')
+}
+if (JSON.stringify(patientProfileDocument.chartFindings.fields) !== JSON.stringify(PATIENT_CHART_FIELDS)) {
+  throw new Error('services/api/src/patient-profile.ts chart fields must match services/api/catalog/patient-profile.json.')
+}
+if (JSON.stringify(patientProfileDocument.physicalExamFindings.fields) !== JSON.stringify(PATIENT_PHYSICAL_EXAM_FINDING_FIELDS)) {
+  throw new Error('services/api/src/patient-profile.ts physical exam fields must match services/api/catalog/patient-profile.json.')
 }
 if (
   JSON.stringify(Object.keys(patientProfileDocument.setupProfileTemplate)) !==
@@ -85,6 +123,7 @@ const ppPreface = ppResponseExamples.split(/^## /m, 1)[0]
 if (!ppPreface) throw new Error('docs/schemas/pp-possible-values.md must include the shared patient-response policy before its field sections.')
 const responseGuidance = {}
 const historyFieldSections = {}
+const documentedPatientFields = [...PATIENT_HISTORY_FIELDS, ...PAIN_PROFILE_FIELDS]
 let currentHistorySection = null
 for (const line of ppResponseExamples.split('\n')) {
   const sectionMatch = /^## (.+)$/.exec(line)
@@ -107,12 +146,12 @@ for (const line of ppResponseExamples.split('\n')) {
 }
 if (
   JSON.stringify(Object.keys(responseGuidance).sort()) !==
-  JSON.stringify([...PATIENT_HISTORY_FIELDS].sort())
+  JSON.stringify(documentedPatientFields.sort())
 ) {
-  throw new Error('docs/schemas/pp-possible-values.md must include exactly one response-guidance row per canonical patient history field.')
+  throw new Error('docs/schemas/pp-possible-values.md must include exactly one response-guidance row per canonical non-pain history or pain field.')
 }
-if (JSON.stringify(Object.keys(historyFieldSections).sort()) !== JSON.stringify([...PATIENT_HISTORY_FIELDS].sort())) {
-  throw new Error('docs/schemas/pp-possible-values.md must assign exactly one history section to every canonical patient history field.')
+if (JSON.stringify(Object.keys(historyFieldSections).sort()) !== JSON.stringify([...documentedPatientFields].sort())) {
+  throw new Error('docs/schemas/pp-possible-values.md must assign exactly one section to every canonical non-pain history or pain field.')
 }
 const guidanceSource = `// Generated from docs/schemas/pp-possible-values.md; edit the Markdown source instead.\nexport const PATIENT_PROFILE_RESPONSE_POLICY = ${JSON.stringify(ppPreface)}\nexport const PATIENT_PROFILE_RESPONSE_GUIDANCE = ${JSON.stringify(responseGuidance, null, 2)} as const\n`
 const guidancePath = fileURLToPath(new URL('../services/api/src/patient-profile-response-guidance.generated.ts', import.meta.url))

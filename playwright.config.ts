@@ -2,7 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 export default defineConfig({
   testDir: './tests/e2e',
-  testIgnore: 'encounter-preflight.spec.ts',
+  testIgnore: ['encounter-preflight.spec.ts', 'mobile-viewer.spec.ts', 'mobileviewer-tool.spec.ts'],
   fullyParallel: true,
   reporter: 'list',
   use: {

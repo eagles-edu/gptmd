@@ -1,0 +1,510 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "CurrentEncounterResponse",
+  "type": "object",
+  "properties": {
+    "encounter": {
+      "anyOf": [
+        {
+          "type": "object",
+          "properties": {
+            "sessionId": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{43}$"
+            },
+            "status": {
+              "type": "string",
+              "enum": [
+                "initializing",
+                "ready",
+                "active"
+              ]
+            },
+            "createdAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "updatedAt": {
+              "type": "string",
+              "format": "date-time",
+              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+            },
+            "versions": {
+              "type": "object",
+              "properties": {
+                "promptVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                },
+                "modelVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 200
+                },
+                "schemaVersion": {
+                  "type": "number",
+                  "const": 7
+                },
+                "policyVersion": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 100
+                }
+              },
+              "required": [
+                "promptVersion",
+                "modelVersion",
+                "schemaVersion",
+                "policyVersion"
+              ],
+              "additionalProperties": false
+            },
+            "patient": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "fullName": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 120
+                    },
+                    "dateOfBirth": {
+                      "type": "string",
+                      "format": "date",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))$"
+                    },
+                    "bodyType": {
+                      "type": "string",
+                      "enum": [
+                        "average",
+                        "heavy"
+                      ]
+                    },
+                    "reasonForVisit": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 1000
+                    },
+                    "vitalSigns": {
+                      "type": "object",
+                      "properties": {
+                        "currentPulse": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 300
+                        },
+                        "bpSitting": {
+                          "type": "object",
+                          "properties": {
+                            "systolic": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 300
+                            },
+                            "diastolic": {
+                              "type": "integer",
+                              "minimum": 1,
+                              "maximum": 200
+                            }
+                          },
+                          "required": [
+                            "systolic",
+                            "diastolic"
+                          ],
+                          "additionalProperties": false
+                        },
+                        "respiratoryRate": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 100
+                        },
+                        "axillaryTemp": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 25,
+                              "maximum": 45
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "oralTemp": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 25,
+                              "maximum": 45
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "analTemp": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 25,
+                              "maximum": 45
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "dermalTemp": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 25,
+                              "maximum": 45
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "auralTemp": {
+                          "anyOf": [
+                            {
+                              "type": "number",
+                              "minimum": 25,
+                              "maximum": 45
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        }
+                      },
+                      "required": [
+                        "currentPulse",
+                        "bpSitting",
+                        "respiratoryRate",
+                        "axillaryTemp",
+                        "oralTemp",
+                        "analTemp",
+                        "dermalTemp",
+                        "auralTemp"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "fullName",
+                    "dateOfBirth",
+                    "bodyType",
+                    "reasonForVisit",
+                    "vitalSigns"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "phase": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "enum": [
+                    "history",
+                    "assessment",
+                    "debrief"
+                  ]
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "currentTurnSequence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "transcript": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "turnId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "sequence": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "acceptedAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  },
+                  "phase": {
+                    "type": "string",
+                    "enum": [
+                      "history",
+                      "assessment",
+                      "debrief"
+                    ]
+                  },
+                  "learnerModality": {
+                    "type": "string",
+                    "enum": [
+                      "typed",
+                      "realtime_transcription"
+                    ]
+                  },
+                  "learnerMessage": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  },
+                  "patientResponse": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  }
+                },
+                "required": [
+                  "turnId",
+                  "sequence",
+                  "acceptedAt",
+                  "phase",
+                  "learnerModality",
+                  "learnerMessage",
+                  "patientResponse"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "localUtterances": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "utteranceId": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 200
+                  },
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "repair",
+                      "stop",
+                      "phase_transition",
+                      "patient_repeat"
+                    ]
+                  },
+                  "speaker": {
+                    "type": "string",
+                    "enum": [
+                      "learner",
+                      "patient"
+                    ]
+                  },
+                  "content": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 8000
+                  },
+                  "sequence": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "ordinal": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "phase": {
+                    "type": "string",
+                    "enum": [
+                      "history",
+                      "assessment",
+                      "debrief"
+                    ]
+                  },
+                  "modality": {
+                    "type": "string",
+                    "enum": [
+                      "typed",
+                      "realtime_transcription",
+                      "text"
+                    ]
+                  },
+                  "occurredAt": {
+                    "type": "string",
+                    "format": "date-time",
+                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                  }
+                },
+                "required": [
+                  "utteranceId",
+                  "kind",
+                  "speaker",
+                  "content",
+                  "sequence",
+                  "ordinal",
+                  "phase",
+                  "modality",
+                  "occurredAt"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "assessmentDraft": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "revision": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "fields": {
+                      "type": "object",
+                      "properties": {
+                        "summary": {
+                          "type": "string",
+                          "maxLength": 4000
+                        },
+                        "differential": {
+                          "type": "string",
+                          "maxLength": 4000
+                        },
+                        "rationale": {
+                          "type": "string",
+                          "maxLength": 8000
+                        },
+                        "plan": {
+                          "type": "string",
+                          "maxLength": 4000
+                        }
+                      },
+                      "required": [
+                        "summary",
+                        "differential",
+                        "rationale",
+                        "plan"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "updatedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    }
+                  },
+                  "required": [
+                    "revision",
+                    "fields",
+                    "updatedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "assessment": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "assessmentId": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 200
+                    },
+                    "fields": {
+                      "type": "object",
+                      "properties": {
+                        "summary": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
+                        },
+                        "differential": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
+                        },
+                        "rationale": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 8000
+                        },
+                        "plan": {
+                          "type": "string",
+                          "minLength": 1,
+                          "maxLength": 4000
+                        }
+                      },
+                      "required": [
+                        "summary",
+                        "differential",
+                        "rationale",
+                        "plan"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "submittedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d(?:\\.\\d+)?(?:Z|([+-](?:[01]\\d|2[0-3]):[0-5]\\d)))$"
+                    }
+                  },
+                  "required": [
+                    "assessmentId",
+                    "fields",
+                    "submittedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "sessionId",
+            "status",
+            "createdAt",
+            "updatedAt",
+            "versions",
+            "patient",
+            "phase",
+            "currentTurnSequence",
+            "transcript",
+            "localUtterances",
+            "assessmentDraft",
+            "assessment"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "required": [
+    "encounter"
+  ],
+  "additionalProperties": false
+}

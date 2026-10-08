@@ -8,10 +8,13 @@ const turn = {
   turnId: 'turn-1', sessionId, sequence: 1,
   acceptedAt: '2026-10-01T00:01:00.000Z', phase: 'history', learnerMessage: 'What brings you in?',
   versions: {
-    promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
-    schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
+    promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
+    schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
   },
   learnerModality: 'typed', patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
+  patientReportedPainFacts: [],
+  painHistoryCoverage: [],
+  painDisclosures: [],
   disclosedHistoryFields: [], disclosedFactIds: [], historyCoverageState: [], clinicalActions: []
 }
 const event = {
@@ -341,7 +344,8 @@ describe('PostgreSQL session event worker', () => {
       eventId: 'disclosure-1', sessionId, sequence: 1, eventOrdinal: 1,
       eventType: 'disclosure', occurredAt: turn.acceptedAt,
       payload: {
-        turnId: turn.turnId, turnSequence: 1, field: 'anyPain', factId: 'fact-1', source: 'patient_reported'
+        turnId: turn.turnId, turnSequence: 1, field: 'painQuality', painEpisodeId: 'pain-1',
+        factId: 'fact-1', source: 'patient_reported'
       }
     }
     const harness = workerHarness({ streamEvent: disclosure, prior: { sequence: 1, event_ordinal: 0 } })

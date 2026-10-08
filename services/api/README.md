@@ -11,6 +11,7 @@ TypeScript-built and currently exposes:
 - `POST /api/sessions/:sessionId/turns` — serialize, validate, and accept a patient turn
 - `POST /api/sessions/:sessionId/audio-transcription` — consent- and entitlement-gated Realtime STT credential
 - `GET /api/sessions/:sessionId` — read a session owned by the authenticated user and tenant
+- `GET /api/encounters/current` — find and restore the current owner-scoped encounter without browser storage; Redis locates the candidate from a tenant-and-subject hash, PostgreSQL verifies ownership and falls back to the latest open session if Redis has lost the lookup
 
 The private patient-scenario generator in `src/patient-profile.ts` creates a
 Responses Conversation, requests a strict structured profile, validates it,
@@ -48,9 +49,13 @@ outside loopback.
 
 The browser sends the Supabase access token as a bearer token. Configure
 `API_CORS_ORIGINS` with exact trusted web origins. `GET /api/account/tenants`
-returns active workspace IDs for the authenticated subject. Other API routes
-accept `X-GPTMD-Tenant-ID`; when omitted, the API chooses a workspace only if
-the user has exactly one active membership.
+returns `{ memberships: [{ tenantId, role }] }` for the authenticated subject,
+including only active workspace memberships. The browser uses the role to show
+workspace access and disables learner encounter entry for instructor and
+customer-administrator memberships. Other API routes accept
+`X-GPTMD-Tenant-ID`; when omitted, the API chooses a workspace only if the user
+has exactly one active membership. Encounter routes still authorize only the
+learner role.
 
 Apply the schema as the application database owner after PostgreSQL is ready:
 
@@ -72,6 +77,10 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/015_session_t
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/016_strict_session_transcript_view.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/017_audio_transcription_expiry.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/018_provider_usage_cost_attribution.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/019_patient_scenario_conversation_cleanup.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/020_session_identity_binding.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/021_assessment_drafts.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/022_session_local_utterances.sql
 ```
 
 Provision a tenant row in `tenants`, its active `(tenant_id, subject_id)` in
@@ -101,14 +110,24 @@ per-visit patient JSON documents in Redis before calling the profile generator;
 after PostgreSQL commits the accepted profile, its five-value private setup
 projection, digest, version, and Conversation ID are mirrored into Redis. A
 matching retry repairs a missing Redis mirror from the immutable PostgreSQL
-scenario without creating a new provider Conversation. Apply migrations 003
-through 009 before starting this API version; `/readyz` checks membership
+scenario without creating a new provider Conversation. Apply all listed
+migrations through 022 before starting this API version; `/readyz` checks membership
 roles, scoped usage tables, session binding, durable-history tables, and audio
 consent/quota schema. If
 setup generation or validation fails before the scenario commits, the owning session transitions from
 `initializing` to `failed` and cannot enter the encounter. A Redis mirror error
 after the PostgreSQL commit leaves the session `ready`, so an idempotent retry
 can restore the mirror from the saved scenario.
+
+Migration 020 adds `session_identity_binding`, an immutable owner-scoped record
+that binds the application session ID, patient-profile ID, provider Conversation
+ID, schema version, and canonical scenario fingerprint. Setup retries insert
+the record idempotently and compare every value before returning success. The
+identity-verification worker checks open bindings against Redis at least every
+15 minutes and stores the last check time, last successful verification time,
+and result. A missing or unavailable Redis state remains distinguishable from
+a verified identity and is recoverable from PostgreSQL when the learner resumes
+the encounter.
 
 Active tenant memberships carry one of `learner`, `instructor`, or
 `customer_admin`. Migration 006 defaults existing memberships to `learner`;
@@ -168,6 +187,26 @@ return `503` with `Retry-After: 1` before patient-turn quota or state work begin
 These limits protect turn admission from setup load on one API process; they do
 not coordinate across replicas or establish a provider-wide account rate limit.
 
+## Request rate limits
+
+Every `/api` request consumes one shared Redis fixed-window counter keyed by a
+hash of the client IP. The default window is 60 seconds with a limit of 1,200
+requests per IP. After bearer authentication succeeds, the request also
+consumes a second shared counter keyed by a hash of the tenant and subject,
+limited to 300 requests per identity in the same window. Configure these
+limits with `API_RATE_LIMIT_WINDOW_SECONDS`, `API_RATE_LIMIT_PER_IP`, and
+`API_RATE_LIMIT_PER_IDENTITY`. Redis updates each counter atomically and
+expires it at the end of the window; raw IP addresses and identity values are
+not used as Redis keys.
+
+An exceeded limit returns `429` with a generic JSON error and `Retry-After`
+seconds until the counter expires. If the shared limiter is missing or Redis
+cannot update a counter, `/api` returns `503` before authentication-dependent
+or route work. `/healthz` and `/readyz` are outside these request limits.
+Ingress rate limits remain a separate deployment control; forwarded client IP
+is trustworthy only when the configured proxy chain matches Express's
+one-hop `trust proxy` setting.
+
 Encounter mutation responses expose `redis_turn_state_event_commit`,
 `redis_phase_state_event_commit`, `redis_assessment_state_event_commit`, and
 `redis_terminal_state_event_commit` in `Server-Timing`. Each value measures the
@@ -208,6 +247,12 @@ ephemeral credential and provider call identifier stay server-side. Keep at
 least one worker process running anywhere audio transcription is enabled. The
 local `npm run dev` launcher starts it automatically.
 
+The same worker retries cleanup of rejected scenario Conversations. GPTMD
+deletes and verifies every Conversation item before deleting the Conversation,
+because deleting a Conversation alone leaves its items at OpenAI. Failed
+cleanup IDs are stored without profile text and retried with bounded
+exponential delays.
+
 The worker emits a structured `session_event_worker_metrics` log every 30
 seconds with consumer-group pending and undelivered counts, their combined
 backlog, the age of the oldest pending Redis entry, and the maximum event-time
@@ -223,8 +268,15 @@ missing, `GET /api/sessions/:sessionId` rebuilds it from the immutable
 PostgreSQL scenario and committed session events, including saved retry replies.
 Events that Redis lost before the worker committed them to PostgreSQL are
 within the documented one-second loss window. The local recovery verifier
-exercises Redis turn retries, worker commit/ack ordering, terminal outcomes,
-and reconstruction after deleting the test session's Redis JSON:
+exercises the complete PostgreSQL session identity binding (owner, app session,
+patient profile, provider Conversation, schema version, and canonical scenario
+fingerprint), runs the periodic identity verifier against Redis live state, and
+retries setup with the same idempotency key. It then resumes the owner-scoped
+current encounter, deletes the test session's Redis live/profile/retry/owner
+index keys, and verifies that resume reconstructs the same identity from
+PostgreSQL. It also covers Redis turn retries, worker commit/ack ordering,
+terminal outcomes, and reconstruction after deleting the test session's Redis
+JSON:
 
 ```bash
 npm run verify:phase2

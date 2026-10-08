@@ -1,0 +1,24 @@
+- generic [active]:
+  - generic:
+    - generic:
+      - generic [ref=e53]:
+        - button [ref=e59] [cursor=pointer]
+        - button "A" [ref=e66] [cursor=pointer]
+      - main [ref=e3]:
+        - generic [ref=e80]:
+          - generic [ref=e81]:
+            - navigation [ref=e82]:
+              - list [ref=e83]
+            - generic [ref=e86] [cursor=pointer]
+          - generic [ref=e89]:
+            - generic [ref=e92]:
+              - heading "Pinned" [level=1] [ref=e97]
+              - button "Create diagram" [ref=e101] [cursor=pointer]
+            - generic [ref=e126]:
+              - heading "Recent" [level=1] [ref=e132]
+              - generic [ref=e133]:
+                - generic [ref=e134] [cursor=pointer]: Viewed
+                - generic [ref=e135] [cursor=pointer]: Edited
+      - generic [ref=e36]:
+        - generic [ref=e40]: IcePanel update available
+        - generic [ref=e41]: Reload IcePanel

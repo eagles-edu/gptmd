@@ -80,19 +80,23 @@ export class VoiceTurnBuffer {
     this.capturedAt = new Date().toISOString()
     if (this.timer) clearTimeout(this.timer)
     this.timer = setTimeout(() => {
-      const capturedAt = this.capturedAt
-      const completed = this.flush()
-      if (completed) this.onReady(completed, capturedAt)
+      const completed = this.flushPending()
+      if (completed) this.onReady(completed.transcript, completed.capturedAt)
     }, this.silenceMs)
   }
 
   flush(): string {
+    return this.flushPending()?.transcript ?? ''
+  }
+
+  flushPending(): { transcript: string; capturedAt: string } | null {
     if (this.timer) clearTimeout(this.timer)
     this.timer = undefined
-    const completed = this.transcript
+    const completed = this.transcript.trim()
+    const capturedAt = this.capturedAt
     this.transcript = ''
     this.capturedAt = ''
-    return completed
+    return completed ? { transcript: completed, capturedAt } : null
   }
 
   cancel(): void {

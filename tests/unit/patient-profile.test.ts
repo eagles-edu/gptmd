@@ -3,10 +3,13 @@ import { readFileSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import {
   clearPatientSetupConversation,
+  deletePatientSetupConversation,
   generatePatientScenario,
+  PatientScenarioProviderError,
   PATIENT_PROFILE_FIELDS
 } from '../../services/api/src/patient-profile.ts'
 import { createMockResponsesStream } from './helpers/openai-response-stream.ts'
+import { TEST_PATIENT_PHYSICAL_EXAM_FINDINGS, TEST_PATIENT_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
 
 describe('patient setup Conversation isolation', () => {
   it('deletes every setup item and verifies that hidden setup context is gone', async () => {
@@ -40,12 +43,73 @@ describe('patient setup Conversation isolation', () => {
     expect(deleteItem).toHaveBeenCalledWith('answer-key', { conversation_id: 'conv-1' })
   })
 
+  it('deletes all Conversation items before deleting an abandoned Conversation', async () => {
+    const remaining = [{ id: 'setup-input' }, { id: 'setup-answer-key' }]
+    const order: string[] = []
+    const client = {
+      conversations: {
+        items: {
+          list: vi.fn(async function* (_conversationId: string, query: { limit: number }) {
+            order.push('list')
+            for (const item of remaining.slice(0, query.limit)) yield item
+          }),
+          delete: vi.fn(async (itemId: string) => {
+            order.push(`item:${itemId}`)
+            const index = remaining.findIndex((item) => item.id === itemId)
+            if (index >= 0) remaining.splice(index, 1)
+            return { id: 'conv-1', object: 'conversation' }
+          })
+        },
+        delete: vi.fn(async () => {
+          order.push('conversation')
+          return { id: 'conv-1', deleted: true, object: 'conversation.deleted' }
+        })
+      }
+    } as unknown as OpenAI
+
+    await deletePatientSetupConversation(client, 'conv-1')
+
+    expect(order).toEqual(['list', 'item:setup-answer-key', 'item:setup-input', 'list', 'conversation'])
+    expect(remaining).toEqual([])
+  })
+
+  it('purges provider-failed setup context and durably queues IDs when purge fails', async () => {
+    const stream = {
+      on: vi.fn().mockReturnThis(),
+      finalResponse: vi.fn().mockRejectedValue(new Error('provider stream failed'))
+    }
+    const recordAbandonedConversationIds = vi.fn(async () => undefined)
+    const client = {
+      conversations: {
+        create: vi.fn().mockResolvedValue({ id: 'conv-provider-failure' }),
+        delete: vi.fn(),
+        items: {
+          list: vi.fn(async function* () { yield { id: 'setup-answer-key' } }),
+          delete: vi.fn().mockRejectedValue(new Error('item delete failed'))
+        }
+      },
+      responses: { stream: vi.fn(() => stream) }
+    } as unknown as OpenAI
+
+    await expect(generatePatientScenario(client, 'gpt-6-luna', {
+      scenarioSeed: 'p'.repeat(43), maxAttempts: 1, recordAbandonedConversationIds
+    })).rejects.toMatchObject({
+      name: PatientScenarioProviderError.name,
+      conversationIds: ['conv-provider-failure']
+    })
+
+    expect(client.conversations.delete).not.toHaveBeenCalled()
+    expect(recordAbandonedConversationIds).toHaveBeenCalledWith(['conv-provider-failure'])
+  })
+
   it('clears setup input and answer-key output before returning the validated scenario', async () => {
     const history = [{ id: 'setup-input' }, { id: 'setup-answer-key' }]
     const deleted: string[] = []
     const profile = {
       fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-      reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+      reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', painHistoryStatus: 'absent', painEpisodes: [], history: [],
+      vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
       currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
       patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
       persona: {
@@ -108,6 +172,14 @@ describe('patient setup Conversation isolation', () => {
     expect(setupInput?.role).toBe('developer')
     expect(setupInput?.role === 'developer' ? setupInput.content[0]?.text : '')
       .toContain('complete canonical patient-profile parameter catalog')
+    expect(setupInput?.role === 'developer' ? setupInput.content[0]?.text : '')
+      .toContain('Choose each displayed vital in the context of this patient’s age, pregnancy status, current presentation, relevant history, acuity, and established diagnosis')
+    expect(setupInput?.role === 'developer' ? setupInput.content[0]?.text : '')
+      .toContain('nulligravida is 0, primigravida is 1, and multigravida is 2 or more')
+    expect(setupInput?.role === 'developer' ? setupInput.content[0]?.text : '')
+      .toContain('if a fourth pregnancy is current, G4P2')
+    expect(setupInput?.role === 'developer' ? setupInput.content[0]?.text : '')
+      .toContain('Do not infer parity from live births, stillbirths, gravidity, or living-child counts')
     expect(catalogBlock?.text).toBe(`Complete canonical patient-profile parameter catalog (intact JSON):\n${canonicalCatalog}`)
     expect(parsedCatalog.patientProfileFields).toEqual(PATIENT_PROFILE_FIELDS)
     expect(catalogBlock?.prompt_cache_breakpoint).toEqual({ mode: 'explicit' })
@@ -135,7 +207,9 @@ describe('patient setup Conversation isolation', () => {
     const recordProviderUsage = vi.fn(async () => undefined)
     const profile = {
       fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-      reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+      reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', painHistoryStatus: 'absent', painEpisodes: [], history: [],
+      vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
       currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
       patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
       persona: {
@@ -159,6 +233,7 @@ describe('patient setup Conversation isolation', () => {
     const client = {
       conversations: {
         create: vi.fn(async () => ({ id: `conv-${++conversationNumber}` })),
+        delete: vi.fn(async (id: string) => ({ id, deleted: true, object: 'conversation.deleted' })),
         items: {
           list: vi.fn(async function* () {}),
           delete: vi.fn(async () => ({ id: 'conv' }))
@@ -177,6 +252,7 @@ describe('patient setup Conversation isolation', () => {
       return JSON.stringify(request.input)
     })
     expect(scenario.conversationId).toBe('conv-2')
+    expect(client.conversations.delete).toHaveBeenCalledWith('conv-1')
     expect(recordProviderUsage).toHaveBeenCalledTimes(2)
     expect(recordProviderUsage.mock.calls.map(([usage]) => usage)).toEqual([
       expect.objectContaining({
@@ -191,11 +267,12 @@ describe('patient setup Conversation isolation', () => {
     expect(responseInputs).toHaveLength(2)
     expect(responseInputs[0]).toBe(responseInputs[1])
     expect(responseInputs[0]).toContain(`Stable scenario variation seed: ${seed}`)
-    expect(responseInputs[0]).toContain('dedicated fields for quality, location and radiation, severity, onset, pattern, duration')
+    expect(responseInputs[0]).toContain('no more than two distinct pain episodes across all causes')
+    expect(responseInputs[0]).toContain('Keep each episode’s location, onset, quality, severity, pattern, duration, and provoking/relieving factors independent')
     expect(responseInputs[0]).toContain('include miscellaneousDetailsNos as unknown')
     expect(responseInputs[0]).toContain('numberPregnanciesWithLiveBirth counts pregnancies resulting in one or more live-born infants')
     expect(responseInputs[0]).toContain('a multiple pregnancy counts once in the former and once per live-born infant in the latter')
-    expect(responseInputs[0]).toContain('numberPriorPregnanciesReaching20Weeks is the patient-reported parity count')
+    expect(responseInputs[0]).toContain('In this PP, parity (P) is the patient-reported number of completed prior pregnancies reaching 20 weeks or later')
     expect(responseInputs[0]).toContain('numberChildren is the current living-child count and must not be inferred from births')
   })
 })

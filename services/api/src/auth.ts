@@ -8,6 +8,10 @@ export interface AuthenticatedPrincipal {
 
 export const TENANT_ROLES = ['learner', 'instructor', 'customer_admin'] as const
 export type TenantRole = typeof TENANT_ROLES[number]
+export interface TenantMembership {
+  tenantId: string
+  role: TenantRole
+}
 
 export interface AuthenticatedIdentity {
   subjectId: string

@@ -3,19 +3,25 @@ import { describe, expect, it } from 'vitest'
 import {
   generatePatientTurn,
   matchHistoryCueFields,
+  matchPainCueFields,
   validatePatientTurnOutput,
   type PatientTurnGenerationContext
 } from '../../services/api/src/patient-turn.ts'
-import type { PatientScenarioProfile } from '../../services/api/src/patient-profile.ts'
+import { PAIN_EPISODE_FIELDS, PatientScenarioProfileSchema, type PatientScenarioProfile } from '../../services/api/src/patient-profile.ts'
 import { createMockResponsesStream } from './helpers/openai-response-stream.ts'
+import { TEST_PATIENT_PHYSICAL_EXAM_FINDINGS, TEST_PATIENT_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
+import { makePainEpisode } from '../fixtures/pain-episodes.ts'
 
 const profile: PatientScenarioProfile = {
   fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
   reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis',
+  painHistoryStatus: 'present',
+  painEpisodes: [makePainEpisode('pain-1', 'this pelvic pain')],
   history: [
-    { field: 'anyPain', status: 'unknown', value: null },
     { field: 'currentMedications', status: 'known', value: ['Ibuprofen'] }
   ],
+  vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+  physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
   currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
   patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
   persona: {
@@ -27,8 +33,8 @@ const profile: PatientScenarioProfile = {
 const context: PatientTurnGenerationContext = {
   scenarioId: 'scenario-1', profile, conversationId: 'conv_private',
   versions: {
-    promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
-    schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
+    promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
+    schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
   },
   acceptedTurns: [], phase: 'history', learnerMessage: 'Do you have pain?'
 }
@@ -89,11 +95,13 @@ describe('patient turn generation and validation', () => {
     expect(userInput.patientScenario).not.toHaveProperty('diagnosis')
     expect(userInput.patientScenario).not.toHaveProperty('bodyType')
     expect(userInput.patientScenario).toMatchObject({
-      relevantHistory: [{ field: 'anyPain', status: 'unknown', value: null, source: 'expandable_seed_cue' }]
+      painHistoryStatus: 'present',
+      relevantHistory: [],
+      relevantPainEpisodes: [{ painEpisodeId: 'pain-1', patientDescription: 'this pelvic pain' }]
     })
     expect(userInput.patientScenario).not.toHaveProperty('supportedTestResults')
     expect(userInput).toMatchObject({
-      matchedFieldResponseGuidance: {
+      matchedPainFieldResponseGuidance: {
         anyPain: {
           commonPatientWording: expect.stringContaining('Yes, I have pain.'),
           clinicianAssistedGuidance: expect.stringContaining('current versus episodic')
@@ -124,7 +132,9 @@ describe('patient turn generation and validation', () => {
   })
 
   it('routes onset and associated-negative questions to their own hidden fields', () => {
-    expect(matchHistoryCueFields('When did the pain begin?')).toEqual(['timePainOnset'])
+    expect(matchPainCueFields('When did the pain begin?')).toEqual(['timePainOnset'])
+    expect(matchPainCueFields('Do you have pain?')).toEqual(['anyPain'])
+    expect(matchHistoryCueFields('When did the pain begin?')).toEqual([])
     expect(matchHistoryCueFields('How many pregnancies?')).toEqual(['numberPregnancies'])
     expect(matchHistoryCueFields('How many previous pregnancies reached 20 weeks?'))
       .toEqual(['numberPriorPregnanciesReaching20Weeks'])
@@ -148,12 +158,17 @@ describe('patient turn generation and validation', () => {
     })
     const client = { responses: { stream: streamFactory } } as unknown as OpenAI
 
+    const isPainEpisodeField = PAIN_EPISODE_FIELDS.includes(field as (typeof PAIN_EPISODE_FIELDS)[number])
     const fieldContext: PatientTurnGenerationContext = {
       ...context,
       learnerMessage,
       profile: {
         ...profile,
-        history: [{ field, status: 'unknown', value: null }]
+        painHistoryStatus: isPainEpisodeField ? 'present' : 'absent',
+        painEpisodes: isPainEpisodeField
+          ? [makePainEpisode('pain-1', 'this pain', { [field]: { status: 'unknown', value: null } })]
+          : [],
+        history: isPainEpisodeField ? [] : [{ field, status: 'unknown', value: null }]
       }
     }
     await generatePatientTurn(client, 'gpt-6-luna', fieldContext)
@@ -161,10 +176,14 @@ describe('patient turn generation and validation', () => {
     const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
       matchedFieldResponseGuidance: Record<string, { commonPatientWording: string; clinicianAssistedGuidance: string }>
+      matchedPainFieldResponseGuidance: Record<string, { commonPatientWording: string; clinicianAssistedGuidance: string }>
     }
-    expect(Object.keys(userInput.matchedFieldResponseGuidance)).toEqual([field])
-    expect(userInput.matchedFieldResponseGuidance[field]?.commonPatientWording).toContain('“')
-    expect(userInput.matchedFieldResponseGuidance[field]?.clinicianAssistedGuidance).toContain(fidelityRule)
+    const guidance = isPainEpisodeField
+      ? userInput.matchedPainFieldResponseGuidance
+      : userInput.matchedFieldResponseGuidance
+    expect(Object.keys(guidance)).toEqual([field])
+    expect(guidance[field]?.commonPatientWording).toContain('“')
+    expect(guidance[field]?.clinicianAssistedGuidance).toContain(fidelityRule)
   })
 
   it('omits matched PP guidance when the case has no corresponding history field', async () => {
@@ -176,13 +195,17 @@ describe('patient turn generation and validation', () => {
     })
     const client = { responses: { stream: streamFactory } } as unknown as OpenAI
 
-    await generatePatientTurn(client, 'gpt-6-luna', { ...context, learnerMessage: 'How would you describe the pain?' })
+    await generatePatientTurn(client, 'gpt-6-luna', {
+      ...context,
+      learnerMessage: 'How would you describe the pain?',
+      profile: { ...profile, painHistoryStatus: 'absent', painEpisodes: [] }
+    })
 
     const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
-      matchedFieldResponseGuidance: Record<string, unknown>
+      matchedPainFieldResponseGuidance: Record<string, unknown>
     }
-    expect(userInput.matchedFieldResponseGuidance).toEqual({})
+    expect(userInput.matchedPainFieldResponseGuidance).toEqual({})
   })
 
   it('permits an approximate onset estimate only as an asked, generated patient report', async () => {
@@ -191,16 +214,20 @@ describe('patient turn generation and validation', () => {
       learnerMessage: 'When did the pain begin?',
       profile: {
         ...profile,
-        history: [{ field: 'timePainOnset', status: 'unknown', value: null }]
+        painEpisodes: [makePainEpisode('pain-1', 'this pain', {
+          timePainOnset: { status: 'unknown', value: null }
+        })]
       }
     }
     const { streamFactory } = createMockResponsesStream({
       id: 'resp-onset', status: 'completed',
       output_parsed: {
         patientResponse: 'It started about a week ago.',
-        proposedFacts: [{ field: 'timePainOnset', value: 'About a week ago' }],
-        historyCoverage: ['timePainOnset'],
-        disclosedHistoryFields: ['timePainOnset']
+        proposedFacts: [],
+        proposedPainFacts: [{ painEpisodeId: 'pain-1', field: 'timePainOnset', value: 'About a week ago' }],
+        painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'timePainOnset' }],
+        painDisclosures: [{ painEpisodeId: 'pain-1', field: 'timePainOnset' }],
+        historyCoverage: [], disclosedHistoryFields: []
       }
     })
     const client = { responses: { stream: streamFactory } } as unknown as OpenAI
@@ -215,19 +242,24 @@ describe('patient turn generation and validation', () => {
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as {
       matchedHistoryTopics: string[]
       matchedFieldResponseGuidance: Record<string, { clinicianAssistedGuidance: string }>
+      matchedPainTopics: string[]
+      matchedPainFieldResponseGuidance: Record<string, { clinicianAssistedGuidance: string }>
     }
-    expect(userInput.matchedHistoryTopics).toEqual(['timePainOnset'])
-    expect(userInput.matchedFieldResponseGuidance.timePainOnset?.clinicianAssistedGuidance)
+    expect(userInput.matchedHistoryTopics).toEqual([])
+    expect(userInput.matchedPainTopics).toEqual(['timePainOnset'])
+    expect(userInput.matchedPainFieldResponseGuidance.timePainOnset?.clinicianAssistedGuidance)
       .toContain('may give a brief approximate estimate only when asked')
 
     const accepted = validatePatientTurnOutput({
       patientResponse: 'It started about a week ago.',
-      proposedFacts: [{ field: 'timePainOnset', value: 'About a week ago' }],
-      historyCoverage: ['timePainOnset'],
-      disclosedHistoryFields: ['timePainOnset']
+      proposedFacts: [],
+      proposedPainFacts: [{ painEpisodeId: 'pain-1', field: 'timePainOnset', value: 'About a week ago' }],
+      painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'timePainOnset' }],
+      painDisclosures: [{ painEpisodeId: 'pain-1', field: 'timePainOnset' }],
+      historyCoverage: [], disclosedHistoryFields: []
     }, onsetContext, 'turn-onset', 1, acceptedAt)
-    expect(accepted.patientReportedFacts).toMatchObject([{
-      field: 'timePainOnset',
+    expect(accepted.patientReportedPainFacts).toMatchObject([{
+      painEpisodeId: 'pain-1', field: 'timePainOnset',
       value: 'About a week ago',
       source: 'patient_reported',
       turnId: 'turn-onset'
@@ -259,22 +291,69 @@ describe('patient turn generation and validation', () => {
   })
 
   it('accepts a new fact only for a scenario history field explicitly marked unknown', () => {
+    const painContext = {
+      ...context,
+      learnerMessage: 'Where does it hurt?',
+      profile: {
+        ...profile,
+        painEpisodes: [makePainEpisode('pain-1', 'this pelvic pain', {
+          painLocationRadiationWhere: { status: 'unknown', value: null }
+        })]
+      }
+    }
     const accepted = validatePatientTurnOutput({
       patientResponse: 'It is mostly on my left side.',
-      proposedFacts: [{ field: 'anyPain', value: 'Mostly on the left side' }],
-      historyCoverage: ['anyPain'], disclosedHistoryFields: ['anyPain']
-    }, context, 'turn-1', 1, acceptedAt)
+      proposedFacts: [],
+      proposedPainFacts: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere', value: 'Mostly on the left side' }],
+      historyCoverage: [], disclosedHistoryFields: [],
+      painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }],
+      painDisclosures: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }]
+    }, painContext, 'turn-1', 1, acceptedAt)
 
-    expect(accepted.patientReportedFacts).toHaveLength(1)
-    expect(accepted.patientReportedFacts[0]).toMatchObject({
-      field: 'anyPain', section: 'Symptoms and menstrual history',
+    expect(accepted.patientReportedPainFacts).toHaveLength(1)
+    expect(accepted.patientReportedPainFacts[0]).toMatchObject({
+      painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere', section: 'Symptoms and menstrual history',
       value: 'Mostly on the left side', source: 'patient_reported',
       turnId: 'turn-1', turnSequence: 1, recordedAt: acceptedAt
     })
-    expect(accepted.disclosedFactIds).toHaveLength(1)
-    expect(accepted.historyCoverageState).toEqual([{
-      field: 'anyPain', asked: true, relevant: true, missing: false, sensitive: false, notRelevant: false
-    }])
+    expect(accepted.painDisclosures).toMatchObject([{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }])
+  })
+
+  it('keeps two pain episodes independent and rejects a third episode', () => {
+    const twoEpisodeProfile = {
+      ...profile,
+      painEpisodes: [
+        makePainEpisode('pain-1', 'my usual period cramps', {
+          painLocationRadiationWhere: { status: 'known', value: 'low across my pelvis' }
+        }),
+        makePainEpisode('pain-2', 'this new abdominal pain', {
+          painLocationRadiationWhere: { status: 'known', value: 'on the lower right side' }
+        })
+      ]
+    }
+    const twoEpisodeContext = { ...context, learnerMessage: 'Where is the pain?', profile: twoEpisodeProfile }
+    const accepted = validatePatientTurnOutput({
+      patientResponse: 'My usual cramps are low across my pelvis, while this new pain is on the lower right side.',
+      proposedFacts: [], historyCoverage: [], disclosedHistoryFields: [],
+      painHistoryCoverage: [
+        { painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' },
+        { painEpisodeId: 'pain-2', field: 'painLocationRadiationWhere' }
+      ],
+      painDisclosures: [
+        { painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' },
+        { painEpisodeId: 'pain-2', field: 'painLocationRadiationWhere' }
+      ]
+    }, twoEpisodeContext, 'turn-two-pains', 1, acceptedAt)
+
+    expect(accepted.painHistoryCoverage).toHaveLength(2)
+    expect(accepted.painDisclosures.map((fact) => fact.factId)).toEqual([
+      'seed:scenario-1:pain-1:painLocationRadiationWhere',
+      'seed:scenario-1:pain-2:painLocationRadiationWhere'
+    ])
+    expect(PatientScenarioProfileSchema.safeParse({
+      ...twoEpisodeProfile,
+      painEpisodes: [...twoEpisodeProfile.painEpisodes, makePainEpisode('pain-1', 'third pain')]
+    }).success).toBe(false)
   })
 
   it('matches allergy questions to the explicit allergy history field', () => {
@@ -347,10 +426,11 @@ describe('patient turn generation and validation', () => {
   })
 
   it('rejects a proposed fact when it is absent from the scenario or the scenario already knows it', () => {
+    const missingHistoryContext = { ...context, learnerMessage: 'Tell me about your medical history.' }
     expect(() => validatePatientTurnOutput({
       patientResponse: 'I have a fever.', proposedFacts: [{ field: 'medicalHistory', value: 'Fever' }],
-      historyCoverage: ['anyPain'], disclosedHistoryFields: []
-    }, context, 'turn-1', 1, acceptedAt)).toThrow('outside an unknown scenario history field')
+      historyCoverage: ['medicalHistory'], disclosedHistoryFields: []
+    }, missingHistoryContext, 'turn-1', 1, acceptedAt)).toThrow('outside an unknown scenario history field')
 
     const medicationContext = { ...context, learnerMessage: 'What medications do you take?' }
     expect(() => validatePatientTurnOutput({
@@ -361,34 +441,42 @@ describe('patient turn generation and validation', () => {
 
   it('keeps previously accepted facts stable and omits an identical repeat', () => {
     const priorFact = {
-      factId: 'fact-1', field: 'anyPain' as const, value: 'Mostly on the left side',
+      factId: 'fact-1', painEpisodeId: 'pain-1' as const,
+      field: 'painLocationRadiationWhere' as const, value: 'Mostly on the left side',
       section: 'Symptoms and menstrual history',
       source: 'patient_reported' as const, turnId: 'turn-1', turnSequence: 1, recordedAt: acceptedAt
     }
     const withPrior: PatientTurnGenerationContext = {
       ...context,
+      learnerMessage: 'Where does it hurt?',
       acceptedTurns: [{
         turnId: 'turn-1', sessionId: 's'.repeat(43), sequence: 1, acceptedAt, phase: 'history',
-      learnerMessage: 'Do you have pain?', patientResponse: 'Yes, mostly on my left side.',
-      patientReportedFacts: [priorFact], historyCoverage: ['anyPain'], disclosedHistoryFields: ['anyPain'],
-      disclosedFactIds: ['fact-1'],
-      historyCoverageState: [{
-        field: 'anyPain', asked: true, relevant: true, missing: false, sensitive: false, notRelevant: false
-      }],
+      learnerMessage: 'Where does it hurt?', patientResponse: 'Yes, mostly on my left side.',
+      patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: [],
+      patientReportedPainFacts: [priorFact],
+      painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }],
+      painDisclosures: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere', factId: 'fact-1' }],
+      disclosedFactIds: [], historyCoverageState: [],
         clinicalActions: []
       }]
     }
 
     expect(validatePatientTurnOutput({
       patientResponse: 'As I said, the left side.',
-      proposedFacts: [{ field: 'anyPain', value: 'Mostly on the left side' }],
-      historyCoverage: ['anyPain'], disclosedHistoryFields: ['anyPain']
-    }, withPrior, 'turn-2', 2, '2026-10-03T03:05:00.000Z').patientReportedFacts).toEqual([])
+      proposedFacts: [],
+      proposedPainFacts: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere', value: 'Mostly on the left side' }],
+      historyCoverage: [], disclosedHistoryFields: [],
+      painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }],
+      painDisclosures: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }]
+    }, withPrior, 'turn-2', 2, '2026-10-03T03:05:00.000Z').patientReportedPainFacts).toEqual([])
     expect(() => validatePatientTurnOutput({
       patientResponse: 'Actually, it is on the right.',
-      proposedFacts: [{ field: 'anyPain', value: 'Mostly on the right side' }],
-      historyCoverage: ['anyPain'], disclosedHistoryFields: ['anyPain']
-    }, withPrior, 'turn-2', 2, '2026-10-03T03:05:00.000Z')).toThrow('conflicts with an already accepted patient fact')
+      proposedFacts: [],
+      proposedPainFacts: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere', value: 'Mostly on the right side' }],
+      historyCoverage: [], disclosedHistoryFields: [],
+      painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }],
+      painDisclosures: [{ painEpisodeId: 'pain-1', field: 'painLocationRadiationWhere' }]
+    }, withPrior, 'turn-2', 2, '2026-10-03T03:05:00.000Z')).toThrow('conflicts with an accepted pain episode fact')
   })
 
   it('checks obstetric outcome counts before accepting an expansion', () => {
@@ -433,6 +521,31 @@ describe('patient turn generation and validation', () => {
     }, obstetricContext, 'turn-ob-invalid-parity', 1, acceptedAt)).toThrow('do not match the completed pregnancy count')
   })
 
+  it('checks live-born infant totals even when gravidity is unknown', () => {
+    const obstetricContext: PatientTurnGenerationContext = {
+      ...context,
+      learnerMessage: 'How many pregnancies with a live birth? How many live births?',
+      profile: {
+        ...profile,
+        history: [
+          { field: 'numberPregnanciesWithLiveBirth', status: 'unknown', value: null },
+          { field: 'numberLiveBirths', status: 'unknown', value: null }
+        ]
+      }
+    }
+
+    expect(() => validatePatientTurnOutput({
+      patientResponse: 'Two pregnancies resulted in a live birth, with one baby born alive.',
+      proposedFacts: [
+        { field: 'numberPregnanciesWithLiveBirth', value: 2 },
+        { field: 'numberLiveBirths', value: 1 }
+      ],
+      historyCoverage: ['numberPregnanciesWithLiveBirth', 'numberLiveBirths'],
+      disclosedHistoryFields: ['numberPregnanciesWithLiveBirth', 'numberLiveBirths']
+    }, obstetricContext, 'turn-ob-livebirth-without-gravidity', 1, acceptedAt))
+      .toThrow('do not match the completed pregnancy count')
+  })
+
   it('rejects ISO last-menstrual-period dates outside the birth-to-encounter chronology', () => {
     const lmpContext: PatientTurnGenerationContext = {
       ...context,
@@ -455,9 +568,55 @@ describe('patient turn generation and validation', () => {
     expect(() => validatePatientTurnOutput(
       makeOutput('1989-12-31'), lmpContext, 'turn-lmp-before-birth', 1, acceptedAt
     )).toThrow('Last menstrual period date must fall between')
+    expect(() => validatePatientTurnOutput(
+      makeOutput('in three weeks'), lmpContext, 'turn-lmp-relative-future', 1, acceptedAt
+    )).toThrow('Last menstrual period date must fall between')
     expect(validatePatientTurnOutput(
       makeOutput('2026-10-01'), lmpContext, 'turn-lmp-valid', 1, acceptedAt
     ).patientReportedFacts).toHaveLength(1)
+    expect(validatePatientTurnOutput(
+      makeOutput('about three weeks ago'), lmpContext, 'turn-lmp-relative-valid', 1, acceptedAt
+    ).patientReportedFacts).toHaveLength(1)
+  })
+
+  it('rejects explicit symptom-onset dates outside the birth-to-encounter chronology', () => {
+    const onsetContext: PatientTurnGenerationContext = {
+      ...context,
+      learnerMessage: 'When did the pain begin?',
+      profile: {
+        ...profile,
+        painEpisodes: [makePainEpisode('pain-1', 'this pain', {
+          timePainOnset: { status: 'unknown', value: null }
+        })]
+      }
+    }
+    const makeOutput = (value: string) => ({
+      patientResponse: `It began ${value}.`,
+      proposedFacts: [],
+      proposedPainFacts: [{ painEpisodeId: 'pain-1' as const, field: 'timePainOnset' as const, value }],
+      historyCoverage: [], disclosedHistoryFields: [],
+      painHistoryCoverage: [{ painEpisodeId: 'pain-1' as const, field: 'timePainOnset' as const }],
+      painDisclosures: [{ painEpisodeId: 'pain-1' as const, field: 'timePainOnset' as const }]
+    })
+
+    expect(() => validatePatientTurnOutput(
+      makeOutput('2026-10-04'), onsetContext, 'turn-onset-future', 1, acceptedAt
+    )).toThrow('Pain onset date must fall between')
+    expect(() => validatePatientTurnOutput(
+      makeOutput('1989-12-31'), onsetContext, 'turn-onset-before-birth', 1, acceptedAt
+    )).toThrow('Pain onset date must fall between')
+    expect(() => validatePatientTurnOutput(
+      makeOutput('in three weeks'), onsetContext, 'turn-onset-relative-future', 1, acceptedAt
+    )).toThrow('Pain onset date must fall between')
+    expect(() => validatePatientTurnOutput(
+      makeOutput('tomorrow'), onsetContext, 'turn-onset-tomorrow', 1, acceptedAt
+    )).toThrow('Pain onset date must fall between')
+    expect(validatePatientTurnOutput(
+      makeOutput('yesterday'), onsetContext, 'turn-onset-yesterday', 1, acceptedAt
+    ).patientReportedPainFacts).toHaveLength(1)
+    expect(validatePatientTurnOutput(
+      makeOutput('about three weeks ago'), onsetContext, 'turn-onset-relative-valid', 1, acceptedAt
+    ).patientReportedPainFacts).toHaveLength(1)
   })
 
   it('excludes the active pregnancy from completed obstetric outcomes', () => {

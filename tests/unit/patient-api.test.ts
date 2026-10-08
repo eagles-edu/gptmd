@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { usePatientApi } from '../../app/composables/usePatientApi'
+import { LocalTranscriptUtteranceSchema } from '../../app/schemas/patient-api'
+import { TEST_LEARNER_CHART_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
 
 const fetchMock = vi.fn()
 const apiAuthHeaders = {
@@ -19,6 +21,14 @@ describe('patient API response contracts', () => {
     vi.unstubAllGlobals()
   })
 
+  it('accepts local voice transcript rows before the first accepted patient turn', () => {
+    expect(LocalTranscriptUtteranceSchema.safeParse({
+      utteranceId: 'repair-before-first-turn', ordinal: 1, sequence: 0, kind: 'repair', speaker: 'learner',
+      phase: 'history', modality: 'realtime_transcription', content: 'Could you repeat that?',
+      occurredAt: '2026-10-01T00:00:00.000Z'
+    }).success).toBe(true)
+  })
+
   it('creates a session and normalizes the configured API base', async () => {
     const session = {
       sessionId: 's'.repeat(43),
@@ -26,9 +36,9 @@ describe('patient API response contracts', () => {
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v6',
+        promptVersion: 'patient-scenario-prompt-v10',
         modelVersion: 'gpt-6-luna',
-        schemaVersion: 5,
+        schemaVersion: 7,
         policyVersion: 'patient-scenario-policy-v3'
       }
     }
@@ -49,14 +59,14 @@ describe('patient API response contracts', () => {
     )
   })
 
-  it.each([1, 2, 3, 4, 6])('rejects session responses pinned to unsupported scenario schema version %s', async (schemaVersion) => {
+  it.each([1, 2, 3, 4, 5])('rejects session responses pinned to unsupported scenario schema version %s', async (schemaVersion) => {
     fetchMock.mockResolvedValue({
       sessionId: 's'.repeat(43),
       status: 'initializing',
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v6',
+        promptVersion: 'patient-scenario-prompt-v10',
         modelVersion: 'gpt-6-luna',
         schemaVersion,
         policyVersion: 'patient-scenario-policy-v3'
@@ -64,6 +74,46 @@ describe('patient API response contracts', () => {
     })
 
     await expect(usePatientApi().createSession()).rejects.toThrow(
+      'The session service returned an invalid session response.'
+    )
+  })
+
+  it('reads the authenticated session status used to decide whether setup can be retried', async () => {
+    const session = {
+      sessionId: 's'.repeat(43),
+      status: 'initializing',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      versions: {
+        promptVersion: 'patient-scenario-prompt-v10',
+        modelVersion: 'gpt-6-luna',
+        schemaVersion: 7,
+        policyVersion: 'patient-scenario-policy-v3'
+      }
+    }
+    fetchMock.mockResolvedValue(session)
+
+    await expect(usePatientApi().getSession(session.sessionId)).resolves.toEqual(session)
+    expect(fetchMock).toHaveBeenCalledWith(`https://api.example.test/api/sessions/${session.sessionId}`, {
+      headers: apiAuthHeaders
+    })
+  })
+
+  it('rejects a session lookup for a different session identifier', async () => {
+    fetchMock.mockResolvedValue({
+      sessionId: 'x'.repeat(43),
+      status: 'initializing',
+      createdAt: '2026-10-01T00:00:00.000Z',
+      updatedAt: '2026-10-01T00:00:00.000Z',
+      versions: {
+        promptVersion: 'patient-scenario-prompt-v10',
+        modelVersion: 'gpt-6-luna',
+        schemaVersion: 7,
+        policyVersion: 'patient-scenario-policy-v3'
+      }
+    })
+
+    await expect(usePatientApi().getSession('s'.repeat(43))).rejects.toThrow(
       'The session service returned an invalid session response.'
     )
   })
@@ -90,12 +140,13 @@ describe('patient API response contracts', () => {
         fullName: 'Ari Nguyen',
         dateOfBirth: '1990-01-01',
         bodyType: 'average',
-        reasonForVisit: 'Pelvic pain'
+        reasonForVisit: 'Pelvic pain',
+        vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS
       },
       versions: {
-        promptVersion: 'patient-scenario-prompt-v6',
+        promptVersion: 'patient-scenario-prompt-v10',
         modelVersion: 'gpt-6-luna',
-        schemaVersion: 5,
+        schemaVersion: 7,
         policyVersion: 'patient-scenario-policy-v3'
       },
       readiness: { profile: true, redis: true, conversation: true }

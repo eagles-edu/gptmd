@@ -15,7 +15,7 @@
     },
     "schemaVersion": {
       "type": "number",
-      "const": 5
+      "const": 7
     },
     "policyVersion": {
       "type": "string",

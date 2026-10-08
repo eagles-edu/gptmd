@@ -44,5 +44,20 @@ Run the repository's complete validation suite with:
 npm run check
 ```
 
+The encounter preflight E2E suite includes desktop Chromium, Firefox, and
+WebKit plus an iPhone 13 device-profile run on Playwright WebKit. The phone
+profile checks mobile layout and browser behavior; it is not a physical iPhone
+or Apple Safari. Playwright's WebKit build is distinct from branded Safari.
+For the main E2E suite in Opera desktop, install Opera and run
+`OPERA_EXECUTABLE_PATH=/path/to/opera npm run test:e2e:opera` (the path may be
+omitted when Opera is at `/usr/bin/opera`).
+
+Third-party iOS browsers generally use Apple's WebKit engine, although Apple
+allows eligible, approved browser apps to use alternative engines in the EU
+under specific entitlements and OS requirements. A Playwright iPhone profile
+cannot establish behavior on a real iOS browser or device. See [Apple's
+alternative-engine policy](https://developer.apple.com/support/alternative-browser-engines/)
+and [Playwright's WebKit notes](https://playwright.dev/docs/browsers).
+
 See [the API service README](services/api/README.md) and
 [npm scripts guide](docs/npm-scripts.md) for details.

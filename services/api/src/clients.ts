@@ -8,6 +8,10 @@ import { generatePatientTurn } from './patient-turn.js'
 import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.js'
 import { createPostgresSessionStore } from './session-store.ts'
 import { createRedisPatientStateStore, type SessionCommitTimingRecorder } from './patient-state-store.ts'
+import {
+  createRedisRequestRateLimitStore,
+  type RequestRateLimitLimits
+} from './request-rate-limit.ts'
 
 export function realtimeTranscriptionSessionConfig() {
   return {
@@ -51,11 +55,20 @@ function readSetupQueueLimits(env: NodeJS.ProcessEnv): SetupQueueLimits {
   }
 }
 
+function readRequestRateLimitLimits(env: NodeJS.ProcessEnv): RequestRateLimitLimits {
+  return {
+    windowSeconds: integerSetting(env, 'API_RATE_LIMIT_WINDOW_SECONDS', 60, 1, 3_600),
+    perIp: integerSetting(env, 'API_RATE_LIMIT_PER_IP', 1_200, 1, 1_000_000),
+    perIdentity: integerSetting(env, 'API_RATE_LIMIT_PER_IDENTITY', 300, 1, 100_000)
+  }
+}
+
 export function createServiceClients(
   env: NodeJS.ProcessEnv = process.env,
   recordSessionCommitTiming?: SessionCommitTimingRecorder
 ): ServiceClients {
   const setupQueueLimits = readSetupQueueLimits(env)
+  const requestRateLimitLimits = readRequestRateLimitLimits(env)
   const redisClient = env.REDIS_URL
     ? createClient({
         url: env.REDIS_URL,
@@ -104,6 +117,7 @@ export function createServiceClients(
                ) AND
                to_regclass('public.tenant_entitlements') IS NOT NULL AND
                to_regclass('public.app_audio_transcription_sessions') IS NOT NULL AND
+               to_regclass('public.app_patient_scenario_conversation_cleanup') IS NOT NULL AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'app_audio_transcription_sessions'
@@ -126,7 +140,10 @@ export function createServiceClients(
                  GROUP BY table_name HAVING count(*) = 2
                ) AND
                to_regclass('public.app_sessions') IS NOT NULL AND
+               to_regclass('public.session_identity_binding') IS NOT NULL AND
                to_regclass('public.session_events') IS NOT NULL AND
+               to_regclass('public.app_assessment_drafts') IS NOT NULL AND
+               to_regclass('public.session_local_utterances') IS NOT NULL AND
                to_regclass('public.session_transcript') IS NOT NULL AND
                to_regclass('public.session_turn_audits') IS NOT NULL AND
                EXISTS (
@@ -194,14 +211,27 @@ export function createServiceClients(
           }
         : null,
       generatePatientScenario: openaiClient
-        ? (versions, asOf, scenarioSeed, recordTiming, recordProviderUsage) => generatePatientScenario(openaiClient, versions.modelVersion, {
-            asOf,
-            promptVersion: versions.promptVersion,
-            policyVersion: versions.policyVersion,
-            scenarioSeed,
-            recordTiming,
-            recordProviderUsage
-          })
+        ? (versions, asOf, scenarioSeed, recordTiming, recordProviderUsage) => generatePatientScenario(
+            openaiClient,
+            versions.modelVersion,
+            {
+              asOf,
+              promptVersion: versions.promptVersion,
+              policyVersion: versions.policyVersion,
+              scenarioSeed,
+              recordTiming,
+              recordProviderUsage,
+              recordAbandonedConversationIds: async (conversationIds) => {
+                if (!postgresPool) throw new Error('Patient setup Conversation cleanup storage is unavailable')
+                await postgresPool.query(
+                  `INSERT INTO app_patient_scenario_conversation_cleanup (provider_conversation_id)
+                   SELECT unnest($1::text[])
+                   ON CONFLICT (provider_conversation_id) DO NOTHING`,
+                  [conversationIds]
+                )
+              }
+            }
+          )
         : null,
       generatePatientTurn: openaiClient
         ? (context, recordTiming) => generatePatientTurn(
@@ -254,6 +284,8 @@ export function createServiceClients(
         jwksUrl: env.API_AUTH_JWT_JWKS_URL ?? null
       },
       setupQueueLimits,
+      requestRateLimitLimits,
+      requestRateLimitStore: redisClient ? createRedisRequestRateLimitStore(redisClient) : null,
       sessionStore: postgresPool
         ? createPostgresSessionStore(
             postgresPool,

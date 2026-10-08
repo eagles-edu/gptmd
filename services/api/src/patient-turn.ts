@@ -14,12 +14,19 @@ import {
   isObstetricHistoryConsistent,
   isHistoryDatePlausible,
   OBSTETRIC_COUNT_FIELDS,
+  PAIN_EPISODE_FIELDS,
+  MAX_PAIN_EPISODES,
+  MAX_PAIN_HISTORY_REFS,
+  PAIN_PROFILE_FIELDS,
   PATIENT_HISTORY_FIELDS,
   type ObstetricCountField,
   type PatientScenarioProfile
 } from './patient-profile.ts'
 import {
   PatientReportedFactExpansionSchema,
+  PatientReportedPainFactSchema,
+  PainHistoryCoverageSchema,
+  PainDisclosureSchema,
   type HistoryCoverageState,
   type EncounterPhase,
   type PatientReportedFactExpansion,
@@ -28,19 +35,27 @@ import {
   type SessionTurnVersionPins
 } from './session-contracts.ts'
 
-export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v7'
-export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v7'
+export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v8'
+export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v8'
 
 const ProposedFactSchema = z.object({
   field: PatientReportedFactExpansionSchema.shape.field,
   value: PatientReportedFactExpansionSchema.shape.value
+}).strict()
+const ProposedPainFactSchema = z.object({
+  painEpisodeId: z.enum(['pain-1', 'pain-2']),
+  field: z.enum(PAIN_EPISODE_FIELDS),
+  value: PatientReportedPainFactSchema.shape.value
 }).strict()
 
 export const PatientTurnModelOutputSchema = z.object({
   patientResponse: z.string().trim().min(1).max(8_000),
   proposedFacts: z.array(ProposedFactSchema).max(30),
   historyCoverage: z.array(PatientReportedFactExpansionSchema.shape.field).max(60),
-  disclosedHistoryFields: z.array(PatientReportedFactExpansionSchema.shape.field).max(60)
+  disclosedHistoryFields: z.array(PatientReportedFactExpansionSchema.shape.field).max(60),
+  painHistoryCoverage: z.array(PainHistoryCoverageSchema).max(MAX_PAIN_HISTORY_REFS).default([]),
+  painDisclosures: z.array(PainHistoryCoverageSchema).max(MAX_PAIN_HISTORY_REFS).default([]),
+  proposedPainFacts: z.array(ProposedPainFactSchema).max(14).default([])
 }).strict()
 
 export type PatientTurnModelOutput = z.infer<typeof PatientTurnModelOutputSchema>
@@ -59,24 +74,19 @@ export type PatientTurnGenerationContext = {
 export type AcceptedPatientTurnContent = {
   patientResponse: string
   patientReportedFacts: PatientReportedFactExpansion[]
+  patientReportedPainFacts: z.infer<typeof PatientReportedPainFactSchema>[]
   historyCoverage: PatientTurnModelOutput['historyCoverage']
   disclosedHistoryFields: PatientTurnModelOutput['disclosedHistoryFields']
   disclosedFactIds: string[]
   historyCoverageState: HistoryCoverageState[]
+  painHistoryCoverage: z.infer<typeof PainHistoryCoverageSchema>[]
+  painDisclosures: z.infer<typeof PainDisclosureSchema>[]
 }
 
 const HISTORY_CUES: Record<PatientScenarioProfile['history'][number]['field'], string[]> = {
   lastMenstrualPeriod: ['last menstrual period', 'lmp', 'last period', 'period date'],
   typicalMenstrualPeriodDescription: ['menstrual cycle', 'period cycle', 'regular periods', 'period usually', 'menstrual period'],
   dysmenorrheaHistory: ['painful periods', 'period cramps', 'menstrual cramps', 'dysmenorrhea'],
-  anyPain: ['do you have pain', 'are you having pain', 'any pain', 'have you had pain', 'pain right now'],
-  whatProvokesPalliatesPain: ['what makes the pain worse', 'what makes it worse', 'what makes the pain better', 'what helps the pain', 'what relieves the pain', 'aggravating factors', 'relieving factors'],
-  painQuality: ['pain quality', 'quality of the pain', 'what does the pain feel like', 'describe the pain'],
-  painLocationRadiationWhere: ['where is the pain', 'where does it hurt', 'where is it located', 'does the pain travel', 'does it radiate', 'pain location', 'pain radiation'],
-  'painSeverity0-10': ['pain severity', 'how severe is the pain', 'how bad is the pain', 'rate the pain', 'pain scale', 'out of 10'],
-  timePainOnset: ['when did the pain start', 'when did it start', 'when did the pain begin', 'when did it begin', 'pain onset', 'when did symptoms start', 'onset'],
-  constantIntermittentPain: ['constant or intermittent', 'constant or does it come and go', 'does it come and go', 'comes and goes', 'intermittent pain', 'constant pain', 'how often does the pain occur'],
-  durationPain: ['how long have you had the pain', 'how long have you had it', 'how long does each episode last', 'duration of pain', 'how long does it last'],
   patientConcern: ['concern', 'worry', 'worries', 'worried', 'afraid', 'scared', 'what bothers you most'],
   medicalHistory: ['medical history', 'medical condition', 'health condition', 'illness'],
   lastPelvicExam: ['pelvic exam', 'pelvic examination'],
@@ -141,6 +151,16 @@ const HISTORY_CUES: Record<PatientScenarioProfile['history'][number]['field'], s
     'painful urination', 'burning when urinating', 'dysuria', 'bowel changes'
   ]
 }
+const PAIN_CUES: Record<(typeof PAIN_PROFILE_FIELDS)[number], string[]> = {
+  anyPain: ['do you have pain', 'are you having pain', 'any pain', 'have you had pain', 'pain right now'],
+  whatProvokesPalliatesPain: ['what makes the pain worse', 'what makes it worse', 'what makes the pain better', 'what helps the pain', 'what relieves the pain', 'aggravating factors', 'relieving factors'],
+  painQuality: ['pain quality', 'quality of the pain', 'what does the pain feel like', 'describe the pain'],
+  painLocationRadiationWhere: ['where is the pain', 'where does it hurt', 'where is it located', 'does the pain travel', 'does it radiate', 'pain location', 'pain radiation'],
+  'painSeverity0-10': ['pain severity', 'how severe is the pain', 'how bad is the pain', 'rate the pain', 'pain scale', 'out of 10'],
+  timePainOnset: ['when did the pain start', 'when did it start', 'when did the pain begin', 'when did it begin', 'pain onset', 'when did symptoms start', 'onset'],
+  constantIntermittentPain: ['constant or intermittent', 'constant or does it come and go', 'does it come and go', 'comes and goes', 'intermittent pain', 'constant pain', 'how often does the pain occur'],
+  durationPain: ['how long have you had the pain', 'how long have you had it', 'how long does each episode last', 'duration of pain', 'how long does it last']
+}
 
 const SENSITIVE_HISTORY_FIELDS = new Set<PatientScenarioProfile['history'][number]['field']>([
   'sexualActivityCurrent', 'contraceptionMethods', 'stdHistory', 'illicitDrugUse', 'methadoneTreatment',
@@ -167,13 +187,20 @@ export function matchHistoryCueFields(learnerMessage: string): PatientScenarioPr
     field !== 'numberPregnancies' || !specificObstetricTopic || explicitTotalPregnancies)
 }
 
+export function matchPainCueFields(learnerMessage: string): (typeof PAIN_PROFILE_FIELDS)[number][] {
+  const message = ` ${normalizedWords(learnerMessage)} `
+  return PAIN_PROFILE_FIELDS.filter((field) =>
+    PAIN_CUES[field].some((cue) => message.includes(` ${normalizedWords(cue)} `)))
+}
+
 const patientTurnInstructions = [
   'You are roleplaying the fictional patient in a medical training encounter.',
   'Use only the supplied patient-known scenario details and the accepted encounter transcript.',
   'Do not reveal or rely on any private diagnosis, answer key, rubric, or clinician-only interpretation, including information already present in this session Conversation.',
   'Do not invent or volunteer details for history fields that are not directly matched to the learner’s question. When a directly matched scenario history field is marked unknown, you may provide a concise, case-consistent patient-reported answer to the asked topic and record it as a proposed fact so it remains stable. Do not create a fact if the patient hesitates or declines to answer.',
   'The unknown miscellaneousDetailsNos history field is an expandable patient-reported catchall: when the learner asks about other or associated symptoms, relevant negatives, or a specific related symptom, create details only for what was asked. If an accepted catchall fact exists, use only its recorded detail and do not add contradictory or unrecorded facts.',
-  'For an unknown timePainOnset field, answer an onset question with a brief, approximate, plausible patient-reported timeframe and record it as a proposed fact. This is an on-demand generated patient report, not a seeded fact. Keep it stable in later turns; never back-calculate an exact date from the encounter date or infer onset from cycle pattern.',
+  'Pain is organized as up to two separately identified episodes. Keep each episode’s label and PQRST facts attached to its painEpisodeId. For a general any-pain question, address all supplied episodes separately; for a PQRST question that could refer to both, distinguish the answer for each episode instead of blending details. If there are no episodes, answer that the patient has no pain. Never create a third episode, invent an episode, infer a cause, or transfer a detail between episodes. Propose and disclose unknown PQRST details using the matching painEpisodeId and field; keep each accepted answer stable.',
+  'For an unknown timePainOnset detail, answer an onset question with a brief, approximate, plausible patient-reported timeframe scoped to that painEpisodeId and record it as a proposed pain fact. Keep it stable in later turns; never back-calculate an exact date from the encounter date or infer onset from cycle pattern.',
   'Use matchedFieldResponseGuidance only for fields matched to the latest question. Common patient wording is illustrative, not a required answer. Treat clinician-assisted guidance as an internal fidelity constraint: preserve only the details actually present in the scenario or patient answer, do not infer missing details, and do not speak clinician wording as the patient.',
   'For an unknown numberPriorPregnanciesReaching20Weeks field, answer only when the learner asks about parity or pregnancies reaching 20 weeks. This patient-reported count covers prior pregnancies reaching 20 weeks or later, once per pregnancy, and excludes the current pregnancy. Keep it within completed gravidity; do not derive it from pregnancy outcomes, infant count, or living children.',
   'Answer naturally in the patient’s voice and disclose relevant information only in response to the learner.',
@@ -183,7 +210,9 @@ const patientTurnInstructions = [
   'If a sensitive question causes discomfort, acknowledge it calmly and let the patient choose whether to share only the relevant scenario-supported detail.',
   'historyCoverage lists only scenario history fields directly addressed by the latest learner message.',
   'disclosedHistoryFields lists only scenario history fields whose supported details you actually disclosed in the patientResponse.',
+  'painHistoryCoverage and painDisclosures use {painEpisodeId, field} references. Include one reference per supplied episode for each matched pain topic; use painEpisodeId null with field anyPain when the scenario has no pain episodes and the patient reports no pain. A disclosure must correspond to facts actually stated in the patientResponse.',
   'The proposedFacts list may contain only new patient-reported details that directly answer the latest learner message and are supported by a scenario history field marked unknown; every proposed fact must also appear in disclosedHistoryFields.',
+  'The proposedPainFacts list may contain only new answers to directly matched PQRST details marked unknown in that exact episode; use its painEpisodeId and field and include a matching painDisclosures reference.',
   'Do not repeat already accepted facts in proposedFacts. Do not report exam findings or test results as patient-reported facts.',
   'Use the current encounter phase to guide the reply. Return the required structured output.'
 ].join(' ') + `\n\nPatient-profile response policy:\n${PATIENT_PROFILE_RESPONSE_POLICY}`
@@ -196,6 +225,7 @@ export async function generatePatientTurn(
   recordTiming?: ResponsesTimingRecorder
 ): Promise<{ responseId: string; output: unknown; providerUsage: ProviderUsageSample | null }> {
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
+  const matchedPainFields = new Set(matchPainCueFields(context.learnerMessage))
   const scenarioFields = new Set(context.profile.history.map((entry) => entry.field))
   const acceptedFacts = context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts)
     .filter((fact) => matchedFields.has(fact.field))
@@ -207,6 +237,25 @@ export async function generatePatientTurn(
         ? { field: entry.field, status: 'known', value: accepted.value, source: 'patient_reported' }
         : { ...entry, source: entry.status === 'unknown' ? 'expandable_seed_cue' : 'scenario_seed' }
     })
+  const acceptedPainFacts = context.acceptedTurns.flatMap((turn) => turn.patientReportedPainFacts)
+  const relevantPainEpisodes = matchedPainFields.size > 0
+    ? context.profile.painEpisodes.map((episode) => ({
+      painEpisodeId: episode.episodeId,
+      patientDescription: episode.patientDescription,
+      currentStatus: episode.currentStatus,
+      ...(matchedPainFields.has('anyPain') ? {} : {
+        details: episode.details
+          .filter((detail) => matchedPainFields.has(detail.field))
+          .map((detail) => {
+            const accepted = acceptedPainFacts.find((fact) =>
+              fact.painEpisodeId === episode.episodeId && fact.field === detail.field)
+            return accepted
+              ? { field: detail.field, status: 'known', value: accepted.value, source: 'patient_reported' }
+              : { ...detail, source: detail.status === 'unknown' ? 'expandable_seed_cue' : 'scenario_seed' }
+          })
+      })
+    }))
+    : []
   const startedAt = performance.now()
   let firstTokenReported = false
   const stream = client.responses.stream({
@@ -219,6 +268,7 @@ export async function generatePatientTurn(
         content: JSON.stringify({
           phase: context.phase,
           matchedHistoryTopics: [...matchedFields],
+          matchedPainTopics: [...matchedPainFields],
           versions: context.versions,
           correctionRequested: context.retryAfterValidationFailure === true,
           establishedDisclosureState: context.acceptedTurns.flatMap((turn) => turn.disclosedHistoryFields
@@ -229,11 +279,20 @@ export async function generatePatientTurn(
             }))),
           establishedCoverageState: context.acceptedTurns.flatMap((turn) => turn.historyCoverageState)
             .filter((coverage) => matchedFields.has(coverage.field)),
+          establishedPainDisclosureState: context.acceptedTurns.flatMap((turn) => turn.painDisclosures)
+            .filter((disclosure) => matchedPainFields.has(disclosure.field)),
+          establishedPainCoverageState: context.acceptedTurns.flatMap((turn) => turn.painHistoryCoverage)
+            .filter((coverage) => matchedPainFields.has(coverage.field)),
           matchedFieldResponseGuidance: Object.fromEntries([...matchedFields]
             .filter((field) => scenarioFields.has(field))
             .map((field) => [
             field, PATIENT_PROFILE_RESPONSE_GUIDANCE[field]
             ])),
+          matchedPainFieldResponseGuidance: Object.fromEntries([...matchedPainFields]
+            .filter((field) => field === 'anyPain' || context.profile.painEpisodes.length > 0)
+            .map((field) => [
+            field, PATIENT_PROFILE_RESPONSE_GUIDANCE[field]
+          ])),
           patientScenario: {
             fullName: context.profile.fullName,
             dateOfBirth: context.profile.dateOfBirth,
@@ -241,7 +300,9 @@ export async function generatePatientTurn(
             currentPregnancyStatus: context.profile.currentPregnancyStatus,
             currentMenopausalStatus: context.profile.currentMenopausalStatus,
             persona: context.profile.persona,
-            relevantHistory
+            relevantHistory,
+            painHistoryStatus: matchedPainFields.size > 0 ? context.profile.painHistoryStatus : undefined,
+            relevantPainEpisodes
           },
           latestLearnerMessage: context.learnerMessage
         })
@@ -303,6 +364,7 @@ export function validatePatientTurnOutput(
   const output = PatientTurnModelOutputSchema.parse(value)
   const scenarioFields = new Map(context.profile.history.map((entry) => [entry.field, entry]))
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
+  const matchedPainFields = new Set(matchPainCueFields(context.learnerMessage))
   if (new Set(output.historyCoverage).size !== output.historyCoverage.length ||
       new Set(output.disclosedHistoryFields).size !== output.disclosedHistoryFields.length) {
     throw new Error('Patient turn repeats a coverage or disclosure field')
@@ -325,6 +387,35 @@ export function validatePatientTurnOutput(
         throw new Error('Accepted patient history contains conflicting facts')
       }
       priorFacts.set(fact.field, fact)
+    }
+  }
+
+  const painEpisodes = new Map(context.profile.painEpisodes.map((episode) => [episode.episodeId, episode]))
+  if (painEpisodes.size > MAX_PAIN_EPISODES) throw new Error('Patient scenario exceeds the pain episode limit')
+  const painKey = (episodeId: string | null, field: string) => `${episodeId ?? 'none'}:${field}`
+  const expectedPainCoverage = matchedPainFields.size === 0 ? [] : context.profile.painEpisodes.length === 0
+    ? [{ painEpisodeId: null, field: 'anyPain' as const }]
+    : context.profile.painEpisodes.flatMap((episode) => [...matchedPainFields].map((field) => ({
+      painEpisodeId: episode.episodeId,
+      field
+    })))
+  if (new Set(output.painHistoryCoverage.map((ref) => painKey(ref.painEpisodeId, ref.field))).size !== output.painHistoryCoverage.length ||
+      new Set(output.painDisclosures.map((ref) => painKey(ref.painEpisodeId, ref.field))).size !== output.painDisclosures.length) {
+    throw new Error('Patient turn repeats a pain episode coverage or disclosure reference')
+  }
+  if (expectedPainCoverage.length !== output.painHistoryCoverage.length || expectedPainCoverage.some((ref) =>
+    !output.painHistoryCoverage.some((actual) => painKey(actual.painEpisodeId, actual.field) === painKey(ref.painEpisodeId, ref.field)))) {
+    throw new Error('Patient turn omitted or added pain episode coverage')
+  }
+  const priorPainFacts = new Map<string, z.infer<typeof PatientReportedPainFactSchema>>()
+  for (const turn of context.acceptedTurns) {
+    for (const fact of turn.patientReportedPainFacts) {
+      const key = painKey(fact.painEpisodeId, fact.field)
+      const prior = priorPainFacts.get(key)
+      if (prior && canonicalJsonStringify(prior.value) !== canonicalJsonStringify(fact.value)) {
+        throw new Error('Accepted pain episode history contains conflicting facts')
+      }
+      priorPainFacts.set(key, fact)
     }
   }
 
@@ -375,6 +466,66 @@ export function validatePatientTurnOutput(
     }
   }
 
+  const seenPainFacts = new Set<string>()
+  const patientReportedPainFacts: z.infer<typeof PatientReportedPainFactSchema>[] = []
+  for (const proposed of output.proposedPainFacts) {
+    const key = painKey(proposed.painEpisodeId, proposed.field)
+    if (seenPainFacts.has(key)) throw new Error('Patient turn repeats a proposed pain episode fact')
+    seenPainFacts.add(key)
+    if (!matchedPainFields.has(proposed.field)) throw new Error('Patient turn proposes an unasked pain episode detail')
+    const episode = painEpisodes.get(proposed.painEpisodeId)
+    const detail = episode?.details.find((entry) => entry.field === proposed.field)
+    if (!episode || !detail) throw new Error('Patient turn refers to a pain episode outside the scenario')
+    const prior = priorPainFacts.get(key)
+    if (prior) {
+      if (canonicalJsonStringify(prior.value) !== canonicalJsonStringify(proposed.value)) {
+        throw new Error('Patient turn conflicts with an accepted pain episode fact')
+      }
+      continue
+    }
+    if (detail.status !== 'unknown' || detail.value !== null) {
+      throw new Error('Patient turn proposes a pain fact outside an unknown episode detail')
+    }
+    if (!output.painDisclosures.some((ref) => painKey(ref.painEpisodeId, ref.field) === key)) {
+      throw new Error('A proposed pain fact must be marked as disclosed')
+    }
+    patientReportedPainFacts.push(PatientReportedPainFactSchema.parse({
+      factId: randomUUID(),
+      painEpisodeId: proposed.painEpisodeId,
+      field: proposed.field,
+      section: PATIENT_PROFILE_FIELD_SECTIONS[proposed.field],
+      value: proposed.value,
+      source: 'patient_reported',
+      turnId,
+      turnSequence: sequence,
+      recordedAt: acceptedAt
+    }))
+  }
+
+  const painDisclosures = output.painDisclosures.map((ref) => {
+    if (!output.painHistoryCoverage.some((coverage) => painKey(coverage.painEpisodeId, coverage.field) === painKey(ref.painEpisodeId, ref.field))) {
+      throw new Error('A pain disclosure must match a covered episode and field')
+    }
+    if (ref.field === 'anyPain') {
+      if ((context.profile.painEpisodes.length === 0) !== (ref.painEpisodeId === null) ||
+          (ref.painEpisodeId !== null && !painEpisodes.has(ref.painEpisodeId))) {
+        throw new Error('Patient turn refers to an invalid pain-presence fact')
+      }
+      return PainDisclosureSchema.parse({ ...ref, factId: `seed:${context.scenarioId}:${ref.painEpisodeId ?? 'no-pain'}:anyPain` })
+    }
+    if (!ref.painEpisodeId) throw new Error('A PQRST disclosure requires a pain episode ID')
+    const key = painKey(ref.painEpisodeId, ref.field)
+    const detail = painEpisodes.get(ref.painEpisodeId)?.details.find((entry) => entry.field === ref.field)
+    const prior = priorPainFacts.get(key)
+    const proposed = patientReportedPainFacts.find((fact) => painKey(fact.painEpisodeId, fact.field) === key)
+    if (prior) return PainDisclosureSchema.parse({ ...ref, factId: prior.factId })
+    if (proposed) return PainDisclosureSchema.parse({ ...ref, factId: proposed.factId })
+    if (detail && (detail.status === 'known' || detail.status === 'negative') && detail.value !== null) {
+      return PainDisclosureSchema.parse({ ...ref, factId: `seed:${context.scenarioId}:${ref.painEpisodeId}:${ref.field}` })
+    }
+    throw new Error('Patient turn discloses a pain detail without a supported or accepted fact')
+  })
+
   const historyCoverageState: HistoryCoverageState[] = output.historyCoverage.map((field) => {
     const scenarioField = scenarioFields.get(field)
     const hasAcceptedFact = priorFacts.has(field) || patientReportedFacts.some((fact) => fact.field === field)
@@ -390,21 +541,37 @@ export function validatePatientTurnOutput(
   })
 
   validateObstetricCounts(context.profile, context.acceptedTurns, patientReportedFacts)
-  const lastMenstrualPeriod = patientReportedFacts.find((fact) => fact.field === 'lastMenstrualPeriod')?.value ??
-    context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts).reverse()
-      .find((fact) => fact.field === 'lastMenstrualPeriod')?.value ??
-    context.profile.history.find((entry) => entry.field === 'lastMenstrualPeriod')?.value
-  if (!isHistoryDatePlausible(context.profile.dateOfBirth, lastMenstrualPeriod, new Date(acceptedAt))) {
-    throw new Error('Last menstrual period date must fall between the patient birth date and encounter date')
+  for (const field of ['lastMenstrualPeriod'] as const) {
+    const historyDate = patientReportedFacts.find((fact) => fact.field === field)?.value ??
+      context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts).reverse()
+        .find((fact) => fact.field === field)?.value ??
+      context.profile.history.find((entry) => entry.field === field)?.value
+    if (!isHistoryDatePlausible(context.profile.dateOfBirth, historyDate, new Date(acceptedAt))) {
+      const description = field === 'lastMenstrualPeriod' ? 'Last menstrual period' : 'Symptom onset'
+      throw new Error(`${description} date must fall between the patient birth date and encounter date`)
+    }
+  }
+  for (const episode of context.profile.painEpisodes) {
+    const key = painKey(episode.episodeId, 'timePainOnset')
+    const onset = patientReportedPainFacts.find((fact) => painKey(fact.painEpisodeId, fact.field) === key)?.value ??
+      [...context.acceptedTurns].reverse().flatMap((turn) => turn.patientReportedPainFacts).reverse()
+        .find((fact) => painKey(fact.painEpisodeId, fact.field) === key)?.value ??
+      episode.details.find((detail) => detail.field === 'timePainOnset')?.value
+    if (!isHistoryDatePlausible(context.profile.dateOfBirth, onset, new Date(acceptedAt))) {
+      throw new Error('Pain onset date must fall between the patient birth date and encounter date')
+    }
   }
 
   return {
     patientResponse: output.patientResponse,
     patientReportedFacts,
+    patientReportedPainFacts,
     historyCoverage: output.historyCoverage,
     disclosedHistoryFields: output.disclosedHistoryFields,
     disclosedFactIds,
-    historyCoverageState
+    historyCoverageState,
+    painHistoryCoverage: output.painHistoryCoverage,
+    painDisclosures
   }
 }
 

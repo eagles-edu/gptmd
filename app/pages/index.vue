@@ -12,7 +12,7 @@
       <NuxtLink v-if="canBeginVisit" class="primary-link" to="/encounter">Begin Visit <span aria-hidden="true">→</span></NuxtLink>
       <NuxtLink v-else-if="user && membershipState === 'error'" class="primary-link" to="/account">Review account access <span aria-hidden="true">→</span></NuxtLink>
       <button v-else-if="user" class="primary-link primary-link-disabled" type="button" disabled>
-        {{ membershipState === 'loading' ? 'Loading workspace…' : 'Workspace access needed' }}
+        {{ membershipState === 'loading' ? 'Loading workspace…' : selectedRole !== 'learner' && selectedRole ? 'Learner access is required' : 'Workspace access needed' }}
       </button>
       <NuxtLink v-else class="primary-link" to="/encounter">Begin Visit <span aria-hidden="true">→</span></NuxtLink>
     </div>
@@ -32,6 +32,9 @@
         {{ membershipMessage }}
         <button v-if="membershipState === 'error'" class="retry-link" type="button" @click="loadMemberships">Retry</button>
         <NuxtLink v-if="tenantIds.length === 0 && membershipState === 'ready'" to="/contact">Contact support</NuxtLink>
+      </p>
+      <p v-else-if="selectedRole && selectedRole !== 'learner'" class="membership-message" role="status">
+        This workspace is for {{ selectedRole === 'customer_admin' ? 'customer administration' : 'instructor tools' }}. Learner encounters are unavailable to this role.
       </p>
       <p v-else-if="membershipState === 'loading'" class="membership-message" role="status">Checking workspace access…</p>
       <p v-else-if="tenantIds.length === 1" class="membership-message">Workspace access is ready.</p>
@@ -79,19 +82,21 @@
 </template>
 
 <script setup lang="ts">
-const { user, isConfigured, loadTenantIds, selectedTenantId } = useGptmdAuth()
-const tenantIds = ref<string[]>([])
+const { user, isConfigured, memberships, loadTenantMemberships, selectedTenantId } = useGptmdAuth()
+const tenantIds = computed(() => memberships.value.map((membership) => membership.tenantId))
+const selectedRole = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role)
 const membershipState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const membershipMessage = ref('')
 const hasSelectedWorkspace = computed(() => Boolean(selectedTenantId.value && tenantIds.value.includes(selectedTenantId.value)))
-const canBeginVisit = computed(() => !user.value || !isConfigured.value || (membershipState.value === 'ready' && hasSelectedWorkspace.value))
+const canBeginVisit = computed(() => !user.value || !isConfigured.value ||
+  (membershipState.value === 'ready' && hasSelectedWorkspace.value && selectedRole.value === 'learner'))
 
 async function loadMemberships(): Promise<void> {
   if (!user.value) return
   membershipState.value = 'loading'
   membershipMessage.value = ''
   try {
-    tenantIds.value = await loadTenantIds()
+    memberships.value = await loadTenantMemberships()
     if (selectedTenantId.value && !tenantIds.value.includes(selectedTenantId.value)) selectedTenantId.value = null
     if (tenantIds.value.length === 0) {
       membershipMessage.value = 'This account does not have an active GPTpatient workspace yet.'
@@ -99,6 +104,10 @@ async function loadMemberships(): Promise<void> {
       membershipMessage.value = 'Choose a workspace before you begin a visit.'
     } else if (tenantIds.value.length === 1) {
       selectedTenantId.value = tenantIds.value[0] ?? null
+    }
+    const role = memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role
+    if (role && role !== 'learner') {
+      membershipMessage.value = `Your workspace role is ${role === 'customer_admin' ? 'customer administrator' : 'instructor'}. Learner encounters are unavailable to this role; role-specific tools are not implemented yet.`
     }
     membershipState.value = 'ready'
   } catch {

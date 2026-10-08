@@ -113,11 +113,92 @@ replace GPTMD's existing database password.
 
 Start Supabase using its deployment's documented `docker compose up -d` flow,
 then start GPTMD and the API. Check Supabase Auth's `/settings` endpoint to
-confirm Google is enabled. Apply GPTMD's `001_auth_sessions.sql` migration to
-its application database, then provision a tenant, active membership, and
-entitlements for each approved Supabase Auth user. The Auth subject is the
-Supabase user UUID (`sub`). Entitlements default to disabled until explicitly
-provisioned.
+confirm Google is enabled. Apply GPTMD's application database migrations in
+order using the migration list below before provisioning a tenant, active
+membership, and entitlements for each approved Supabase Auth user. The Auth
+subject is the Supabase user UUID (`sub`), not the user's email. Entitlements
+default to disabled until explicitly provisioned.
+
+### Provision an approved learner
+
+Run this in `psql` against the GPTMD application database after replacing the
+workspace ID and Supabase Auth UUID. The default switches and zero quotas deny
+sessions and Responses until an operator changes them to the approved access
+and finite limits. Keep audio disabled here; enabling it also requires privacy
+approval and a finite audio-session quota under the audio policy.
+
+```sql
+\set ON_ERROR_STOP on
+\set workspace_id 'replace-with-approved-workspace-id'
+\set learner_subject_id 'replace-with-supabase-auth-user-uuid'
+\set sessions_enabled false
+\set responses_enabled false
+\set monthly_session_quota 0
+\set monthly_response_quota 0
+\set max_active_sessions 0
+\set monthly_session_quota_per_user 0
+\set monthly_response_quota_per_user 0
+\set response_quota_per_session 0
+
+BEGIN;
+
+INSERT INTO tenants (tenant_id)
+VALUES (:'workspace_id')
+ON CONFLICT (tenant_id) DO NOTHING;
+
+INSERT INTO tenant_entitlements (
+  tenant_id,
+  sessions_enabled,
+  responses_enabled,
+  monthly_session_quota,
+  monthly_response_quota,
+  max_active_sessions,
+  monthly_session_quota_per_user,
+  monthly_response_quota_per_user,
+  response_quota_per_session
+)
+VALUES (
+  :'workspace_id',
+  :sessions_enabled,
+  :responses_enabled,
+  :monthly_session_quota,
+  :monthly_response_quota,
+  :max_active_sessions,
+  :monthly_session_quota_per_user,
+  :monthly_response_quota_per_user,
+  :response_quota_per_session
+)
+ON CONFLICT (tenant_id) DO NOTHING;
+
+INSERT INTO tenant_memberships (tenant_id, subject_id, status, role)
+VALUES (:'workspace_id', :'learner_subject_id', 'active', 'learner')
+ON CONFLICT (tenant_id, subject_id) DO UPDATE SET
+  status = EXCLUDED.status,
+  role = EXCLUDED.role;
+
+COMMIT;
+
+SELECT m.tenant_id, m.subject_id, m.status, m.role,
+       e.sessions_enabled, e.responses_enabled,
+       e.monthly_session_quota, e.monthly_response_quota,
+       e.max_active_sessions, e.monthly_session_quota_per_user,
+       e.monthly_response_quota_per_user, e.response_quota_per_session,
+       e.audio_transcription_enabled, e.audio_transcription_privacy_approved,
+       e.monthly_audio_transcription_session_quota
+FROM tenant_memberships AS m
+JOIN tenant_entitlements AS e USING (tenant_id)
+WHERE m.tenant_id = :'workspace_id'
+  AND m.subject_id = :'learner_subject_id';
+```
+
+Review the returned row before enabling API access. `NULL` quota values mean
+unlimited, so keep finite approved limits for a live workspace. This procedure
+does not change entitlements already configured for a workspace, create a
+Supabase user, authenticate as that user, or enable audio. For an existing
+workspace, review its current entitlement row and use a separately reviewed
+`UPDATE tenant_entitlements` statement to change policy; do not rerun this
+bootstrap with altered values because existing settings are intentionally
+preserved.
 
 ## Sign-in and workspace behavior
 

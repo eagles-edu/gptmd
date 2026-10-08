@@ -2,7 +2,10 @@ import { createServer } from 'node:https'
 import { readFileSync } from 'node:fs'
 import { getE2ECertificate } from '../../scripts/e2e-certificate.mjs'
 
-export default async function setupPreflightAuth(): Promise<() => Promise<void>> {
+export async function startMockSupabase(
+  port = 3003,
+  allowedOrigin = 'https://localhost:3002'
+): Promise<() => Promise<void>> {
   const user = {
     id: 'a18f0de1-7b60-49b6-8eaf-19ac1e6b1c0d',
     aud: 'authenticated',
@@ -14,7 +17,7 @@ export default async function setupPreflightAuth(): Promise<() => Promise<void>>
   }
   const { key, cert } = getE2ECertificate()
   const server = createServer({ key: readFileSync(key), cert: readFileSync(cert) }, (request, response) => {
-    response.setHeader('access-control-allow-origin', 'https://localhost:3002')
+    response.setHeader('access-control-allow-origin', allowedOrigin)
     response.setHeader(
       'access-control-allow-headers',
       request.headers['access-control-request-headers'] ?? 'apikey, authorization, x-client-info, content-type'
@@ -36,10 +39,14 @@ export default async function setupPreflightAuth(): Promise<() => Promise<void>>
 
   await new Promise<void>((resolve, reject) => {
     server.once('error', reject)
-    server.listen(3003, '0.0.0.0', resolve)
+    server.listen(port, '0.0.0.0', resolve)
   })
 
   return () => new Promise<void>((resolve, reject) => {
     server.close((error) => error ? reject(error) : resolve())
   })
+}
+
+export default async function setupPreflightAuth(): Promise<() => Promise<void>> {
+  return startMockSupabase()
 }

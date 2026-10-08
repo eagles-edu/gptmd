@@ -2,13 +2,17 @@ import { z } from 'zod'
 import {
   PATIENT_SCENARIO_SCHEMA_VERSION,
   PATIENT_HISTORY_FIELDS,
+  PAIN_EPISODE_FIELDS,
+  MAX_PAIN_EPISODES,
+  MAX_PAIN_HISTORY_REFS,
   PatientScenarioProfileSchema
 } from './patient-profile.ts'
+import { LearnerPatientProfileSchema } from './patient-setup.ts'
 
 const OpaqueIdSchema = z.string().trim().min(1).max(200)
 export const ApplicationSessionIdSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/)
 const UtcTimestampSchema = z.iso.datetime({ offset: true })
-export const PATIENT_TURN_SCHEMA_VERSION = 3 as const
+export const PATIENT_TURN_SCHEMA_VERSION = 4 as const
 export const SessionVersionPinsSchema = z.object({
   promptVersion: z.string().trim().min(1).max(100),
   modelVersion: z.string().trim().min(1).max(200),
@@ -25,6 +29,9 @@ export const SessionTurnVersionPinsSchema = z.object({
 }).strict()
 export type SessionTurnVersionPins = z.infer<typeof SessionTurnVersionPinsSchema>
 const HistoryFieldSchema = z.enum(PATIENT_HISTORY_FIELDS)
+const PainEpisodeIdSchema = z.enum(['pain-1', 'pain-2'])
+const PainFieldSchema = z.enum(PAIN_EPISODE_FIELDS)
+const PainTopicSchema = z.union([z.literal('anyPain'), PainFieldSchema])
 const PatientReportedValueSchema = z.union([
   z.string().trim().min(1).max(4_000),
   z.number().finite(),
@@ -55,6 +62,30 @@ export const PatientReportedFactExpansionSchema = z.object({
 }).strict()
 
 export type PatientReportedFactExpansion = z.infer<typeof PatientReportedFactExpansionSchema>
+
+export const PatientReportedPainFactSchema = z.object({
+  factId: OpaqueIdSchema,
+  painEpisodeId: PainEpisodeIdSchema,
+  field: PainFieldSchema,
+  section: z.string().trim().min(1).max(120),
+  value: PatientReportedValueSchema,
+  source: z.literal('patient_reported'),
+  turnId: OpaqueIdSchema,
+  turnSequence: z.number().int().positive(),
+  recordedAt: UtcTimestampSchema
+}).strict()
+export type PatientReportedPainFact = z.infer<typeof PatientReportedPainFactSchema>
+
+export const PainHistoryCoverageSchema = z.object({
+  painEpisodeId: PainEpisodeIdSchema.nullable(),
+  field: PainTopicSchema
+}).strict()
+export type PainHistoryCoverage = z.infer<typeof PainHistoryCoverageSchema>
+
+export const PainDisclosureSchema = PainHistoryCoverageSchema.extend({
+  factId: OpaqueIdSchema
+}).strict()
+export type PainDisclosure = z.infer<typeof PainDisclosureSchema>
 
 export const EncounterPhaseSchema = z.enum(['history', 'assessment', 'debrief'])
 export type EncounterPhase = z.infer<typeof EncounterPhaseSchema>
@@ -97,12 +128,7 @@ export const PatientScenarioSetupResponseSchema = z.object({
   sessionId: ApplicationSessionIdSchema,
   status: z.literal('ready'),
   createdAt: UtcTimestampSchema,
-  patient: z.object({
-    fullName: z.string().trim().min(1).max(120),
-    dateOfBirth: z.iso.date(),
-    bodyType: z.enum(['average', 'heavy']),
-    reasonForVisit: z.string().trim().min(1).max(1_000)
-  }).strict(),
+  patient: LearnerPatientProfileSchema,
   versions: SessionVersionPinsSchema,
   readiness: z.object({
     profile: z.literal(true),
@@ -123,9 +149,12 @@ export const SessionTurnSchema = z.object({
   learnerMessage: z.string().trim().min(1).max(8_000),
   patientResponse: z.string().trim().min(1).max(8_000),
   patientReportedFacts: z.array(PatientReportedFactExpansionSchema).max(100),
+  patientReportedPainFacts: z.array(PatientReportedPainFactSchema).max(MAX_PAIN_EPISODES * PAIN_EPISODE_FIELDS.length),
   historyCoverage: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length),
   disclosedHistoryFields: z.array(HistoryFieldSchema).max(PATIENT_HISTORY_FIELDS.length),
   disclosedFactIds: z.array(OpaqueIdSchema).max(100),
+  painHistoryCoverage: z.array(PainHistoryCoverageSchema).max(MAX_PAIN_HISTORY_REFS),
+  painDisclosures: z.array(PainDisclosureSchema).max(MAX_PAIN_HISTORY_REFS),
   historyCoverageState: z.array(z.object({
     field: HistoryFieldSchema,
     asked: z.boolean(),
@@ -138,6 +167,14 @@ export const SessionTurnSchema = z.object({
 }).strict().superRefine((turn, context) => {
   if (turn.disclosedHistoryFields.length !== turn.disclosedFactIds.length) {
     context.addIssue({ code: 'custom', message: 'Each disclosed history field must identify its disclosed fact' })
+  }
+  const painRefKey = (ref: PainHistoryCoverage) => `${ref.painEpisodeId ?? 'none'}:${ref.field}`
+  if (new Set(turn.painHistoryCoverage.map(painRefKey)).size !== turn.painHistoryCoverage.length ||
+      new Set(turn.painDisclosures.map(painRefKey)).size !== turn.painDisclosures.length) {
+    context.addIssue({ code: 'custom', message: 'Pain coverage and disclosure references must be unique per episode and field' })
+  }
+  if (turn.painDisclosures.some((disclosure) => !turn.painHistoryCoverage.some((coverage) => painRefKey(coverage) === painRefKey(disclosure)))) {
+    context.addIssue({ code: 'custom', message: 'Pain disclosures must be included in pain history coverage' })
   }
 })
 
@@ -193,6 +230,15 @@ export const AssessmentFieldsSchema = z.object({
 }).strict()
 export type AssessmentFields = z.infer<typeof AssessmentFieldsSchema>
 
+/** In-progress learner work; unlike a submission, each field may still be empty. */
+export const AssessmentDraftFieldsSchema = z.object({
+  summary: z.string().max(4_000),
+  differential: z.string().max(4_000),
+  rationale: z.string().max(8_000),
+  plan: z.string().max(4_000)
+}).strict()
+export type AssessmentDraftFields = z.infer<typeof AssessmentDraftFieldsSchema>
+
 export const AssessmentSubmissionSchema = AssessmentFieldsSchema.extend({
   assessmentId: OpaqueIdSchema,
   sessionId: ApplicationSessionIdSchema,
@@ -200,6 +246,74 @@ export const AssessmentSubmissionSchema = AssessmentFieldsSchema.extend({
   submittedAt: UtcTimestampSchema
 }).strict()
 export type AssessmentSubmission = z.infer<typeof AssessmentSubmissionSchema>
+
+const EncounterTranscriptTurnSchema = z.object({
+  turnId: OpaqueIdSchema,
+  sequence: z.number().int().positive(),
+  acceptedAt: UtcTimestampSchema,
+  phase: EncounterPhaseSchema,
+  learnerModality: LearnerInputModalitySchema,
+  learnerMessage: z.string().trim().min(1).max(8_000),
+  patientResponse: z.string().trim().min(1).max(8_000)
+}).strict()
+
+export const LocalUtteranceKindSchema = z.enum(['repair', 'stop', 'phase_transition', 'patient_repeat'])
+export type LocalUtteranceKind = z.infer<typeof LocalUtteranceKindSchema>
+
+export const LocalUtteranceRequestSchema = z.object({
+  utteranceId: OpaqueIdSchema,
+  kind: LocalUtteranceKindSchema,
+  speaker: z.enum(['learner', 'patient']),
+  content: z.string().trim().min(1).max(8_000)
+}).strict().superRefine((utterance, context) => {
+  if ((utterance.kind === 'patient_repeat') !== (utterance.speaker === 'patient')) {
+    context.addIssue({ code: 'custom', message: 'Only a local patient repeat may be recorded as patient speech' })
+  }
+})
+export type LocalUtteranceRequest = z.infer<typeof LocalUtteranceRequestSchema>
+
+export const LocalTranscriptUtteranceSchema = LocalUtteranceRequestSchema.extend({
+  sequence: z.number().int().nonnegative(),
+  ordinal: z.number().int().positive(),
+  phase: EncounterPhaseSchema,
+  modality: z.enum(['typed', 'realtime_transcription', 'text']),
+  occurredAt: UtcTimestampSchema
+}).strict()
+export type LocalTranscriptUtterance = z.infer<typeof LocalTranscriptUtteranceSchema>
+
+const EncounterRestoreSnapshotSchema = z.object({
+  sessionId: ApplicationSessionIdSchema,
+  status: z.enum(['initializing', 'ready', 'active']),
+  createdAt: UtcTimestampSchema,
+  updatedAt: UtcTimestampSchema,
+  versions: SessionVersionPinsSchema,
+  patient: LearnerPatientProfileSchema.nullable(),
+  phase: EncounterPhaseSchema.nullable(),
+  currentTurnSequence: z.number().int().nonnegative(),
+  transcript: z.array(EncounterTranscriptTurnSchema),
+  localUtterances: z.array(LocalTranscriptUtteranceSchema),
+  assessmentDraft: z.object({
+    revision: z.number().int().positive(),
+    fields: AssessmentDraftFieldsSchema,
+    updatedAt: UtcTimestampSchema
+  }).strict().nullable(),
+  assessment: z.object({
+    assessmentId: OpaqueIdSchema,
+    fields: AssessmentFieldsSchema,
+    submittedAt: UtcTimestampSchema
+  }).strict().nullable()
+}).strict()
+
+export const AssessmentDraftResponseSchema = z.object({
+  revision: z.number().int().positive(),
+  fields: AssessmentDraftFieldsSchema,
+  updatedAt: UtcTimestampSchema
+}).strict()
+
+/** Owner-scoped current encounter projection; excludes scenario, answer key, and provider IDs. */
+export const CurrentEncounterResponseSchema = z.object({
+  encounter: EncounterRestoreSnapshotSchema.nullable()
+}).strict()
 
 /** Provider-side metering metadata carried only with the private recovery event. */
 export const ProviderUsageSampleSchema = z.object({
@@ -266,13 +380,24 @@ export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
     eventOrdinal: z.number().int().positive(),
     eventType: z.literal('disclosure'),
     occurredAt: UtcTimestampSchema,
-    payload: z.object({
-      turnId: OpaqueIdSchema,
-      turnSequence: z.number().int().positive(),
-      field: HistoryFieldSchema,
-      factId: OpaqueIdSchema,
-      source: z.enum(['scenario_seed', 'patient_reported'])
-    }).strict()
+    payload: z.union([
+      z.object({
+        turnId: OpaqueIdSchema,
+        turnSequence: z.number().int().positive(),
+        field: HistoryFieldSchema,
+        painEpisodeId: z.null(),
+        factId: OpaqueIdSchema,
+        source: z.enum(['scenario_seed', 'patient_reported'])
+      }).strict(),
+      z.object({
+        turnId: OpaqueIdSchema,
+        turnSequence: z.number().int().positive(),
+        field: PainTopicSchema,
+        painEpisodeId: PainEpisodeIdSchema.nullable(),
+        factId: OpaqueIdSchema,
+        source: z.enum(['scenario_seed', 'patient_reported'])
+      }).strict()
+    ])
   }).strict().superRefine((event, context) => {
     if (event.sessionId.length !== 43 || event.sequence !== event.payload.turnSequence) {
       context.addIssue({ code: 'custom', message: 'Disclosure-event envelope does not match its payload' })

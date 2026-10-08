@@ -8,6 +8,12 @@ import type { AuthenticatedPrincipal } from '../../services/api/src/auth.ts'
 import type { GeneratedPatientScenario, PatientScenarioVersionPins } from '../../services/api/src/patient-profile.ts'
 import type { ProviderUsageSample } from '../../services/api/src/session-contracts.ts'
 import type { PatientScenarioSetupResult, SessionRecord, SessionStore } from '../../services/api/src/session-store.ts'
+import { createRedisRequestRateLimitStore, hashRateLimitKey } from '../../services/api/src/request-rate-limit.ts'
+import {
+  TEST_LEARNER_CHART_VITAL_SIGNS,
+  TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
+  TEST_PATIENT_VITAL_SIGNS
+} from '../fixtures/patient-vital-signs.ts'
 
 const jwtSecret = 'unit-test-secret-that-is-at-least-32-bytes-long'
 
@@ -33,9 +39,9 @@ function deferred<T>() {
   return { promise, resolve }
 }
 const sessionVersions: PatientScenarioVersionPins = {
-  promptVersion: 'patient-scenario-prompt-v6',
+  promptVersion: 'patient-scenario-prompt-v10',
   modelVersion: 'gpt-6-luna',
-  schemaVersion: 5,
+  schemaVersion: 7,
   policyVersion: 'patient-scenario-policy-v3'
 }
 
@@ -49,8 +55,9 @@ function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore
     versions: sessionVersions
   }
   return {
-    getActiveTenantIds: vi.fn().mockResolvedValue(['tenant-a', 'tenant-b']),
-    getActiveMembershipRole: vi.fn().mockResolvedValue('learner'),
+    getActiveMemberships: vi.fn().mockResolvedValue([
+      { tenantId: 'tenant-a', role: 'learner' }, { tenantId: 'tenant-b', role: 'learner' }
+    ]),
     consumeQuota: vi.fn().mockResolvedValue('allowed'),
     createAudioTranscriptionGrant: vi.fn().mockResolvedValue({ grantId: 'audio-grant-test' }),
     recordAudioProviderSession: vi.fn().mockResolvedValue(undefined),
@@ -64,6 +71,7 @@ function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore
         ? record
         : null
     ),
+    getCurrentOwnedEncounter: vi.fn().mockResolvedValue(null),
     ...overrides
   }
 }
@@ -92,6 +100,7 @@ const createDependencies = (overrides: Partial<ApiDependencies> = {}): ApiDepend
   model: 'gpt-6-luna',
   jwt: { secret: jwtSecret, issuer: 'https://issuer.test', audience: 'gptmd-api' },
   sessionStore: createSessionStore(),
+  requestRateLimitStore: { increment: vi.fn().mockResolvedValue({ count: 1, ttlSeconds: 60 }) },
   ...overrides
 })
 
@@ -133,7 +142,38 @@ describe('GPTMD API integrations', () => {
     const clients = createServiceClients({})
 
     expect(clients.dependencies.model).toBe('gpt-6-luna')
+    expect(clients.dependencies.requestRateLimitLimits).toEqual({ windowSeconds: 60, perIp: 1_200, perIdentity: 300 })
+    expect(clients.dependencies.requestRateLimitStore).toBeNull()
     await clients.close()
+  })
+
+  it('loads validated shared request rate-limit settings from the API environment', async () => {
+    const clients = createServiceClients({
+      API_RATE_LIMIT_WINDOW_SECONDS: '45',
+      API_RATE_LIMIT_PER_IP: '900',
+      API_RATE_LIMIT_PER_IDENTITY: '240'
+    })
+    expect(clients.dependencies.requestRateLimitLimits).toEqual({ windowSeconds: 45, perIp: 900, perIdentity: 240 })
+    await clients.close()
+
+    expect(() => createServiceClients({ API_RATE_LIMIT_PER_IP: '0' }))
+      .toThrow('API_RATE_LIMIT_PER_IP must be an integer from 1 to 1000000')
+  })
+
+  it('runs each Redis rate-limit increment as one expiring atomic Lua operation', async () => {
+    const sendCommand = vi.fn().mockResolvedValue([3, 42])
+    const limiter = createRedisRequestRateLimitStore({ sendCommand })
+    const key = hashRateLimitKey('ip', '192.0.2.10')
+
+    await expect(limiter.increment(key, 60)).resolves.toEqual({ count: 3, ttlSeconds: 42 })
+    expect(sendCommand).toHaveBeenCalledOnce()
+    expect(sendCommand).toHaveBeenCalledWith(expect.arrayContaining([
+      'EVAL', '1', key, '60'
+    ]))
+    const command = sendCommand.mock.calls[0]?.[0]?.join(' ')
+    expect(command).toContain('redis.call(\'INCR\', KEYS[1])')
+    expect(command).toContain('redis.call(\'EXPIRE\', KEYS[1], ARGV[1])')
+    expect(key).not.toContain('192.0.2.10')
   })
 
   it('keeps liveness available while reporting unavailable dependencies in readiness', async () => {
@@ -291,7 +331,7 @@ describe('GPTMD API integrations', () => {
   })
 
   it('requires a valid signed bearer token and active tenant membership for API routes', async () => {
-    const sessionStore = createSessionStore({ getActiveMembershipRole: vi.fn().mockResolvedValue(null) })
+    const sessionStore = createSessionStore({ getActiveMemberships: vi.fn().mockResolvedValue([]) })
     const dependencies = createDependencies({ sessionStore })
     await withApi(dependencies, async (baseUrl) => {
       const missing = await fetch(`${baseUrl}/api/sessions`, { method: 'POST' })
@@ -308,20 +348,76 @@ describe('GPTMD API integrations', () => {
     })
   })
 
-  it('loads the active tenant role and denies non-learners from encounter routes', async () => {
-    const getActiveMembershipRole = vi.fn().mockResolvedValue('instructor')
-    const sessionStore = createSessionStore({ getActiveMembershipRole })
-    await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
-      const response = await fetch(`${baseUrl}/api/sessions`, {
-        method: 'POST', headers: authHeaders()
-      })
+  it.each([
+    { scope: 'client IP', perIp: 1, perIdentity: 100, tokens: [makeToken(), makeToken({ sub: 'learner-2' })] },
+    { scope: 'tenant identity', perIp: 100, perIdentity: 1, tokens: [makeToken(), makeToken()] }
+  ])('applies the shared $scope rate limit before account route work', async ({ perIp, perIdentity, tokens }) => {
+    const counts = new Map<string, number>()
+    const increment = vi.fn(async (key: string, windowSeconds: number) => {
+      const count = (counts.get(key) ?? 0) + 1
+      counts.set(key, count)
+      return { count, ttlSeconds: windowSeconds }
+    })
+    const dependencies = createDependencies({
+      requestRateLimitStore: { increment },
+      requestRateLimitLimits: { windowSeconds: 60, perIp, perIdentity }
+    })
 
-      expect(getActiveMembershipRole).toHaveBeenCalledWith('learner-1', 'tenant-a')
-      expect(response.status).toBe(403)
-      expect(await response.json()).toEqual({ error: 'Learner role is required for encounter API routes' })
+    await withApi(dependencies, async (baseUrl) => {
+      const first = await fetch(`${baseUrl}/api/account/tenants`, {
+        headers: { authorization: `Bearer ${tokens[0]}` }
+      })
+      expect(first.status).toBe(200)
+
+      const limited = await fetch(`${baseUrl}/api/account/tenants`, {
+        headers: { authorization: `Bearer ${tokens[1]}` }
+      })
+      expect(limited.status).toBe(429)
+      expect(limited.headers.get('retry-after')).toBe('60')
+      expect(await limited.json()).toEqual({ error: 'Too many requests; retry later' })
+    })
+
+    const keys = increment.mock.calls.map(([key]) => key)
+    expect(keys.some((key) => key.startsWith('gptmd:api:rate:v1:ip:'))).toBe(true)
+    expect(keys.some((key) => key.startsWith('gptmd:api:rate:v1:identity:'))).toBe(true)
+    expect(keys.join(' ')).not.toContain('192.0.2')
+    expect(keys.join(' ')).not.toContain('learner-1')
+    expect(keys.join(' ')).not.toContain('tenant-a')
+  })
+
+  it('fails closed before API route work when the shared rate-limit store is unavailable', async () => {
+    const sessionStore = createSessionStore()
+    const requestRateLimitStore = {
+      increment: vi.fn().mockRejectedValue(new Error('private Redis endpoint detail'))
+    }
+    await withApi(createDependencies({ sessionStore, requestRateLimitStore }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST', headers: authHeaders(), body: '{}'
+      })
+      expect(response.status).toBe(503)
+      expect(await response.json()).toEqual({ error: 'Request rate limiting is unavailable' })
       expect(sessionStore.createSession).not.toHaveBeenCalled()
+      expect(requestRateLimitStore.increment).toHaveBeenCalledOnce()
+      expect(JSON.stringify(requestRateLimitStore.increment.mock.calls)).not.toContain('127.0.0.1')
     })
   })
+
+  it.each(['instructor', 'customer_admin'] as const)(
+    'loads the active %s role and denies non-learners from encounter routes', async (role) => {
+      const getActiveMemberships = vi.fn().mockResolvedValue([{ tenantId: 'tenant-a', role }])
+      const sessionStore = createSessionStore({ getActiveMemberships })
+      await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/sessions`, {
+          method: 'POST', headers: authHeaders()
+        })
+
+        expect(getActiveMemberships).toHaveBeenCalledWith('learner-1')
+        expect(response.status).toBe(403)
+        expect(await response.json()).toEqual({ error: 'Learner role is required for encounter API routes' })
+        expect(sessionStore.createSession).not.toHaveBeenCalled()
+      })
+    }
+  )
 
   it('denies scenario setup when the tenant session entitlement has been revoked', async () => {
     const sessionStore = createSessionStore({ setupScenario: vi.fn().mockResolvedValue('entitlement_denied') })
@@ -448,8 +544,10 @@ describe('GPTMD API integrations', () => {
   })
 
   it('resolves Supabase identities against GPTMD memberships and rejects unlisted tenant headers', async () => {
-    const getActiveTenantIds = vi.fn().mockResolvedValue(['tenant-a', 'tenant-b'])
-    const sessionStore = createSessionStore({ getActiveTenantIds })
+    const getActiveMemberships = vi.fn().mockResolvedValue([
+      { tenantId: 'tenant-a', role: 'instructor' }, { tenantId: 'tenant-b', role: 'learner' }
+    ])
+    const sessionStore = createSessionStore({ getActiveMemberships })
     const dependencies = createDependencies({ sessionStore })
     await withApi(dependencies, async (baseUrl) => {
       const token = makeToken({ tenant_id: undefined })
@@ -457,7 +555,9 @@ describe('GPTMD API integrations', () => {
         headers: { authorization: `Bearer ${token}` }
       })
       expect(tenants.status).toBe(200)
-      expect(await tenants.json()).toEqual({ tenantIds: ['tenant-a', 'tenant-b'] })
+      expect(await tenants.json()).toEqual({ memberships: [
+        { tenantId: 'tenant-a', role: 'instructor' }, { tenantId: 'tenant-b', role: 'learner' }
+      ] })
 
       const missingSelection = await fetch(`${baseUrl}/api/sessions`, {
         method: 'POST', headers: { authorization: `Bearer ${token}` }
@@ -484,7 +584,7 @@ describe('GPTMD API integrations', () => {
 
   it('selects a sole membership automatically and permits only configured browser origins', async () => {
     const sessionStore = createSessionStore({
-      getActiveTenantIds: vi.fn().mockResolvedValue(['tenant-only'])
+      getActiveMemberships: vi.fn().mockResolvedValue([{ tenantId: 'tenant-only', role: 'learner' }])
     })
     const dependencies = createDependencies({
       sessionStore,
@@ -493,9 +593,13 @@ describe('GPTMD API integrations', () => {
     await withApi(dependencies, async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/sessions`, {
         method: 'POST',
-        headers: { authorization: `Bearer ${makeToken({ tenant_id: undefined })}` }
+        headers: {
+          authorization: `Bearer ${makeToken({ tenant_id: undefined })}`,
+          origin: 'https://gptmd.example.test'
+        }
       })
       expect(response.status).toBe(201)
+      expect(response.headers.get('access-control-allow-origin')).toBe('https://gptmd.example.test')
       expect(sessionStore.createSession).toHaveBeenCalledWith(
         { subjectId: 'learner-1', tenantId: 'tenant-only', role: 'learner' },
         sessionVersions
@@ -518,6 +622,41 @@ describe('GPTMD API integrations', () => {
       })
       expect(rejected.status).toBe(403)
       expect(rejected.headers.get('access-control-allow-origin')).toBeNull()
+
+      const createsBeforeRejectedRequest = sessionStore.createSession.mock.calls.length
+      const rejectedRequest = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${makeToken({ tenant_id: undefined })}`,
+          origin: 'https://other.example.test',
+          'content-type': 'application/json'
+        },
+        body: '{}'
+      })
+      expect(rejectedRequest.status).toBe(403)
+      expect(await rejectedRequest.json()).toEqual({ error: 'Origin is not allowed' })
+      expect(sessionStore.createSession).toHaveBeenCalledTimes(createsBeforeRejectedRequest)
+    })
+  })
+
+  it('rejects oversized and malformed JSON with bounded responses', async () => {
+    await withApi(createDependencies(), async (baseUrl) => {
+      const oversized = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ padding: 'x'.repeat(1_048_576) })
+      })
+      expect(oversized.status).toBe(413)
+      expect(oversized.headers.get('content-type')).toContain('application/json')
+      expect(await oversized.json()).toEqual({ error: 'Request body exceeds the 1 MB limit' })
+
+      const malformed = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{"unterminated":'
+      })
+      expect(malformed.status).toBe(400)
+      expect(await malformed.json()).toEqual({ error: 'Request body must contain valid JSON' })
     })
   })
 
@@ -575,7 +714,11 @@ describe('GPTMD API integrations', () => {
         bodyType: 'average',
         reasonForVisit: 'Pelvic pain',
         diagnosis: 'Endometriosis',
+        painHistoryStatus: 'absent',
+        painEpisodes: [],
         history: [],
+        vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+        physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
         currentPregnancyStatus: 'unknown',
         currentMenopausalStatus: 'unknown',
         patientBeliefs: [],
@@ -600,7 +743,8 @@ describe('GPTMD API integrations', () => {
         fullName: 'Ari Nguyen',
         dateOfBirth: '1990-01-01',
         bodyType: 'average',
-        reasonForVisit: 'Pelvic pain'
+        reasonForVisit: 'Pelvic pain',
+        vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS
       },
       versions: sessionVersions,
       readiness: { profile: true, redis: true, conversation: true }
@@ -677,10 +821,13 @@ describe('GPTMD API integrations', () => {
       const duplicateBody = await duplicate.json()
       expect(first.status).toBe(200)
       expect(duplicate.status).toBe(200)
-      expect(first.headers.get('server-timing')).toMatch(/^setup_queue_wait;dur=\d+\.\d{3}(, |$)/)
-      expect(first.headers.get('server-timing')).toContain('responses_first_token;dur=11.000')
-      expect(first.headers.get('server-timing')).toContain('responses_completion;dur=22.000')
-      expect(duplicate.headers.get('server-timing')).toMatch(/^setup_queue_wait;dur=\d+\.\d{3}$/)
+      const timingHeaders = [first.headers.get('server-timing'), duplicate.headers.get('server-timing')]
+      const generatedResponseTimings = timingHeaders.filter((timing) => timing?.includes('responses_first_token;dur=11.000'))
+      const storedResponseTimings = timingHeaders.filter((timing) => !timing?.includes('responses_first_token;dur=11.000'))
+      expect(generatedResponseTimings).toHaveLength(1)
+      expect(generatedResponseTimings[0]).toContain('responses_completion;dur=22.000')
+      expect(storedResponseTimings).toHaveLength(1)
+      expect(storedResponseTimings[0]).toMatch(/^setup_queue_wait;dur=\d+\.\d{3}$/)
       expect(firstBody).toEqual(duplicateBody)
       expect(firstBody.patient).not.toHaveProperty('diagnosis')
       expect(firstBody).not.toHaveProperty('scenarioId')

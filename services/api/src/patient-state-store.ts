@@ -60,6 +60,8 @@ export type PhaseChangeResult = 'accepted' | 'duplicate' | 'conflict' | 'missing
 export type AssessmentCommitResult = 'accepted' | 'duplicate' | 'conflict' | 'missing_state' | 'not_ready'
 
 export interface PatientStateStore {
+  rememberOwnedSession(tenantId: string, subjectId: string, sessionId: string): Promise<void>
+  findOwnedSession(tenantId: string, subjectId: string): Promise<string | null>
   initialize(sessionId: string, patientProfileId: string): Promise<void>
   saveReady(state: ReadyPatientState): Promise<void>
   read(sessionId: string): Promise<LivePatientState | null>
@@ -237,6 +239,13 @@ if sessionJson then
   if session.sessionId ~= ARGV[1] or session.patientProfileId ~= ARGV[2] then
     return redis.error_reply('Redis session binding mismatch')
   end
+  if type(session.state) == 'table' and (
+    tonumber(session.state.currentTurnSequence or 0) > 0 or
+    session.state.phase ~= 'history' or
+    session.state.status == 'completed' or session.state.status == 'cancelled'
+  ) then
+    return 'preserved_live'
+  end
 end
 if patientJson then
   local patient = cjson.decode(patientJson)
@@ -299,6 +308,8 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
 
   const sessionKey = (sessionId: string) => `gptmd:session:${sessionId}`
   const patientKey = (patientProfileId: string) => `gptmd:patient:${patientProfileId}`
+  const ownerSessionKey = (tenantId: string, subjectId: string) =>
+    `gptmd:owner-session:${createHash('sha256').update(`${tenantId}\0${subjectId}`).digest('hex')}`
   const retryKey = (sessionId: string) => `gptmd:retries:${sessionId}`
   const turnLockKey = (sessionId: string) => `gptmd:turn-lock:${sessionId}`
   const streamKey = 'gptmd:session-events'
@@ -310,6 +321,17 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
   }
 
   return {
+    async rememberOwnedSession(tenantId, subjectId, sessionId) {
+      await ensureConnected()
+      await client.sendCommand(['SET', ownerSessionKey(tenantId, subjectId), sessionId])
+    },
+
+    async findOwnedSession(tenantId, subjectId) {
+      await ensureConnected()
+      const value = await client.sendCommand(['GET', ownerSessionKey(tenantId, subjectId)])
+      return typeof value === 'string' ? value : null
+    },
+
     async initialize(sessionId, patientProfileId) {
       await ensureConnected()
       const binding: SessionBinding = { sessionId, patientProfileId, status: 'initializing', state: null }
@@ -351,7 +373,9 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
         'EVAL', SAVE_READY_SCRIPT, '2', sessionKey(input.sessionId), patientKey(input.patientProfileId),
         input.sessionId, input.patientProfileId, JSON.stringify(binding), JSON.stringify(validatedPatient)
       ])
-      if (result !== 'OK') throw new Error('Redis could not commit the ready patient state')
+      if (result !== 'OK' && result !== 'preserved_live') {
+        throw new Error('Redis could not commit the ready patient state')
+      }
     },
 
     async read(sessionId) {
@@ -427,11 +451,18 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
         eventOrdinal: 0,
         eventType: 'accepted_turn', occurredAt: turn.acceptedAt, providerUsage, payload: turn
       }
-      const disclosureEvents = turn.disclosedHistoryFields.map((field, index) => {
-        const factId = turn.disclosedFactIds[index]
+      const allDisclosures = [
+        ...turn.disclosedHistoryFields.map((field, index) => ({
+          field,
+          painEpisodeId: null,
+          factId: turn.disclosedFactIds[index]
+        })),
+        ...turn.painDisclosures
+      ]
+      const disclosureEvents = allDisclosures.map(({ field, painEpisodeId, factId }, index) => {
         if (!factId) throw new Error('A disclosed history field is missing its fact ID')
         const eventDigest = createHash('sha256')
-          .update(`${turn.turnId}\0${field}\0${factId}`)
+          .update(`${turn.turnId}\0${painEpisodeId ?? ''}\0${field}\0${factId}`)
           .digest('hex')
         return {
           eventId: `disclosure_${eventDigest}`,
@@ -444,6 +475,7 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
             turnId: turn.turnId,
             turnSequence: turn.sequence,
             field,
+            painEpisodeId,
             factId,
             source: factId.startsWith('seed:') ? 'scenario_seed' as const : 'patient_reported' as const
           }
@@ -478,7 +510,8 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       if (current.state.phase !== 'history' || current.state.currentTurnSequence < 1 ||
           current.state.status === 'completed' || current.state.status === 'cancelled') return 'not_ready'
       const lastTurn = current.acceptedTurns.at(-1)
-      const expectedOrdinal = (lastTurn?.disclosedHistoryFields.length ?? 0) + 1
+      const expectedOrdinal = (lastTurn?.disclosedHistoryFields.length ?? 0) +
+        (lastTurn?.painDisclosures.length ?? 0) + 1
       if (event.sequence !== current.state.currentTurnSequence || event.eventOrdinal !== expectedOrdinal) return 'conflict'
       const result = asStringArray(await measureSessionCommit('phase', recordTiming, () => client.sendCommand([
         'EVAL', COMMIT_PHASE_CHANGE_SCRIPT, '3', sessionKey(event.sessionId),
@@ -504,7 +537,8 @@ export function createRedisPatientStateStore(client: RedisJsonClient): PatientSt
       if (current.state.phase !== 'assessment' || current.state.status === 'completed' ||
           current.state.status === 'cancelled') return 'not_ready'
       const lastTurn = current.acceptedTurns.at(-1)
-      const expectedOrdinal = (lastTurn?.disclosedHistoryFields.length ?? 0) + 2
+      const expectedOrdinal = (lastTurn?.disclosedHistoryFields.length ?? 0) +
+        (lastTurn?.painDisclosures.length ?? 0) + 2
       if (event.sequence !== current.state.currentTurnSequence || event.eventOrdinal !== expectedOrdinal) return 'conflict'
       const result = asStringArray(await measureSessionCommit('assessment', recordTiming, () => client.sendCommand([
         'EVAL', COMMIT_ASSESSMENT_SCRIPT, '3', sessionKey(event.sessionId),

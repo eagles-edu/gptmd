@@ -10,7 +10,7 @@
     },
     "schemaVersion": {
       "type": "number",
-      "const": 5
+      "const": 7
     },
     "createdAt": {
       "type": "string",
@@ -58,8 +58,116 @@
             }
           ]
         },
+        "painHistoryStatus": {
+          "type": "string",
+          "enum": [
+            "present",
+            "absent"
+          ]
+        },
+        "painEpisodes": {
+          "maxItems": 2,
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "episodeId": {
+                "type": "string",
+                "enum": [
+                  "pain-1",
+                  "pain-2"
+                ]
+              },
+              "patientDescription": {
+                "type": "string",
+                "minLength": 1,
+                "maxLength": 120
+              },
+              "currentStatus": {
+                "type": "string",
+                "enum": [
+                  "current",
+                  "intermittent",
+                  "past"
+                ]
+              },
+              "details": {
+                "minItems": 7,
+                "maxItems": 7,
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "whatProvokesPalliatesPain",
+                        "painQuality",
+                        "painLocationRadiationWhere",
+                        "painSeverity0-10",
+                        "timePainOnset",
+                        "constantIntermittentPain",
+                        "durationPain"
+                      ]
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "known",
+                        "negative",
+                        "unknown",
+                        "not_applicable"
+                      ]
+                    },
+                    "value": {
+                      "anyOf": [
+                        {
+                          "anyOf": [
+                            {
+                              "type": "string",
+                              "minLength": 1,
+                              "maxLength": 4000
+                            },
+                            {
+                              "type": "number"
+                            },
+                            {
+                              "maxItems": 50,
+                              "type": "array",
+                              "items": {
+                                "type": "string",
+                                "minLength": 1,
+                                "maxLength": 500
+                              }
+                            }
+                          ]
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "status",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "required": [
+              "episodeId",
+              "patientDescription",
+              "currentStatus",
+              "details"
+            ],
+            "additionalProperties": false
+          }
+        },
         "history": {
-          "maxItems": 69,
+          "maxItems": 61,
           "type": "array",
           "items": {
             "type": "object",
@@ -70,14 +178,6 @@
                   "lastMenstrualPeriod",
                   "typicalMenstrualPeriodDescription",
                   "dysmenorrheaHistory",
-                  "anyPain",
-                  "whatProvokesPalliatesPain",
-                  "painQuality",
-                  "painLocationRadiationWhere",
-                  "painSeverity0-10",
-                  "timePainOnset",
-                  "constantIntermittentPain",
-                  "durationPain",
                   "patientConcern",
                   "medicalHistory",
                   "lastPelvicExam",
@@ -184,6 +284,289 @@
             "additionalProperties": false
           }
         },
+        "vitalSigns": {
+          "type": "object",
+          "properties": {
+            "currentPulse": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "pulseIrregular": {
+              "type": "boolean"
+            },
+            "pulseQuality": {
+              "type": "string",
+              "enum": [
+                "normal",
+                "thready",
+                "pounding",
+                "weak",
+                "absent_radial",
+                "absent_carotid",
+                "absent_radial_and_carotid"
+              ]
+            },
+            "bpSitting": {
+              "type": "object",
+              "properties": {
+                "systolic": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 300
+                },
+                "diastolic": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 200
+                }
+              },
+              "required": [
+                "systolic",
+                "diastolic"
+              ],
+              "additionalProperties": false
+            },
+            "bpOrthostaticSupine": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "systolic": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 300
+                    },
+                    "diastolic": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 200
+                    }
+                  },
+                  "required": [
+                    "systolic",
+                    "diastolic"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "respiratoryRate": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "axillaryTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "oralTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "analTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dermalTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "auralTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "currentPulse",
+            "pulseIrregular",
+            "pulseQuality",
+            "bpSitting",
+            "bpOrthostaticSupine",
+            "respiratoryRate",
+            "axillaryTemp",
+            "oralTemp",
+            "analTemp",
+            "dermalTemp",
+            "auralTemp"
+          ],
+          "additionalProperties": false
+        },
+        "physicalExamFindings": {
+          "type": "object",
+          "properties": {
+            "lungAuscultation": {
+              "type": "object",
+              "properties": {
+                "breathSounds": {
+                  "minItems": 1,
+                  "maxItems": 5,
+                  "type": "array",
+                  "items": {
+                    "type": "string",
+                    "enum": [
+                      "normal",
+                      "wheeze",
+                      "fine_rales",
+                      "coarse_rales",
+                      "rhonchi"
+                    ]
+                  }
+                },
+                "ralesDistribution": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "enum": [
+                        "basilar",
+                        "diffuse"
+                      ]
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "rhonchiSeverity": {
+                  "type": "string",
+                  "enum": [
+                    "none",
+                    "mild",
+                    "moderate",
+                    "marked",
+                    "critical"
+                  ]
+                },
+                "effectOfCoughing": {
+                  "type": "string",
+                  "enum": [
+                    "clears",
+                    "partially_clears",
+                    "unchanged",
+                    "worsens",
+                    "not_assessed"
+                  ]
+                },
+                "accessoryMuscleUse": {
+                  "type": "boolean"
+                },
+                "postureTolerance": {
+                  "type": "string",
+                  "enum": [
+                    "tolerates_supine",
+                    "prefers_upright",
+                    "unable_to_tolerate_supine",
+                    "not_assessed"
+                  ]
+                }
+              },
+              "required": [
+                "breathSounds",
+                "ralesDistribution",
+                "rhonchiSeverity",
+                "effectOfCoughing",
+                "accessoryMuscleUse",
+                "postureTolerance"
+              ],
+              "additionalProperties": false
+            },
+            "skinLipsSclera": {
+              "type": "object",
+              "properties": {
+                "skin": {
+                  "type": "string",
+                  "enum": [
+                    "normal",
+                    "pale",
+                    "cyanotic",
+                    "pink",
+                    "red",
+                    "yellow"
+                  ]
+                },
+                "lips": {
+                  "type": "string",
+                  "enum": [
+                    "normal",
+                    "pale",
+                    "cyanotic",
+                    "pink",
+                    "red"
+                  ]
+                },
+                "sclera": {
+                  "type": "string",
+                  "enum": [
+                    "normal",
+                    "white",
+                    "red",
+                    "yellow"
+                  ]
+                }
+              },
+              "required": [
+                "skin",
+                "lips",
+                "sclera"
+              ],
+              "additionalProperties": false
+            },
+            "skinBlanche": {
+              "type": "number",
+              "minimum": 0,
+              "maximum": 3
+            }
+          },
+          "required": [
+            "lungAuscultation",
+            "skinLipsSclera",
+            "skinBlanche"
+          ],
+          "additionalProperties": false
+        },
         "currentPregnancyStatus": {
           "type": "string",
           "enum": [
@@ -287,7 +670,11 @@
         "bodyType",
         "reasonForVisit",
         "diagnosis",
+        "painHistoryStatus",
+        "painEpisodes",
         "history",
+        "vitalSigns",
+        "physicalExamFindings",
         "currentPregnancyStatus",
         "currentMenopausalStatus",
         "patientBeliefs",

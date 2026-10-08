@@ -34,13 +34,14 @@ a05 -> i01
 i01 -> i02
 i01 -> i03
 i01 -> i04
-i01 -> i05 -> i06 -> i07 -> i08 -> a06 -> a07
+i01 -> i05 -> a06 -> a07
 a07 -> a08: denied
 a07 -> a09: allowed
 a09 -> a10
 a10 -> a11: quota exceeded
 a10 -> a12: capacity available
-a12 -> a13 -> a14
+a12 -> a13
+a13 -> i09
 a14 -> a15 -> a16
 a15 -> a17
 
@@ -73,24 +74,25 @@ s25: Mark server setup ready; pin model · mode · policy versions { shape: rect
 s26: Derive the five setup variables from the validated full profile in application code { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i09: Allocate opaque per-visit ppid; bind it to authenticated sid { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i10: Create Redis JSON session mapping and initializing patient-profile receptacle { shape: cylinder; style.fill: "#DDEFEA"; style.stroke: "#175A50"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
-i11: Confirm client preflight and Redis reservation before setup-generation command { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i11: Confirm Redis profile receptacle initialized before generation { shape: diamond; style.fill: "#FFF0C2"; style.stroke: "#77520A"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i12: Resolve the same server-held Conversation ID from sid + ppid for every later turn { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i13: Return name, DOB, body type, and reason for visit without diagnosis; display name, DOB, and reason only { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 i14: Select portrait folder from derived age band/body type and preload selected assets { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
-i15: Show amber while required work is pending; show green and enable Enter Room only when ready { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
+i15: Keep Enter Room disabled until setup, portrait, and preflight are ready; show amber during voice connection and green when ready { shape: rectangle; style.fill: "#E8F0FC"; style.stroke: "#244C78"; style.font-color: "#14243A"; style.font-size: 68; style.stroke-width: 2 }
 s01 -> s02 -> s03
 s03 -> s04: setup already committed
 s03 -> s05: new setup
 s05 -> s06
 s06 -> s07: saturated / timed out
-s06 -> s08: capacity available
-s08 -> i09 -> i10 -> i11 -> s23 -> s09 -> s10 -> s11 -> s12 -> s13 -> s14 -> s15 -> s16 -> s17 -> s18
+s06 -> i10: capacity available
+i10 -> i11 -> s08 -> s23 -> s09 -> s10 -> s11 -> s12 -> s13 -> s14 -> s15 -> s16 -> s17 -> s18
 s19 -> s24: coherent case
-s24 -> s26 -> s22 -> s25 -> i13 -> i14 -> i15
+s24 -> s26 -> s22 -> s25 -> i13 -> i14 -> i06 -> i07 -> i08 -> i15
 s24 -> i12
 s18 -> s19: valid shape
 s18 -> s20: invalid; retry allowed
 s18 -> s21: retries exhausted
 s19 -> s20: inconsistent; retry allowed
 s19 -> s21: retries exhausted
+i09 -> s01
 s20 -> s23: discard invalid Conversation; create fresh retry context

@@ -40,13 +40,120 @@
           "type": "string",
           "minLength": 1,
           "maxLength": 1000
+        },
+        "vitalSigns": {
+          "type": "object",
+          "properties": {
+            "currentPulse": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 300
+            },
+            "bpSitting": {
+              "type": "object",
+              "properties": {
+                "systolic": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 300
+                },
+                "diastolic": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 200
+                }
+              },
+              "required": [
+                "systolic",
+                "diastolic"
+              ],
+              "additionalProperties": false
+            },
+            "respiratoryRate": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 100
+            },
+            "axillaryTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "oralTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "analTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "dermalTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "auralTemp": {
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 25,
+                  "maximum": 45
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "currentPulse",
+            "bpSitting",
+            "respiratoryRate",
+            "axillaryTemp",
+            "oralTemp",
+            "analTemp",
+            "dermalTemp",
+            "auralTemp"
+          ],
+          "additionalProperties": false
         }
       },
       "required": [
         "fullName",
         "dateOfBirth",
         "bodyType",
-        "reasonForVisit"
+        "reasonForVisit",
+        "vitalSigns"
       ],
       "additionalProperties": false
     },
@@ -65,7 +172,7 @@
         },
         "schemaVersion": {
           "type": "number",
-          "const": 5
+          "const": 7
         },
         "policyVersion": {
           "type": "string",

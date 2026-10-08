@@ -40,6 +40,9 @@ be changed with `NUXT_PUBLIC_API_BASE`.
 | `npm run test` | Runs the Vitest suite once. |
 | `npm run test:watch` | Starts Vitest in watch mode for interactive development. |
 | `npm run test:e2e` | Runs the Playwright end-to-end test suite. |
+| `npm run test:e2e:mobileviewer` | Checks responsive layout and primary navigation at MobileViewer device viewport sizes in Chromium. See the [mobile device review guide](mobile-device-testing.md) for a manual iframe preview step and its limits. |
+| `npm run test:e2e:opera` | Runs the main and encounter-preflight E2E suites in installed Opera; set `OPERA_EXECUTABLE_PATH` if the executable is not `/usr/bin/opera`. |
+| `npm run verify:live-session-loop -- --run-live` | Makes billable OpenAI scenario-setup and first-turn requests through real Express using a disposable PostgreSQL database and an empty non-default Redis database; prints privacy-safe checks and cleans up the provider Conversation and test data. Requires loopback storage URLs and the existing `.env` OpenAI key. |
 | `npm run validate:html` | Runs `html-validate` on Vue components under `app/`. |
 
 ## Git update helper

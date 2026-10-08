@@ -1,4 +1,10 @@
-import express, { type Express } from 'express'
+import express, { type ErrorRequestHandler, type Express } from 'express'
+import {
+  DEFAULT_REQUEST_RATE_LIMITS,
+  hashRateLimitKey,
+  type RequestRateLimitLimits,
+  type RequestRateLimitStore
+} from './request-rate-limit.ts'
 import { isJwtConfigurationReady, verifyAccessToken, type JwtConfiguration } from './auth.ts'
 import {
   BoundedSetupQueue,
@@ -22,8 +28,13 @@ import {
   type PatientScenarioVersionPins
 } from './patient-profile.ts'
 import {
+  AssessmentDraftFieldsSchema,
+  AssessmentDraftResponseSchema,
   AssessmentFieldsSchema,
+  CurrentEncounterResponseSchema,
   LearnerInputModalitySchema,
+  LocalTranscriptUtteranceSchema,
+  LocalUtteranceRequestSchema,
   PatientScenarioSetupResponseSchema,
   SessionCreatedResponseSchema,
   type ProviderUsageSample
@@ -73,6 +84,8 @@ export interface ApiDependencies {
   providerCapacityLimits?: ProviderCapacityLimits
   recordSessionCommitTiming?: SessionCommitTimingRecorder
   allowedOrigins?: string[]
+  requestRateLimitStore: RequestRateLimitStore | null
+  requestRateLimitLimits?: RequestRateLimitLimits
 }
 
 const validInput = (value: unknown): value is string =>
@@ -84,25 +97,51 @@ export function createApiApp(dependencies: ApiDependencies): Express {
   const providerCapacity = new BoundedProviderCapacity(
     dependencies.providerCapacityLimits ?? DEFAULT_PROVIDER_CAPACITY_LIMITS
   )
+  const requestRateLimits = dependencies.requestRateLimitLimits ?? DEFAULT_REQUEST_RATE_LIMITS
   app.disable('x-powered-by')
   app.set('trust proxy', 1)
-  app.use(express.json({ limit: '1mb' }))
   app.use((request, response, next) => {
     const origin = request.header('origin')
     const allowed = origin && dependencies.allowedOrigins?.includes(origin)
+    if (origin && !allowed) {
+      if (request.method === 'OPTIONS') response.sendStatus(403)
+      else response.status(403).json({ error: 'Origin is not allowed' })
+      return
+    }
     if (allowed && origin) {
       response.setHeader('Access-Control-Allow-Origin', origin)
-      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS')
+      response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
       response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, X-GPTMD-Tenant-ID')
       response.setHeader('Access-Control-Expose-Headers', 'Server-Timing')
       response.setHeader('Vary', 'Origin')
     }
-    if (request.method === 'OPTIONS') {
-      response.sendStatus(allowed ? 204 : origin ? 403 : 204)
-      return
-    }
     next()
   })
+  app.use('/api', async (request, response, next) => {
+    const rateLimitStore = dependencies.requestRateLimitStore
+    if (!rateLimitStore) {
+      response.status(503).json({ error: 'Request rate limiting is unavailable' })
+      return
+    }
+    const clientAddress = request.ip || request.socket.remoteAddress || 'unknown'
+    try {
+      const allowed = await applyRequestRateLimit(
+        rateLimitStore,
+        hashRateLimitKey('ip', clientAddress),
+        requestRateLimits.perIp,
+        requestRateLimits,
+        response
+      )
+      if (allowed) next()
+    } catch {
+      response.status(503).json({ error: 'Request rate limiting is unavailable' })
+    }
+  })
+  app.use((request, response, next) => {
+    if (request.method === 'OPTIONS') response.sendStatus(204)
+    else next()
+  })
+  app.use(express.json({ limit: '1mb' }))
 
   app.use('/api', async (request, response, next) => {
     if (!dependencies.sessionStore || !isJwtConfigurationReady(dependencies.jwt)) {
@@ -117,33 +156,50 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
+      const rateLimitStore = dependencies.requestRateLimitStore
+      if (!rateLimitStore) {
+        response.status(503).json({ error: 'Request rate limiting is unavailable' })
+        return
+      }
+      const allowed = await applyRequestRateLimit(
+        rateLimitStore,
+        hashRateLimitKey(
+          'identity',
+          `${request.header('x-gptmd-tenant-id') ?? identity.tenantId ?? ''}\u0000${identity.subjectId}`
+        ),
+        requestRateLimits.perIdentity,
+        requestRateLimits,
+        response
+      )
+      if (!allowed) return
       if (request.method === 'GET' && request.path === '/account/tenants') {
         request.identity = identity
         next()
         return
       }
-      const memberships = await dependencies.sessionStore.getActiveTenantIds(identity.subjectId)
+      const memberships = await dependencies.sessionStore.getActiveMemberships(identity.subjectId)
       const requestedTenant = request.header('x-gptmd-tenant-id') ?? identity.tenantId
-      const tenantId = requestedTenant ?? (memberships.length === 1 ? memberships[0] : undefined)
+      const selectedMembership = requestedTenant
+        ? memberships.find((membership) => membership.tenantId === requestedTenant)
+        : memberships.length === 1 ? memberships[0] : undefined
       if (memberships.length === 0) {
         response.status(403).json({ error: 'Active tenant membership is required' })
         return
       }
-      if (!tenantId && memberships.length > 1) {
+      if (!selectedMembership && memberships.length > 1 && !requestedTenant) {
         response.status(409).json({ error: 'Choose an active GPTMD tenant before continuing' })
         return
       }
-      if (!tenantId || !memberships.includes(tenantId)) {
+      if (!selectedMembership) {
         response.status(403).json({ error: 'Active tenant membership is required' })
         return
       }
-      const role = await dependencies.sessionStore.getActiveMembershipRole(identity.subjectId, tenantId)
-      if (!role) {
-        response.status(403).json({ error: 'Active tenant membership is required' })
-        return
+      const principal = {
+        subjectId: identity.subjectId,
+        tenantId: selectedMembership.tenantId,
+        role: selectedMembership.role
       }
-      const principal = { subjectId: identity.subjectId, tenantId, role }
-      if (role !== 'learner') {
+      if (principal.role !== 'learner') {
         response.status(403).json({ error: 'Learner role is required for encounter API routes' })
         return
       }
@@ -165,7 +221,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
-      response.json({ tenantIds: await dependencies.sessionStore.getActiveTenantIds(identity.subjectId) })
+      response.json({ memberships: await dependencies.sessionStore.getActiveMemberships(identity.subjectId) })
     } catch {
       response.status(503).json({ error: 'Account service is unavailable' })
     }
@@ -327,6 +383,21 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.status(201).json(SessionCreatedResponseSchema.parse(result))
     } catch {
       response.status(503).json({ error: 'Session service is unavailable' })
+    }
+  })
+
+  app.get('/api/encounters/current', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    try {
+      const encounter = await store.getCurrentOwnedEncounter(principal)
+      response.json(CurrentEncounterResponseSchema.parse({ encounter }))
+    } catch {
+      response.status(503).json({ error: 'Current encounter could not be restored' })
     }
   })
 
@@ -498,6 +569,90 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
   })
 
+  app.post('/api/sessions/:sessionId/local-utterances', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    const utterance = LocalUtteranceRequestSchema.safeParse(request.body)
+    if (!utterance.success) {
+      response.status(400).json({ error: 'A valid local transcript utterance is required' })
+      return
+    }
+    try {
+      const result = await store.recordLocalUtterance(principal, sessionId, utterance.data)
+      if (typeof result === 'object') {
+        response.json(LocalTranscriptUtteranceSchema.parse(result))
+      } else if (result === 'not_found') {
+        response.status(404).json({ error: 'Session not found' })
+      } else if (result === 'not_ready') {
+        response.status(409).json({ error: 'The encounter is not ready to save a local transcript utterance' })
+      } else if (result === 'turn_in_progress') {
+        response.status(409).json({ error: 'Another action is being processed for this session' })
+      } else if (result === 'phase_conflict') {
+        response.status(409).json({ error: 'Local voice repair is only available during history taking' })
+      } else {
+        response.status(503).json({ error: 'Transcript storage is unavailable' })
+      }
+    } catch {
+      response.status(503).json({ error: 'Local transcript utterance could not be saved' })
+    }
+  })
+
+  app.put('/api/sessions/:sessionId/assessment-draft', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    const revision = request.body?.revision
+    if (!Number.isSafeInteger(revision) || revision < 1) {
+      response.status(400).json({ error: 'A positive draft revision is required' })
+      return
+    }
+    const fields = AssessmentDraftFieldsSchema.safeParse({
+      summary: request.body?.summary,
+      differential: request.body?.differential,
+      rationale: request.body?.rationale,
+      plan: request.body?.plan
+    })
+    if (!fields.success) {
+      response.status(400).json({ error: 'Assessment draft fields exceed their allowed lengths' })
+      return
+    }
+    try {
+      const result = await store.saveAssessmentDraft(principal, sessionId, revision, fields.data)
+      if (typeof result === 'object') {
+        response.json(AssessmentDraftResponseSchema.parse(result))
+      } else if (result === 'not_found') {
+        response.status(404).json({ error: 'Session not found' })
+      } else if (result === 'not_ready') {
+        response.status(409).json({ error: 'Begin the assessment phase before saving a draft' })
+      } else if (result === 'turn_in_progress') {
+        response.status(409).json({ error: 'Another action is being processed for this session' })
+      } else if (result === 'phase_conflict') {
+        response.status(409).json({ error: 'The assessment is already submitted or this session is no longer editable' })
+      } else {
+        response.status(503).json({ error: 'Assessment draft storage is unavailable' })
+      }
+    } catch {
+      response.status(503).json({ error: 'Assessment draft could not be saved' })
+    }
+  })
+
   app.post('/api/sessions/:sessionId/assessment', async (request, response) => {
     const principal = request.principal
     const store = dependencies.sessionStore
@@ -585,6 +740,22 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
   })
 
+  const requestErrorHandler: ErrorRequestHandler = (error, _request, response, _next) => {
+    const type = typeof error === 'object' && error !== null && 'type' in error
+      ? error.type
+      : undefined
+    if (type === 'entity.too.large') {
+      response.status(413).json({ error: 'Request body exceeds the 1 MB limit' })
+      return
+    }
+    if (type === 'entity.parse.failed') {
+      response.status(400).json({ error: 'Request body must contain valid JSON' })
+      return
+    }
+    response.status(500).json({ error: 'Internal server error' })
+  }
+  app.use(requestErrorHandler)
+
   return app
 }
 
@@ -598,6 +769,25 @@ function quotaResponse(result: StoreResult, response: import('express').Response
     response.status(429).json({ error: 'Tenant usage quota exceeded' })
   }
   return true
+}
+
+async function applyRequestRateLimit(
+  store: RequestRateLimitStore,
+  key: string,
+  maximum: number,
+  limits: RequestRateLimitLimits,
+  response: import('express').Response
+): Promise<boolean> {
+  const counter = await store.increment(key, limits.windowSeconds)
+  if (!Number.isSafeInteger(counter.count) || counter.count < 1 ||
+      !Number.isSafeInteger(counter.ttlSeconds) || counter.ttlSeconds < 0) {
+    throw new Error('Request rate limiter returned an invalid counter')
+  }
+  if (counter.count <= maximum) return true
+  const retryAfterSeconds = Math.max(1, counter.ttlSeconds)
+  response.setHeader('Retry-After', String(retryAfterSeconds))
+  response.status(429).json({ error: 'Too many requests; retry later' })
+  return false
 }
 
 function appendServerTiming(response: import('express').Response, name: string, durationMs: number): void {

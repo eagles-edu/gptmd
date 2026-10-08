@@ -41,10 +41,13 @@
         <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><rect x="3" y="5" width="18" height="14" rx="2" /><path d="m4 7 8 6 8-6" /></svg>
         <span>Contact</span>
       </NuxtLink>
-      <NuxtLink class="visit-link" to="/encounter" @click="closeMenu">
+      <NuxtLink v-if="canBeginVisit" class="visit-link" to="/encounter" @click="closeMenu">
         <svg aria-hidden="true" focusable="false" viewBox="0 0 24 24"><path d="M12 3v18M3 12h18" /></svg>
         <span>Begin Visit</span>
       </NuxtLink>
+      <button v-else-if="user && isConfigured" class="visit-link visit-link-disabled" type="button" disabled>
+        {{ visitAccessLabel }}
+      </button>
     </nav>
 
     <button
@@ -63,8 +66,18 @@
 
 <script setup lang="ts">
 const { isDark, toggleTheme } = useAppTheme();
+const { user, isConfigured, memberships, membershipLookupStatus, selectedTenantId } = useGptmdAuth()
 const menuOpen = ref(false);
 const route = useRoute();
+const selectedRole = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role)
+const canBeginVisit = computed(() => !user.value || !isConfigured.value ||
+  (membershipLookupStatus.value === 'ready' && selectedRole.value === 'learner'))
+const visitAccessLabel = computed(() => {
+  if (membershipLookupStatus.value === 'loading' || membershipLookupStatus.value === 'idle') return 'Checking workspace…'
+  if (membershipLookupStatus.value === 'error') return 'Workspace access unavailable'
+  if (memberships.value.length > 0 && !selectedRole.value) return 'Choose workspace'
+  return 'Learner role required'
+})
 
 function closeMenu() {
   menuOpen.value = false;

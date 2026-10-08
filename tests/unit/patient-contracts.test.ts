@@ -10,7 +10,10 @@ import {
   TurnResponseSchema
 } from '../../app/schemas/patient-api'
 import {
+  PATIENT_CHART_FIELDS,
+  PATIENT_PHYSICAL_EXAM_FINDING_FIELDS,
   PATIENT_PROFILE_FIELDS,
+  PatientPhysicalExamFindingsSchema,
   PatientScenarioProfileSchema,
   isHistoryDatePlausible,
   isPatientScenarioConsistent
@@ -26,14 +29,40 @@ import {
   SessionTurnSchema,
   TerminalEventSchema
 } from '../../services/api/src/session-contracts'
+import { makePainEpisode } from '../fixtures/pain-episodes.ts'
 import {
   LearnerPatientProfileSchema,
   PatientSetupProjectionSchema,
   toLearnerPatientProfile
 } from '../../services/api/src/patient-setup'
+import {
+  TEST_LEARNER_CHART_VITAL_SIGNS,
+  TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
+  TEST_PATIENT_VITAL_SIGNS
+} from '../fixtures/patient-vital-signs.ts'
 
 const PatientProfileCatalogSchema = z.object({
   patientProfileFields: z.array(z.string().min(1)),
+  painEpisodePolicy: z.object({
+    maximumInstances: z.literal(2),
+    identityFields: z.array(z.enum(['pain-1', 'pain-2'])).length(2),
+    details: z.array(z.string().min(1)).length(7),
+    scope: z.string().min(1)
+  }).strict(),
+  obstetricTerminology: z.object({
+    gravidity: z.string().min(1),
+    terms: z.object({
+      nulligravida: z.string().min(1),
+      primigravida: z.string().min(1),
+      multigravida: z.string().min(1)
+    }).strict(),
+    parity: z.string().min(1),
+    example: z.string().min(1),
+    countSeparation: z.string().min(1),
+    thresholdNote: z.string().min(1)
+  }).strict(),
+  chartFindings: z.object({ fields: z.array(z.string().min(1)) }).passthrough(),
+  physicalExamFindings: z.object({ fields: z.array(z.string().min(1)) }).passthrough(),
   setupProfileFields: z.array(z.string().min(1)).length(5),
   setupProfileTemplate: z.object({
     fullName: z.string().min(1),
@@ -45,28 +74,30 @@ const PatientProfileCatalogSchema = z.object({
   templateNote: z.string().min(1)
 }).strict()
 
+const validVitalSigns = TEST_LEARNER_CHART_VITAL_SIGNS
+
 describe('shared patient API schemas', () => {
   it('pins scenario responses and patient turns to their exact schema versions', () => {
     const scenarioPins = {
-      promptVersion: 'patient-scenario-prompt-v6',
+      promptVersion: 'patient-scenario-prompt-v10',
       modelVersion: 'gpt-6-luna',
-      schemaVersion: 5,
+      schemaVersion: 7,
       policyVersion: 'patient-scenario-policy-v3'
     }
     const turnPins = {
-      promptVersion: 'patient-turn-prompt-v7',
+      promptVersion: 'patient-turn-prompt-v8',
       modelVersion: 'gpt-6-luna',
-      schemaVersion: 3,
-      policyVersion: 'patient-turn-policy-v7',
+      schemaVersion: 4,
+      policyVersion: 'patient-turn-policy-v8',
       rubricVersion: null
     }
 
     expect(SessionVersionPinsSchema.safeParse(scenarioPins).success).toBe(true)
-    for (const schemaVersion of [1, 2, 3, 4, 6]) {
+    for (const schemaVersion of [1, 2, 3, 4, 5]) {
       expect(SessionVersionPinsSchema.safeParse({ ...scenarioPins, schemaVersion }).success).toBe(false)
     }
     expect(SessionTurnVersionPinsSchema.safeParse(turnPins).success).toBe(true)
-    for (const schemaVersion of [1, 2, 4]) {
+    for (const schemaVersion of [1, 2, 3]) {
       expect(SessionTurnVersionPinsSchema.safeParse({ ...turnPins, schemaVersion }).success).toBe(false)
     }
   })
@@ -78,6 +109,30 @@ describe('shared patient API schemas', () => {
     )
 
     expect(document.patientProfileFields).toEqual(PATIENT_PROFILE_FIELDS)
+    expect(document.painEpisodePolicy.maximumInstances).toBe(2)
+    expect(document.painEpisodePolicy.details).toEqual([
+      'whatProvokesPalliatesPain', 'painQuality', 'painLocationRadiationWhere', 'painSeverity0-10',
+      'timePainOnset', 'constantIntermittentPain', 'durationPain'
+    ])
+    expect(document.obstetricTerminology.terms).toEqual({
+      nulligravida: '0 pregnancies',
+      primigravida: '1 pregnancy; first pregnancy',
+      multigravida: '2 or more pregnancies, regardless of outcomes'
+    })
+    expect(document.obstetricTerminology.example).toContain('G3P2')
+    expect(document.obstetricTerminology.example).toContain('G4')
+    expect(document.chartFindings.fields).toEqual(PATIENT_CHART_FIELDS)
+    expect(document.chartFindings.fields).toEqual([
+      'currentPulse', 'bpSitting', 'respiratoryRate',
+      'axillaryTemp', 'oralTemp', 'analTemp', 'dermalTemp', 'auralTemp'
+    ])
+    expect(document.chartFindings.examOnlyVitalFindings).toEqual([
+      'pulseIrregular', 'pulseQuality', 'bpOrthostaticSupine'
+    ])
+    expect(document.physicalExamFindings.fields).toEqual(PATIENT_PHYSICAL_EXAM_FINDING_FIELDS)
+    expect(document.chartFindings.fields).not.toContain('lungAuscultation')
+    expect(document.chartFindings.fields).not.toContain('skinLipsSclera')
+    expect(document.chartFindings.fields).not.toContain('skinBlanche')
     expect(Object.keys(document.setupProfileTemplate)).toEqual(document.setupProfileFields)
     expect(document.setupProfileTemplate).toEqual({
       fullName: '<full name>',
@@ -87,7 +142,9 @@ describe('shared patient API schemas', () => {
       diagnosis: null
     })
     expect(Object.keys(LearnerPatientProfileSchema.shape)).toEqual(Object.keys(PatientProfileSchema.shape))
-    expect(Object.keys(PatientSetupProjectionSchema.shape)).toEqual(document.setupProfileFields)
+    expect(Object.keys(PatientSetupProjectionSchema.shape)).toEqual([
+      ...document.setupProfileFields, 'vitalSigns', 'physicalExamFindings'
+    ])
     expect(document.templateNote).toContain('Template only')
   })
 
@@ -96,13 +153,38 @@ describe('shared patient API schemas', () => {
       fullName: 'Ari Nguyen',
       dateOfBirth: '1990-01-01',
       bodyType: 'average',
-      reasonForVisit: 'Pelvic pain'
+      reasonForVisit: 'Pelvic pain',
+      vitalSigns: validVitalSigns
     }
 
     expect(PatientProfileSchema.parse(profile)).toEqual(profile)
     expect(PatientProfileSchema.safeParse({ ...profile, dateOfBirth: '1990-02-30' }).success).toBe(false)
     expect(PatientProfileSchema.safeParse({ ...profile, bodyType: 'slim' }).success).toBe(false)
     expect(PatientProfileSchema.safeParse({ ...profile, diagnosis: 'Hidden answer' }).success).toBe(false)
+    expect(PatientProfileSchema.safeParse({
+      ...profile,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS
+    }).success).toBe(false)
+  })
+
+  it('enforces capillary-refill seconds, blood pressure, and lung finding consistency', () => {
+    const profile = {
+      fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+      reasonForVisit: 'Pelvic pain', vitalSigns: validVitalSigns
+    }
+
+    expect(PatientPhysicalExamFindingsSchema.safeParse({ ...TEST_PATIENT_PHYSICAL_EXAM_FINDINGS, skinBlanche: -0.1 }).success).toBe(false)
+    expect(PatientPhysicalExamFindingsSchema.safeParse({ ...TEST_PATIENT_PHYSICAL_EXAM_FINDINGS, skinBlanche: 3.1 }).success).toBe(false)
+    expect(PatientProfileSchema.safeParse({ ...profile, vitalSigns: { ...validVitalSigns, oralTemp: null } }).success).toBe(true)
+    expect(PatientProfileSchema.safeParse({
+      ...profile,
+      vitalSigns: { ...validVitalSigns, axillaryTemp: 37, oralTemp: 36.8 }
+    }).success).toBe(true)
+    expect(PatientProfileSchema.safeParse({ ...profile, vitalSigns: { ...validVitalSigns, axillaryTemp: 37, bpSitting: { systolic: 70, diastolic: 90 } } }).success).toBe(false)
+    expect(PatientPhysicalExamFindingsSchema.safeParse({
+      ...TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
+      lungAuscultation: { ...TEST_PATIENT_PHYSICAL_EXAM_FINDINGS.lungAuscultation, breathSounds: ['normal', 'wheeze'] }
+    }).success).toBe(false)
   })
 
   it('validates session, setup, and turn response shapes', () => {
@@ -118,7 +200,11 @@ describe('shared patient API schemas', () => {
       bodyType: 'average',
       reasonForVisit: 'Pelvic pain',
       diagnosis: null,
+      painHistoryStatus: 'absent',
+      painEpisodes: [],
       history: [],
+      vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
       currentPregnancyStatus: 'unknown',
       currentMenopausalStatus: 'unknown',
       patientBeliefs: [],
@@ -134,13 +220,30 @@ describe('shared patient API schemas', () => {
     } as const
     const scenario = {
       scenarioId: 'scenario-1',
-      schemaVersion: 5,
+      schemaVersion: 7,
       createdAt: '2026-10-01T00:00:00Z',
       profileDigest: 'a'.repeat(64),
       profile
     }
     expect(ImmutablePatientScenarioSchema.safeParse(scenario).success).toBe(true)
-    for (const schemaVersion of [1, 2, 3, 4, 6]) {
+    const twoEpisodeProfile = {
+      ...profile,
+      painHistoryStatus: 'present',
+      painEpisodes: [
+        makePainEpisode('pain-1', 'usual menstrual cramps'),
+        makePainEpisode('pain-2', 'new abdominal pain')
+      ]
+    }
+    expect(PatientScenarioProfileSchema.safeParse(twoEpisodeProfile).success).toBe(true)
+    expect(PatientScenarioProfileSchema.safeParse({
+      ...twoEpisodeProfile,
+      painEpisodes: [...twoEpisodeProfile.painEpisodes, makePainEpisode('pain-1', 'third pain')]
+    }).success).toBe(false)
+    expect(PatientScenarioProfileSchema.safeParse({
+      ...profile,
+      history: [{ field: 'painQuality', status: 'known', value: 'cramping' }]
+    }).success).toBe(false)
+    for (const schemaVersion of [1, 2, 3, 4, 5]) {
       expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, schemaVersion }).success).toBe(false)
     }
     expect(ImmutablePatientScenarioSchema.safeParse({ ...scenario, profileDigest: 'bad' }).success).toBe(false)
@@ -192,10 +295,34 @@ describe('shared patient API schemas', () => {
       ...profile,
       history: [{ field: 'lastMenstrualPeriod', status: 'known', value: '2026-09-20' }]
     }, new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    const onsetProfile = (value: string) => ({
+      ...profile,
+      painHistoryStatus: 'present' as const,
+      painEpisodes: [makePainEpisode('pain-1', 'this pain', {
+        timePainOnset: { status: 'known', value }
+      })]
+    })
+    expect(isPatientScenarioConsistent(onsetProfile('2026-10-02'), new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isPatientScenarioConsistent(onsetProfile('1989-12-31'), new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isPatientScenarioConsistent(onsetProfile('about three weeks ago'), new Date('2026-10-01T00:00:00Z'))).toBe(true)
     expect(isHistoryDatePlausible('1990-01-01', 'October 2, 2026', new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isHistoryDatePlausible('1990-01-01', '20 September 1989', new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isHistoryDatePlausible('1990-01-01', 'September 31, 2026', new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isHistoryDatePlausible('1990-01-01', 'about three weeks ago', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('1990-01-01', 'yesterday', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('2026-10-01', 'yesterday', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'the day before yesterday', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('1990-01-01', 'today', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('1990-01-01', 'tomorrow', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'the day after tomorrow', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'last Monday', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('1990-01-01', 'in three weeks', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'two weeks from now', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('2026-02-28', 'one month ago', new Date('2026-03-31T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('2026-03-01', 'one month ago', new Date('2026-03-31T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('2026-09-20', 'about three weeks ago', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'several weeks ago', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('1990-01-01', '0 weeks ago', new Date('2026-10-01T00:00:00Z'))).toBe(false)
     const currentPregnancyHistory = [
       { field: 'numberPregnancies', status: 'known', value: 3 },
       { field: 'numberPriorPregnanciesReaching20Weeks', status: 'known', value: 1 },
@@ -224,18 +351,40 @@ describe('shared patient API schemas', () => {
         ? { ...entry, value: 2 }
         : entry)
     }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isPatientScenarioConsistent({
+      ...profile,
+      currentPregnancyStatus: 'unknown',
+      history: [
+        { field: 'numberPregnanciesWithLiveBirth', status: 'known', value: 2 },
+        { field: 'numberLiveBirths', status: 'known', value: 1 }
+      ]
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(toLearnerPatientProfile(PatientSetupProjectionSchema.parse({
       fullName: 'Ari Nguyen',
       dateOfBirth: '1990-01-01',
       bodyType: 'average',
       reasonForVisit: 'Pelvic pain',
-      diagnosis: 'Endometriosis'
+      diagnosis: 'Endometriosis',
+      vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS
     }))).toEqual({
       fullName: 'Ari Nguyen',
       dateOfBirth: '1990-01-01',
       bodyType: 'average',
-      reasonForVisit: 'Pelvic pain'
+      reasonForVisit: 'Pelvic pain',
+      vitalSigns: validVitalSigns
     })
+    const learnerProfile = toLearnerPatientProfile(PatientSetupProjectionSchema.parse({
+      fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+      reasonForVisit: 'Pelvic pain', diagnosis: null, vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS
+    }))
+    expect(learnerProfile.vitalSigns).not.toHaveProperty('lungAuscultation')
+    expect(learnerProfile.vitalSigns).not.toHaveProperty('skinLipsSclera')
+    expect(learnerProfile.vitalSigns).not.toHaveProperty('skinBlanche')
+    expect(learnerProfile.vitalSigns).not.toHaveProperty('pulseIrregular')
+    expect(learnerProfile.vitalSigns).not.toHaveProperty('pulseQuality')
+    expect(learnerProfile.vitalSigns).not.toHaveProperty('bpOrthostaticSupine')
 
     const expansion = {
       factId: 'fact-1',
@@ -292,10 +441,13 @@ describe('shared patient API schemas', () => {
       acceptedAt: '2026-10-01T00:01:00Z', phase: 'history', learnerModality: 'typed',
       learnerMessage: 'What brings you in?',
       versions: {
-        promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
-        schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
+        promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
+        schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
       },
       patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
+      patientReportedPainFacts: [],
+      painHistoryCoverage: [],
+      painDisclosures: [],
       disclosedHistoryFields: [], disclosedFactIds: [], historyCoverageState: [], clinicalActions: [action]
     }
     expect(SessionTurnSchema.safeParse(turn).success).toBe(true)

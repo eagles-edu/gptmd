@@ -1,21 +1,45 @@
-type TenantListResponse = { tenantIds: string[] }
+export type TenantRole = 'learner' | 'instructor' | 'customer_admin'
+export interface TenantMembership {
+  tenantId: string
+  role: TenantRole
+}
+type TenantMembershipResponse = { memberships: TenantMembership[] }
+
+function parseTenantMemberships(value: unknown): TenantMembership[] {
+  if (!value || typeof value !== 'object' || !Array.isArray((value as TenantMembershipResponse).memberships)
+    || !(value as TenantMembershipResponse).memberships.every((membership) =>
+      membership && typeof membership === 'object' &&
+      typeof membership.tenantId === 'string' && membership.tenantId.length > 0 &&
+      ['learner', 'instructor', 'customer_admin'].includes(membership.role))) {
+    throw new Error('The account service returned an invalid workspace membership list.')
+  }
+  return (value as TenantMembershipResponse).memberships
+}
 
 export function useGptmdAuth() {
   const config = useRuntimeConfig()
   const user = useSupabaseUser()
   const session = useSupabaseSession()
   const selectedTenantId = useState<string | null>('gptmd-selected-tenant', () => null)
+  const memberships = useState<TenantMembership[]>('gptmd-tenant-memberships', () => [])
+  const membershipLookupStatus = useState<'idle' | 'loading' | 'ready' | 'error'>(
+    'gptmd-tenant-membership-status', () => 'idle'
+  )
   const isConfigured = computed(() => Boolean(config.public.supabaseUrl && config.public.supabaseKey))
 
-  async function loadTenantIds(): Promise<string[]> {
-    const tenants = await $fetch<unknown>(`${String(config.public.apiBase).replace(/\/$/, '')}/api/account/tenants`, {
-      headers: await accessHeaders(false)
-    })
-    if (!tenants || typeof tenants !== 'object' || !Array.isArray((tenants as TenantListResponse).tenantIds)
-      || !(tenants as TenantListResponse).tenantIds.every((tenantId) => typeof tenantId === 'string' && tenantId.length > 0)) {
-      throw new Error('The account service returned an invalid tenant list.')
+  async function loadTenantMemberships(): Promise<TenantMembership[]> {
+    membershipLookupStatus.value = 'loading'
+    try {
+      const result = await $fetch<unknown>(`${String(config.public.apiBase).replace(/\/$/, '')}/api/account/tenants`, {
+        headers: await accessHeaders(false)
+      })
+      memberships.value = parseTenantMemberships(result)
+      membershipLookupStatus.value = 'ready'
+      return memberships.value
+    } catch (error) {
+      membershipLookupStatus.value = 'error'
+      throw error
     }
-    return (tenants as TenantListResponse).tenantIds
   }
 
   async function accessHeaders(requireTenant = true): Promise<Record<string, string>> {
@@ -29,13 +53,7 @@ export function useGptmdAuth() {
     if (!requireTenant) return headers
 
     if (!selectedTenantId.value) {
-      const tenants = await $fetch<unknown>(`${String(config.public.apiBase).replace(/\/$/, '')}/api/account/tenants`, {
-        headers
-      })
-      if (!tenants || typeof tenants !== 'object' || !Array.isArray((tenants as TenantListResponse).tenantIds)) {
-        throw new Error('The account service returned an invalid tenant list.')
-      }
-      const tenantIds = (tenants as TenantListResponse).tenantIds
+      const tenantIds = (await loadTenantMemberships()).map((membership) => membership.tenantId)
       if (tenantIds.length === 1) selectedTenantId.value = tenantIds[0] ?? null
       else if (tenantIds.length === 0) throw new Error('This Google account does not have an active GPTpatient workspace yet.')
       else throw new Error('Choose a GPTpatient workspace from your account page before continuing.')
@@ -67,8 +85,21 @@ export function useGptmdAuth() {
     const supabase = useSupabaseClient()
     await supabase.auth.signOut()
     selectedTenantId.value = null
+    memberships.value = []
+    membershipLookupStatus.value = 'idle'
     await navigateTo('/login')
   }
 
-  return { user, session, selectedTenantId, isConfigured, accessHeaders, loadTenantIds, signInWithGoogle, signOut }
+  return {
+    user,
+    session,
+    memberships,
+    membershipLookupStatus,
+    selectedTenantId,
+    isConfigured,
+    accessHeaders,
+    loadTenantMemberships,
+    signInWithGoogle,
+    signOut
+  }
 }

@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { createRedisPatientStateStore, type RedisJsonClient } from '../../services/api/src/patient-state-store.ts'
+import { TEST_PATIENT_PHYSICAL_EXAM_FINDINGS, TEST_PATIENT_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
+import { makePainEpisode } from '../fixtures/pain-episodes.ts'
 
 function createJsonRedis(isOpen = true): RedisJsonClient & { documents: Map<string, unknown>; sendCommand: ReturnType<typeof vi.fn> } {
   const documents = new Map<string, unknown>()
@@ -114,7 +116,9 @@ describe('Redis patient state store', () => {
       openedAt: '2026-10-01T00:00:00.000Z',
       profile: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', painHistoryStatus: 'absent', painEpisodes: [], history: [],
+        vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+        physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
         currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
         patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
         persona: {
@@ -124,11 +128,12 @@ describe('Redis patient state store', () => {
       },
       setupProjection: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+        physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS
       },
       conversationId: 'conv_private',
       profileDigest: 'a'.repeat(64),
-      schemaVersion: 5
+      schemaVersion: 7
     })
 
     expect(redis.connect).not.toHaveBeenCalled()
@@ -139,7 +144,7 @@ describe('Redis patient state store', () => {
       sessionId, patientProfileId, state: { status: 'ready' }, acceptedTurns: [],
       profile: { diagnosis: 'Endometriosis' },
       setupProjection: { diagnosis: 'Endometriosis' },
-      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 5
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 7
     })
     expect(redis.sendCommand).toHaveBeenCalledWith(expect.arrayContaining(['EVAL', expect.any(String), '2', `gptmd:session:${sessionId}`]))
 
@@ -148,7 +153,8 @@ describe('Redis patient state store', () => {
       sessionId, patientProfileId, openedAt: '2026-10-01T00:00:00.000Z',
       profile: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', history: [],
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', painHistoryStatus: 'absent', painEpisodes: [], history: [],
+        physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
         currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
         patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
         persona: {
@@ -158,7 +164,8 @@ describe('Redis patient state store', () => {
       },
       setupProjection: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+        physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS
       },
       conversationId: 'conv_private', profileDigest: 'digest_private', schemaVersion: 3
     } as never)).rejects.toThrow()
@@ -197,7 +204,11 @@ describe('Redis patient state store', () => {
       profile: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
         reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis',
-        history: [{ field: 'anyPain', status: 'known', value: 'Pelvic pain' }],
+        painHistoryStatus: 'present',
+        painEpisodes: [makePainEpisode('pain-1', 'pelvic pain')],
+        history: [],
+        vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+        physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
         currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
         patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
         persona: {
@@ -207,20 +218,24 @@ describe('Redis patient state store', () => {
       },
       setupProjection: {
         fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
-        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis'
+        reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+        physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS
       },
-      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 5
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 7
     })
     const turn = {
       turnId: 'turn-1', sessionId, sequence: 1, acceptedAt: '2026-10-01T00:01:00.000Z',
       phase: 'history', learnerModality: 'typed',
       versions: {
-        promptVersion: 'patient-turn-prompt-v7', modelVersion: 'gpt-6-luna',
-        schemaVersion: 3, policyVersion: 'patient-turn-policy-v7', rubricVersion: null
+        promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
+        schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
       },
       learnerMessage: 'What brings you in?', patientResponse: 'I have pelvic pain.',
-      patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: ['anyPain'],
-      disclosedFactIds: ['seed:scenario-1:anyPain'], historyCoverageState: [], clinicalActions: []
+      patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: [],
+      patientReportedPainFacts: [],
+      painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'anyPain' }],
+      painDisclosures: [{ painEpisodeId: 'pain-1', field: 'anyPain', factId: 'seed:scenario-1:pain-1:anyPain' }],
+      disclosedFactIds: [], historyCoverageState: [], clinicalActions: []
     }
 
     const recordTiming = vi.fn()
@@ -249,7 +264,10 @@ describe('Redis patient state store', () => {
     expect(redis.events.map((serialized) => JSON.parse(serialized!).eventType)).toEqual(['accepted_turn', 'disclosure'])
     expect(JSON.parse(redis.events[1]!)).toMatchObject({
       eventOrdinal: 1,
-      payload: { turnId: 'turn-1', turnSequence: 1, field: 'anyPain', factId: 'seed:scenario-1:anyPain', source: 'scenario_seed' }
+      payload: {
+        turnId: 'turn-1', turnSequence: 1, field: 'anyPain', painEpisodeId: 'pain-1',
+        factId: 'seed:scenario-1:pain-1:anyPain', source: 'scenario_seed'
+      }
     })
     expect(recordTiming).toHaveBeenCalledWith('turn', expect.any(Number))
     expect(await store.read(sessionId)).toMatchObject({

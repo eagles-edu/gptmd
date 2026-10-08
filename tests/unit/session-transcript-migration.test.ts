@@ -10,4 +10,15 @@ describe('session transcript migration', () => {
     expect(sql).toContain("event.payload->>'learnerModality'")
     expect(sql.toLowerCase()).not.toContain('coalesce(')
   })
+
+  it('stores local voice utterances as append-only transcript rows in stable order', async () => {
+    const sql = await readFile(resolve('services/api/migrations/022_session_local_utterances.sql'), 'utf8')
+
+    expect(sql).toContain('CREATE TABLE session_local_utterances')
+    expect(sql).toContain('UNIQUE (session_id, ordinal)')
+    expect(sql).toContain('sequence bigint NOT NULL CHECK (sequence >= 0)')
+    expect(sql).toContain('BEFORE UPDATE OR DELETE ON session_local_utterances')
+    expect(sql).toContain('FROM session_local_utterances AS local')
+    expect(sql).toContain('local.ordinal + 2 AS utterance_index')
+  })
 })

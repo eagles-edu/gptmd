@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test'
 import { Buffer } from 'node:buffer'
+import { TEST_LEARNER_CHART_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
 
 function makeAuthCookie(): string {
   const encode = (value: object): string => Buffer.from(JSON.stringify(value)).toString('base64url')
@@ -122,13 +123,21 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await page.route('**/api/account/tenants', async (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ tenantIds: ['tenant-one', 'tenant-two'] })
+    body: JSON.stringify({ memberships: [
+      { tenantId: 'tenant-one', role: 'learner' },
+      { tenantId: 'tenant-two', role: 'customer_admin' }
+    ] })
+  }))
+  await page.route('**/api/encounters/current', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ encounter: null })
   }))
   const sessionId = 's'.repeat(43)
   const versionPins = {
-    promptVersion: 'patient-scenario-prompt-v6',
+    promptVersion: 'patient-scenario-prompt-v10',
     modelVersion: 'gpt-6-luna',
-    schemaVersion: 5,
+    schemaVersion: 7,
     policyVersion: 'patient-scenario-policy-v3'
   }
   await page.route('**/api/sessions', async (route) => {
@@ -156,7 +165,8 @@ test('signed-in account workspace context carries through the home into Begin Vi
         fullName: 'Ari Nguyen',
         dateOfBirth: '1990-01-01',
         bodyType: 'average',
-        reasonForVisit: 'Pelvic pain'
+        reasonForVisit: 'Pelvic pain',
+        vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS
       },
       versions: versionPins,
       readiness: { profile: true, redis: true, conversation: true }
@@ -178,30 +188,40 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await expect(accountWorkspace).toBeVisible()
   await expect(accountWorkspace.locator('option')).toHaveText(['Workspace 1', 'Workspace 2'])
   await accountWorkspace.selectOption('tenant-two')
+  await expect(page.getByText('Your role in this workspace: Customer administrator. Role-specific tools are not available yet.')).toBeVisible()
   await expect(page.getByText('Choose the workspace you want to use before starting an encounter.')).toBeHidden()
   await page.screenshot({ path: '/tmp/gptmd-signed-in-account-desktop.png', fullPage: false })
 
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Home' }).click()
   await expect(page.getByRole('heading', { name: 'learner@example.test' })).toBeVisible()
   await expect(page.getByLabel('Practice workspace')).toHaveValue('tenant-two')
+  await expect(page.getByText(/Your workspace role is customer administrator/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Learner access is required' })).toBeDisabled()
+  const mainNavigation = page.getByRole('navigation', { name: 'Main navigation' })
+  await expect(mainNavigation.getByRole('button', { name: 'Learner role required' })).toBeDisabled()
+  await expect(mainNavigation.getByRole('link', { name: 'Begin Visit' })).toHaveCount(0)
+  await page.getByLabel('Practice workspace').selectOption('tenant-one')
+  await expect(page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' })).toBeEnabled()
+  await expect(mainNavigation.getByRole('link', { name: 'Begin Visit' })).toBeVisible()
   await page.screenshot({ path: '/tmp/gptmd-signed-in-home-desktop.png', fullPage: false })
   await page.setViewportSize({ width: 390, height: 844 })
   await page.screenshot({ path: '/tmp/gptmd-signed-in-home-mobile.png', fullPage: false })
 
-  await page.getByRole('link', { name: 'Begin Visit' }).first().click()
+  await page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' }).click()
   const preflight = page.getByRole('dialog', { name: 'Before you begin' })
   await expect(preflight).toBeVisible()
+  await expect(preflight.getByRole('heading', { name: 'Before you begin' })).toBeVisible()
+  await expect(page.getByRole('tab', { name: 'Chart' })).toBeEnabled()
   await preflight.getByRole('checkbox', { name: /use fictional details only/i }).check()
-  await preflight.getByRole('checkbox', { name: /send my microphone audio to OpenAI/i }).check()
-  await preflight.getByRole('button', { name: 'Continue with voice' }).click()
-  await page.getByRole('button', { name: 'Create patient session' }).click()
+  await preflight.getByRole('radio', { name: /Transcript/ }).check()
+  await preflight.getByRole('button', { name: 'Continue with transcript' }).click()
   await page.getByRole('tab', { name: 'Chart' }).click()
   await expect(page.getByText('Ari Nguyen')).toBeVisible()
   await page.getByRole('tab', { name: 'Interview' }).click()
   await expect(page.getByRole('button', { name: 'Enter Room' })).toBeEnabled()
   await page.getByRole('button', { name: 'Enter Room' }).click()
-  await expect(page.getByRole('button', { name: 'Start voice conversation' })).toBeEnabled()
-  expect(sessionTenantId).toBe('tenant-two')
+  await expect(page.locator('.status-row [role="status"]')).toContainText(/green light.*your turn/i)
+  expect(sessionTenantId).toBe('tenant-one')
   expect(pageErrors).toEqual([])
   expect(consoleErrors).toEqual([])
 })
