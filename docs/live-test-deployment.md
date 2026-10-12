@@ -154,6 +154,19 @@ blocked by the app's enforced CSP because it uses `strict-dynamic`; keep that
 CSP intact unless OneShield can inject a trusted nonce or the hostname-specific
 integration is adjusted without weakening script policy.
 
+**2026-10-13 OAuth trace follow-up:** iNET checked trace
+`01M4R6JG845SKV5FQN85C362PN` for `/auth/v1/authorize` and reported that the
+origin Nginx User-Agent rule generated its 403; OneShield did not block this
+request. The active `obgyn.eaglesvn.club` vhost has the matching rule at
+`/etc/nginx/sites-available/obgyn.eaglesvn.club.conf`. A current public probe
+from this host using `curl/8.5.0` returned HTTP 403 with the expected 28-byte
+body, while the same endpoint with a Chrome 130 User-Agent returned HTTP 302.
+`sudo nginx -t` passed. This distinguishes the named authorization trace from
+the earlier OneShield-branded traces on other requests. The rule was not
+changed: browser OAuth already reaches the Google redirect, and command-line
+probes can use a browser User-Agent when testing this endpoint. The 302 does
+not prove Google callback acceptance or a completed learner sign-in.
+
 On 2026-10-12, the public home page was visibly rendered in the live Chrome
 Incognito window and the host returned HTTP 200. The accompanying console report does not
 show a page-load failure: inline-script and jsDelivr Material Design Icons
