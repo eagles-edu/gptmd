@@ -122,7 +122,7 @@
     },
     "examOnlyPulseQualityValues": ["normal", "thready", "pounding", "weak", "absent_radial", "absent_carotid", "absent_radial_and_carotid"],
     "temperatureRule": "Populate only sites measured in the case; leave unmeasured sites null. Do not derive or fabricate readings from another site.",
-    "clinicalCoherenceRule": "Select displayed vitals in context of patient age, pregnancy status, current presentation, relevant history, acuity, and established diagnosis when available. Keep pulse, blood pressure, respiratory rate, temperature, and exam findings coherent with one another and the overall clinical picture. A chronic or non-acute condition does not itself require abnormal vitals. Significant abnormalities or apparent contradictions require a scenario-based reason; do not force abnormalities to signal the diagnosis or use one generic vital set for every case."
+    "clinicalCoherenceRule": "Select displayed vitals in context of patient age, pregnancy status, current presentation, relevant history, acuity, and established diagnosis when available. Keep pulse, blood pressure, respiratory rate, temperature, and exam findings coherent with one another and the overall clinical picture. A chronic or non-acute condition does not itself require abnormal vitals. Significant abnormalities or apparent contradictions require a scenario-based reason; do not force abnormalities to signal the diagnosis or use one generic vital set for every case. Set currentPulse to 0 only when pulseQuality is absent_radial_and_carotid; use a positive measured rate otherwise."
   },
   "physicalExamFindings": {
     "fields": ["lungAuscultation", "skinLipsSclera", "skinBlanche"],

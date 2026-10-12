@@ -10,7 +10,7 @@
     },
     "schemaVersion": {
       "type": "number",
-      "const": 7
+      "const": 8
     },
     "createdAt": {
       "type": "string",
@@ -285,51 +285,22 @@
           }
         },
         "vitalSigns": {
-          "type": "object",
-          "properties": {
-            "currentPulse": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 300
-            },
-            "pulseIrregular": {
-              "type": "boolean"
-            },
-            "pulseQuality": {
-              "type": "string",
-              "enum": [
-                "normal",
-                "thready",
-                "pounding",
-                "weak",
-                "absent_radial",
-                "absent_carotid",
-                "absent_radial_and_carotid"
-              ]
-            },
-            "bpSitting": {
+          "anyOf": [
+            {
               "type": "object",
               "properties": {
-                "systolic": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 300
+                "currentPulse": {
+                  "type": "number",
+                  "const": 0
                 },
-                "diastolic": {
-                  "type": "integer",
-                  "minimum": 1,
-                  "maximum": 200
-                }
-              },
-              "required": [
-                "systolic",
-                "diastolic"
-              ],
-              "additionalProperties": false
-            },
-            "bpOrthostaticSupine": {
-              "anyOf": [
-                {
+                "pulseIrregular": {
+                  "type": "boolean"
+                },
+                "pulseQuality": {
+                  "type": "string",
+                  "const": "absent_radial_and_carotid"
+                },
+                "bpSitting": {
                   "type": "object",
                   "properties": {
                     "systolic": {
@@ -349,91 +320,265 @@
                   ],
                   "additionalProperties": false
                 },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "respiratoryRate": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 100
-            },
-            "axillaryTemp": {
-              "anyOf": [
-                {
-                  "type": "number",
-                  "minimum": 25,
-                  "maximum": 45
+                "bpOrthostaticSupine": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "systolic": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 300
+                        },
+                        "diastolic": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 200
+                        }
+                      },
+                      "required": [
+                        "systolic",
+                        "diastolic"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "oralTemp": {
-              "anyOf": [
-                {
-                  "type": "number",
-                  "minimum": 25,
-                  "maximum": 45
+                "respiratoryRate": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
                 },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "analTemp": {
-              "anyOf": [
-                {
-                  "type": "number",
-                  "minimum": 25,
-                  "maximum": 45
+                "axillaryTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "dermalTemp": {
-              "anyOf": [
-                {
-                  "type": "number",
-                  "minimum": 25,
-                  "maximum": 45
+                "oralTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "auralTemp": {
-              "anyOf": [
-                {
-                  "type": "number",
-                  "minimum": 25,
-                  "maximum": 45
+                "analTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 },
-                {
-                  "type": "null"
+                "dermalTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "auralTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
-              ]
+              },
+              "required": [
+                "currentPulse",
+                "pulseIrregular",
+                "pulseQuality",
+                "bpSitting",
+                "bpOrthostaticSupine",
+                "respiratoryRate",
+                "axillaryTemp",
+                "oralTemp",
+                "analTemp",
+                "dermalTemp",
+                "auralTemp"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "object",
+              "properties": {
+                "currentPulse": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 300
+                },
+                "pulseIrregular": {
+                  "type": "boolean"
+                },
+                "pulseQuality": {
+                  "type": "string",
+                  "enum": [
+                    "normal",
+                    "thready",
+                    "pounding",
+                    "weak",
+                    "absent_radial",
+                    "absent_carotid"
+                  ]
+                },
+                "bpSitting": {
+                  "type": "object",
+                  "properties": {
+                    "systolic": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 300
+                    },
+                    "diastolic": {
+                      "type": "integer",
+                      "minimum": 1,
+                      "maximum": 200
+                    }
+                  },
+                  "required": [
+                    "systolic",
+                    "diastolic"
+                  ],
+                  "additionalProperties": false
+                },
+                "bpOrthostaticSupine": {
+                  "anyOf": [
+                    {
+                      "type": "object",
+                      "properties": {
+                        "systolic": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 300
+                        },
+                        "diastolic": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 200
+                        }
+                      },
+                      "required": [
+                        "systolic",
+                        "diastolic"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "respiratoryRate": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100
+                },
+                "axillaryTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "oralTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "analTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "dermalTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "auralTemp": {
+                  "anyOf": [
+                    {
+                      "type": "number",
+                      "minimum": 25,
+                      "maximum": 45
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "currentPulse",
+                "pulseIrregular",
+                "pulseQuality",
+                "bpSitting",
+                "bpOrthostaticSupine",
+                "respiratoryRate",
+                "axillaryTemp",
+                "oralTemp",
+                "analTemp",
+                "dermalTemp",
+                "auralTemp"
+              ],
+              "additionalProperties": false
             }
-          },
-          "required": [
-            "currentPulse",
-            "pulseIrregular",
-            "pulseQuality",
-            "bpSitting",
-            "bpOrthostaticSupine",
-            "respiratoryRate",
-            "axillaryTemp",
-            "oralTemp",
-            "analTemp",
-            "dermalTemp",
-            "auralTemp"
-          ],
-          "additionalProperties": false
+          ]
         },
         "physicalExamFindings": {
           "type": "object",

@@ -21,10 +21,10 @@ const profile = {
 }
 
 const identityRows = [
-  { session_id: 'v'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_verified', scenario_fingerprint: fingerprintScenario(profile), schema_version: 7 },
-  { session_id: 'm'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_missing', scenario_fingerprint: fingerprintScenario(profile), schema_version: 7 },
-  { session_id: 'u'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_unavailable', scenario_fingerprint: fingerprintScenario(profile), schema_version: 7 },
-  { session_id: 'x'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_expected', scenario_fingerprint: fingerprintScenario(profile), schema_version: 7 }
+  { session_id: 'v'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_verified', scenario_fingerprint: fingerprintScenario(profile), schema_version: 8 },
+  { session_id: 'm'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_missing', scenario_fingerprint: fingerprintScenario(profile), schema_version: 8 },
+  { session_id: 'u'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_unavailable', scenario_fingerprint: fingerprintScenario(profile), schema_version: 8 },
+  { session_id: 'x'.repeat(43), tenant_id: 'tenant-a', subject_id: 'learner-a', patient_profile_id: 'p'.repeat(43), provider_conversation_id: 'conv_expected', scenario_fingerprint: fingerprintScenario(profile), schema_version: 8 }
 ]
 
 function stateFor(sessionId: string, conversationId: string): LivePatientState {
@@ -35,7 +35,7 @@ function stateFor(sessionId: string, conversationId: string): LivePatientState {
     profile,
     conversationId,
     profileDigest: digest,
-    schemaVersion: 7,
+    schemaVersion: 8,
     state: {} as LivePatientState['state'],
     acceptedTurns: [],
     assessment: null,

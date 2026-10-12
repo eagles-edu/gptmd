@@ -14,6 +14,7 @@ import {
   PATIENT_PHYSICAL_EXAM_FINDING_FIELDS,
   PATIENT_PROFILE_FIELDS,
   PatientPhysicalExamFindingsSchema,
+  PatientVitalSignsSchema,
   PatientScenarioProfileSchema,
   isHistoryDatePlausible,
   isPatientScenarioConsistent
@@ -79,9 +80,9 @@ const validVitalSigns = TEST_LEARNER_CHART_VITAL_SIGNS
 describe('shared patient API schemas', () => {
   it('pins scenario responses and patient turns to their exact schema versions', () => {
     const scenarioPins = {
-      promptVersion: 'patient-scenario-prompt-v12',
+      promptVersion: 'patient-scenario-prompt-v13',
       modelVersion: 'gpt-6-luna',
-      schemaVersion: 7,
+      schemaVersion: 8,
       policyVersion: 'patient-scenario-policy-v3'
     }
     const turnPins = {
@@ -196,6 +197,24 @@ describe('shared patient API schemas', () => {
     }).success).toBe(false)
   })
 
+  it('allows a zero pulse rate only when both radial and carotid pulses are absent', () => {
+    expect(PatientVitalSignsSchema.safeParse({
+      ...TEST_PATIENT_VITAL_SIGNS,
+      currentPulse: 0,
+      pulseQuality: 'absent_radial_and_carotid'
+    }).success).toBe(true)
+    expect(PatientVitalSignsSchema.safeParse({
+      ...TEST_PATIENT_VITAL_SIGNS,
+      currentPulse: 0,
+      pulseQuality: 'normal'
+    }).success).toBe(false)
+    expect(PatientVitalSignsSchema.safeParse({
+      ...TEST_PATIENT_VITAL_SIGNS,
+      currentPulse: 76,
+      pulseQuality: 'absent_radial_and_carotid'
+    }).success).toBe(false)
+  })
+
   it('validates session, setup, and turn response shapes', () => {
     expect(CreateSessionResponseSchema.safeParse({ sessionId: '' }).success).toBe(false)
     expect(SetupResponseSchema.safeParse({ profile: null }).success).toBe(false)
@@ -229,7 +248,7 @@ describe('shared patient API schemas', () => {
     } as const
     const scenario = {
       scenarioId: 'scenario-1',
-      schemaVersion: 7,
+      schemaVersion: 8,
       createdAt: '2026-10-01T00:00:00Z',
       profileDigest: 'a'.repeat(64),
       profile

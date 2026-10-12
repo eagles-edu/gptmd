@@ -200,8 +200,8 @@ const LungAuscultationSchema = z.object({
 
 const TemperatureReadingSchema = z.number().finite().min(25).max(45).nullable()
 
-export const PatientVitalSignsSchema = z.object({
-  currentPulse: z.number().int().min(1).max(300),
+export const PatientVitalSignsBaseSchema = z.object({
+  currentPulse: z.number().int().min(0).max(300),
   pulseIrregular: z.boolean(),
   pulseQuality: z.enum(['normal', 'thready', 'pounding', 'weak', 'absent_radial', 'absent_carotid', 'absent_radial_and_carotid']),
   bpSitting: BloodPressureReadingSchema,
@@ -213,6 +213,17 @@ export const PatientVitalSignsSchema = z.object({
   dermalTemp: TemperatureReadingSchema,
   auralTemp: TemperatureReadingSchema
 }).strict()
+
+export const PatientVitalSignsSchema = z.union([
+  PatientVitalSignsBaseSchema.extend({
+    currentPulse: z.literal(0),
+    pulseQuality: z.literal('absent_radial_and_carotid')
+  }),
+  PatientVitalSignsBaseSchema.extend({
+    currentPulse: z.number().int().min(1).max(300),
+    pulseQuality: z.enum(['normal', 'thready', 'pounding', 'weak', 'absent_radial', 'absent_carotid'])
+  })
+])
 export type PatientVitalSigns = z.infer<typeof PatientVitalSignsSchema>
 
 export const PatientPhysicalExamFindingsSchema = z.object({
@@ -319,9 +330,9 @@ const patientProfileCatalogJson = readFileSync(
 )
 
 // Bump the prompt or policy version when their corresponding behavior changes.
-export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v12'
+export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v13'
 export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v3'
-export const PATIENT_SCENARIO_SCHEMA_VERSION = 7 as const
+export const PATIENT_SCENARIO_SCHEMA_VERSION = 8 as const
 
 export interface PatientScenarioVersionPins {
   promptVersion: string
@@ -339,7 +350,7 @@ const setupInstructions = [
   'Use currentMenopausalStatus for the scenario’s present-state truth. Keep the separate menopauseStatus history entry for the applicable patient-reported/history detail; do not use it as a substitute for currentMenopausalStatus.',
   'Make the current reason, history, diagnosis if any, patient beliefs, examination findings, and test results internally consistent. Invent no unsupported test result.',
   'For obstetric counts, gravidity (G) is the total confirmed pregnancy count, including a current pregnancy: nulligravida is 0, primigravida is 1, and multigravida is 2 or more, regardless of outcome. In this PP, parity (P) is the patient-reported number of completed prior pregnancies reaching 20 weeks or later, regardless of outcome or fetal count; count a multiple pregnancy once and exclude a current pregnancy. Do not infer parity from live births, stillbirths, gravidity, or living-child counts. For example, if exactly two of three pregnancies reached 20 weeks, G3P2; if a fourth pregnancy is current, G4P2. numberPregnanciesWithLiveBirth counts pregnancies resulting in one or more live-born infants, while numberLiveBirths counts the infants; a multiple pregnancy counts once in the former and once per live-born infant in the latter. numberChildren is the current living-child count and must not be inferred from births. Include obstetricalHistory complications only when supported by the scenario and patient report.',
-  'Populate vitalSigns with internally consistent fictional chart findings: pulse, blood pressure, respiratory rate, and each temperature site measured in this case. Choose each displayed vital in the context of this patient’s age, pregnancy status, current presentation, relevant history, acuity, and established diagnosis when one exists. Make the pulse, blood pressure, respiratory rate, temperature, and physicalExamFindings coherent with one another and the overall clinical picture. A chronic or non-acute condition does not by itself require abnormal vitals; use findings appropriate to the case severity, and give any significant abnormality or apparent contradiction a clear scenario-based reason. Do not force abnormalities to signal the diagnosis or use one generic set for every case. Leave unmeasured temperature sites null; never derive one site from another. Use bpOrthostaticSupine only when a supine measurement is part of the scenario. Populate physicalExamFindings separately: lung auscultation (normal or abnormal sounds; basilar or diffuse rales; rhonchi severity and cough response; accessory muscle use; posture tolerance), separate skin/lips/sclera color observations, and skinBlanche capillary refill time in seconds from 0 to 3 (lower is faster/better, higher is slower/worse). Keep exam findings out of learner setup; they require a completed patient-exam workflow.',
+  'Populate vitalSigns with internally consistent fictional chart findings: pulse, blood pressure, respiratory rate, and each temperature site measured in this case. Choose each displayed vital in the context of this patient’s age, pregnancy status, current presentation, relevant history, acuity, and established diagnosis when one exists. Make the pulse, blood pressure, respiratory rate, temperature, and physicalExamFindings coherent with one another and the overall clinical picture. A chronic or non-acute condition does not by itself require abnormal vitals; use findings appropriate to the case severity, and give any significant abnormality or apparent contradiction a clear scenario-based reason. Do not force abnormalities to signal the diagnosis or use one generic set for every case. Set currentPulse to 0 only when pulseQuality is absent_radial_and_carotid; use a positive measured rate otherwise. Leave unmeasured temperature sites null; never derive one site from another. Use bpOrthostaticSupine only when a supine measurement is part of the scenario. Populate physicalExamFindings separately: lung auscultation (normal or abnormal sounds; basilar or diffuse rales; rhonchi severity and cough response; accessory muscle use; posture tolerance), separate skin/lips/sclera color observations, and skinBlanche capillary refill time in seconds from 0 to 3 (lower is faster/better, higher is slower/worse). Keep exam findings out of learner setup; they require a completed patient-exam workflow.',
   'Include a concise, patient-voiced primary concern as the patientConcern history field when one is relevant to the case. Keep it distinct from the clinician-only diagnosis and disclose it only when asked about worries or concerns.',
   'Use dateOfBirth in YYYY-MM-DD format. A 16-year-old must not have currentMenopausalStatus menopausal. A 75-year-old must not currently be pregnant; a coherent history of past pregnancies is allowed.',
   'Keep diagnosis private in this profile. The later learner-facing profile is a separate projection.',

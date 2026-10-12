@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import {
   PatientPhysicalExamFindingsSchema,
+  PatientVitalSignsBaseSchema,
   PatientVitalSignsSchema,
   type PatientScenarioProfile
 } from './patient-profile.js'
@@ -24,7 +25,7 @@ export const LearnerPatientProfileSchema = z.object({
   dateOfBirth: z.iso.date(),
   bodyType: z.enum(['average', 'heavy']),
   reasonForVisit: z.string().trim().min(1).max(1_000),
-  vitalSigns: PatientVitalSignsSchema.pick({
+  vitalSigns: PatientVitalSignsBaseSchema.pick({
     currentPulse: true,
     bpSitting: true,
     respiratoryRate: true,

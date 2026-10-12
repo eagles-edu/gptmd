@@ -31,7 +31,7 @@ const binding: SessionIdentityBinding = {
   patientProfileId,
   providerConversationId: 'conv_private',
   scenarioFingerprint,
-  schemaVersion: 7
+  schemaVersion: 8
 }
 
 function liveState(overrides: Partial<LivePatientState> = {}): LivePatientState {
@@ -41,7 +41,7 @@ function liveState(overrides: Partial<LivePatientState> = {}): LivePatientState 
     profile,
     conversationId: 'conv_private',
     profileDigest: scenarioFingerprint,
-    schemaVersion: 7,
+    schemaVersion: 8,
     state: {} as LivePatientState['state'],
     acceptedTurns: [],
     assessment: null,
@@ -70,7 +70,7 @@ describe('session identity binding', () => {
       liveState({ conversationId: 'conv_other' }),
       liveState({ profile: { ...profile, reasonForVisit: 'Abdominal pain' } }),
       liveState({ profileDigest: 'a'.repeat(64) }),
-      liveState({ schemaVersion: 6 as 7 })
+      liveState({ schemaVersion: 7 as 8 })
     ]) {
       expect(verifySessionIdentityBinding(binding, altered)).toBe('mismatch')
     }

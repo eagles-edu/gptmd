@@ -138,9 +138,9 @@ test('signed-in account workspace context carries through the home into Begin Vi
   }))
   const sessionId = 's'.repeat(43)
   const versionPins = {
-    promptVersion: 'patient-scenario-prompt-v12',
+    promptVersion: 'patient-scenario-prompt-v13',
     modelVersion: 'gpt-6-luna',
-    schemaVersion: 7,
+    schemaVersion: 8,
     policyVersion: 'patient-scenario-policy-v3'
   }
   await page.route('**/api/sessions', async (route) => {

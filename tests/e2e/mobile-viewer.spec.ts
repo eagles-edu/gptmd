@@ -54,7 +54,7 @@ async function mockEncounterSetup(page: Page, baseURL: string): Promise<void> {
         status: 'initializing',
         createdAt: '2026-10-07T00:00:00.000Z',
         updatedAt: '2026-10-07T00:00:00.000Z',
-        versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
+        versions: { promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna', schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3' }
       })
     })
   })
@@ -72,7 +72,7 @@ async function mockEncounterSetup(page: Page, baseURL: string): Promise<void> {
         reasonForVisit: 'Pelvic pain',
         vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS
       },
-      versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
+      versions: { promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna', schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3' },
       readiness: { profile: true, redis: true, conversation: true }
     })
   }))

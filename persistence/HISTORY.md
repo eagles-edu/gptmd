@@ -203,3 +203,28 @@ never commits or modifies application source.
 **Middle — decisions and work:** Added `npm run verify:live-realtime-transcription`, which extends the disposable live session verifier with a generated speech WAV played through Chromium WebRTC, the authenticated Express audio route, a finalized transcript submitted through the regular patient-turn route, and a check for persisted provider-reported audio duration. The command is explicitly opt-in because it makes billable setup and response requests. The Realtime session setup omits a fixed audio format for WebRTC; the browser negotiates media format through SDP. Failure output is bounded and redacts credentials; raw audio, SDP, and transcript text are not logged.
 
 **End — outcome and verification:** The script compiles, focused API integration tests pass, and all created provider Conversations were deleted after live attempts. The OpenAI client secret was created, but `POST /v1/realtime/calls` returned HTTP 500 before a call ID was returned, so no provider audio call, live transcript, duration event, or voice patient turn was verified. The checklist keeps `i07` open pending provider-call success and physical-microphone testing. `npm run verify:live-realtime-transcription` is not included in `npm run check`.
+
+## 2026-10-13 — Isolate the live test domain OAuth and OneShield blockers
+
+**Decision:** ## Isolate the live test domain OAuth and OneShield blockers
+
+**Beginning — trigger and context:** The user stood up obgyn.eaglesvn.club as a live GPTMD test home and asked for a free-file-sync deployment path, then reported public HTTPS 403 responses at the site root and Google authorization endpoint. They asked to check the OneShield WAF logs, verify the browser sign-in route, and stop repeating an unsuccessful sign-in dance.
+
+**Middle — decisions and work:** Repository guidance and the existing authenticated browser session were reviewed. The OneShield portal was opened in the already signed-in Chrome profile at the parent-domain WAF page; this method avoids starting a second remote profile or asking the user to sign in again. Public auth probes remained 403 even with ModSecurity temporarily disabled, so it was restored and no broad security bypass was left in place. With user approval, an iNET support request was sent using only the trace ID, host, path, and time. Google then returned redirect_uri_mismatch: the configured client had been last confirmed with https://obgyn.eaglesvn.club as its JavaScript origin and /auth/v1/callback2 as redirect, while the active GoTrue service sends /auth/v1/callback. iNET replied that the wildcard DNS record alone was insufficient and asked for an explicit www.obgyn host record before enabling protection and retesting.
+
+**End — outcome and verification:** The live OAuth flow is not yet verified. The external blockers are an exact Google OAuth redirect URI mismatch and iNET's requested explicit host record/WAF recheck. No change to DNS, Google Cloud OAuth registration, or production security policy was made in this thread; OneShield support correlation is pending. The checklist was later updated to record these facts and keep a03 open.
+
+**Rationale:** This unresolved live-test path combines two distinct failure layers. Future work needs the verified browser session and exact provider callback evidence to distinguish edge filtering from Google client configuration, while preserving the user's request for granular security controls.
+
+**Future utility:** Use this handoff to resume the live test domain investigation from its verified state, reuse the authenticated Chrome session, correlate support by the recorded trace without resending secrets, and check DNS host coverage and Google callback registration independently.
+
+**Project impact:** Observed: the app reached Google's OAuth error page once the authorize request passed the edge, proving a separate redirect URI mismatch; earlier public requests were rejected with 403. Expected: preserving the authenticated-browser method, exact trace, and separation between edge rejection and provider configuration should prevent repeated login attempts and unsafe blanket WAF changes.
+
+**Follow-up:** Recheck the live DNS record and OneShield support status, then update the Google OAuth Web client so its registered redirect URI exactly matches the active Supabase GoTrue callback. Retest from the authenticated browser and update the a03 checklist only after interactive Google return and an established app session are observed.
+
+**Rationale:** Use this handoff to resume the live test domain investigation from its verified state, reuse the authenticated Chrome session, correlate support by the recorded trace without resending secrets, and check DNS host coverage and Google callback registration independently.
+
+**Impact:** Observed: the app reached Google's OAuth error page once the authorize request passed the edge, proving a separate redirect URI mismatch; earlier public requests were rejected with 403. Expected: preserving the authenticated-browser method, exact trace, and separation between edge rejection and provider configuration should prevent repeated login attempts and unsafe blanket WAF changes.
+
+<!-- curatormd:record_id=6e8696bbb24c6b3c0b64f2187733504f;content_sha256=8d09e138c204e4a23803495ce65dd26387f6b273d9915b62f87fda4a19668055 -->
+<!-- curatormd:fingerprint=46e185d59e198316bd888528b07de328b2531d9716adaaa7a4ec62c4dbe681ea -->

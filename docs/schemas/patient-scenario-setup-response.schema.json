@@ -46,7 +46,7 @@
           "properties": {
             "currentPulse": {
               "type": "integer",
-              "minimum": 1,
+              "minimum": 0,
               "maximum": 300
             },
             "bpSitting": {
@@ -172,7 +172,7 @@
         },
         "schemaVersion": {
           "type": "number",
-          "const": 7
+          "const": 8
         },
         "policyVersion": {
           "type": "string",

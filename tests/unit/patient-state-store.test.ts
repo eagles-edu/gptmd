@@ -133,7 +133,7 @@ describe('Redis patient state store', () => {
       },
       conversationId: 'conv_private',
       profileDigest: 'a'.repeat(64),
-      schemaVersion: 7
+      schemaVersion: 8
     })
 
     expect(redis.connect).not.toHaveBeenCalled()
@@ -144,7 +144,7 @@ describe('Redis patient state store', () => {
       sessionId, patientProfileId, state: { status: 'ready' }, acceptedTurns: [],
       profile: { diagnosis: 'Endometriosis' },
       setupProjection: { diagnosis: 'Endometriosis' },
-      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 7
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 8
     })
     expect(redis.sendCommand).toHaveBeenCalledWith(expect.arrayContaining(['EVAL', expect.any(String), '2', `gptmd:session:${sessionId}`]))
 
@@ -221,7 +221,7 @@ describe('Redis patient state store', () => {
         reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', vitalSigns: TEST_PATIENT_VITAL_SIGNS,
         physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS
       },
-      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 7
+      conversationId: 'conv_private', profileDigest: 'a'.repeat(64), schemaVersion: 8
     })
     const turn = {
       turnId: 'turn-1', sessionId, sequence: 1, acceptedAt: '2026-10-01T00:01:00.000Z',

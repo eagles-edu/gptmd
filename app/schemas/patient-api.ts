@@ -3,7 +3,7 @@ import { z } from 'zod'
 const SessionVersionPinsSchema = z.object({
   promptVersion: z.string().min(1),
   modelVersion: z.string().min(1),
-  schemaVersion: z.literal(7),
+  schemaVersion: z.literal(8),
   policyVersion: z.string().min(1)
 }).strict()
 
@@ -31,7 +31,7 @@ const ChartBloodPressureSchema = z.object({
 const ChartTemperatureSchema = z.number().finite().min(25).max(45).nullable()
 
 export const PatientVitalSignsSchema = z.object({
-  currentPulse: z.number().int().min(1).max(300),
+  currentPulse: z.number().int().min(0).max(300),
   bpSitting: ChartBloodPressureSchema,
   respiratoryRate: z.number().int().min(1).max(100),
   axillaryTemp: ChartTemperatureSchema,

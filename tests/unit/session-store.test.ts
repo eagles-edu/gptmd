@@ -47,7 +47,7 @@ const identityBindingRow = {
   patient_profile_id: patientProfileId,
   provider_conversation_id: generated.conversationId,
   scenario_fingerprint: scenarioFingerprint,
-  schema_version: 7
+  schema_version: 8
 }
 
 function queryResultWithIdentity(defaultRows: unknown[]) {
@@ -113,8 +113,8 @@ describe('tenant membership roles', () => {
     const store = createPostgresSessionStore(pool)
 
     await expect(store.createSession(principal, {
-      promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna',
-      schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3'
+      promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna',
+      schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3'
     })).resolves.toMatchObject({ status: 'initializing' })
 
     expect(insert).toHaveLength(1)
@@ -133,7 +133,7 @@ describe('strict patient scenario version', () => {
         if (sql.includes('FROM app_sessions')) return { rows: [{
           session_id: sessionId, patient_profile_id: null, scenario_seed: null,
           status: 'initializing', created_at: createdAt, setup_idempotency_key_hash: null,
-          prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
+          prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
           schema_version: 3, policy_version: 'patient-scenario-policy-v3', sessions_enabled: true
         }], rowCount: 1 }
         return { rows: [], rowCount: 1 }
@@ -226,8 +226,8 @@ describe('scoped quota reservations', () => {
     const store = createPostgresSessionStore(pool)
 
     await expect(store.createSession(principal, {
-      promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna',
-      schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3'
+      promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna',
+      schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3'
     })).resolves.toBe('quota_exceeded')
 
     expect(statements).toContain('ROLLBACK')
@@ -397,8 +397,8 @@ describe('session entitlement authorization', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: false,
-            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
-            schema_version: 7, policy_version: 'patient-scenario-policy-v3'
+            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         return { rows: [], rowCount: 0 }
@@ -464,8 +464,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
-            schema_version: 7, policy_version: 'patient-scenario-policy-v3'
+            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return { rows: [], rowCount: 0 }
@@ -530,7 +530,7 @@ describe('patient setup persistence coordination', () => {
     expect(savedState[0]).toMatchObject({
       sessionId, patientProfileId, conversationId: 'conv_private',
       setupProjection: { diagnosis: 'Endometriosis' },
-      profile: { diagnosis: 'Endometriosis' }, schemaVersion: 7
+      profile: { diagnosis: 'Endometriosis' }, schemaVersion: 8
     })
     expect(client.release).toHaveBeenCalledOnce()
   })
@@ -543,8 +543,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
-            schema_version: 7, policy_version: 'patient-scenario-policy-v3'
+            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return { rows: [], rowCount: 0 }
@@ -584,8 +584,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
-            schema_version: 7, policy_version: 'patient-scenario-policy-v3'
+            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return { rows: [], rowCount: 0 }
@@ -641,8 +641,8 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'ready',
             created_at: createdAt, setup_idempotency_key_hash: idempotencyHash, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
-            schema_version: 7, policy_version: 'patient-scenario-policy-v3'
+            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return {
@@ -704,7 +704,7 @@ describe('serialized patient turns', () => {
         diagnosis: generated.profile.diagnosis
       },
       conversationId: generated.conversationId,
-      profileDigest: scenarioFingerprint, schemaVersion: 7,
+      profileDigest: scenarioFingerprint, schemaVersion: 8,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'active', phase: 'assessment',
         interactionMode: 'transcript', openedAt: createdAt.toISOString(), updatedAt: createdAt.toISOString(),
@@ -742,7 +742,7 @@ describe('serialized patient turns', () => {
         diagnosis: generated.profile.diagnosis
       },
       conversationId: generated.conversationId,
-      profileDigest: scenarioFingerprint, schemaVersion: 7,
+      profileDigest: scenarioFingerprint, schemaVersion: 8,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'ready', phase: 'history',
         interactionMode: 'transcript',
@@ -786,8 +786,8 @@ describe('serialized patient turns', () => {
       query: vi.fn(async (sql: string) => sql.includes('FROM session_identity_binding')
         ? { rows: [identityBindingRow], rowCount: 1 }
         : { rows: [{
-        status: 'ready', prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
-        schema_version: 7, policy_version: 'patient-scenario-policy-v3'
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+        schema_version: 8, policy_version: 'patient-scenario-policy-v3'
         }], rowCount: 1 }),
       connect: vi.fn().mockResolvedValue(quotaClient)
     } as unknown as Pool
@@ -875,7 +875,7 @@ describe('serialized patient turns', () => {
         sessionId, patientProfileId, openedAt: createdAt.toISOString(),
         profile: generated.profile,
         setupProjection: { ...generated.profile },
-        conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 7,
+        conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 8,
         state: {
           sessionId, scenarioId: patientProfileId, status: 'ready', phase: 'history',
           interactionMode: 'transcript',
@@ -900,8 +900,8 @@ describe('serialized patient turns', () => {
       query: vi.fn(async (sql: string) => sql.includes('FROM session_identity_binding')
         ? { rows: [identityBindingRow], rowCount: 1 }
         : { rows: [{
-        status: 'ready', prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
-        schema_version: 7, policy_version: 'patient-scenario-policy-v3'
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+        schema_version: 8, policy_version: 'patient-scenario-policy-v3'
         }], rowCount: 1 }),
       connect: vi.fn().mockResolvedValue(quotaClient)
     } as unknown as Pool
@@ -957,7 +957,7 @@ describe('serialized assessment mutations', () => {
     const current = {
       sessionId, patientProfileId, openedAt: createdAt.toISOString(),
       profile: generated.profile, setupProjection: { ...generated.profile },
-      conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 7,
+      conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 8,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'active', phase: 'history',
         interactionMode: 'transcript', openedAt: createdAt.toISOString(),
@@ -987,7 +987,7 @@ describe('serialized assessment mutations', () => {
     const current = {
       sessionId, patientProfileId, openedAt: createdAt.toISOString(),
       profile: generated.profile, setupProjection: { ...generated.profile },
-      conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 7,
+      conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 8,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'active', phase: 'assessment',
         interactionMode: 'transcript', openedAt: createdAt.toISOString(),
@@ -1029,7 +1029,7 @@ describe('current owned encounter recovery', () => {
       setupProjection: derivePatientSetup(generated.profile),
       conversationId: generated.conversationId,
       profileDigest: scenarioFingerprint,
-      schemaVersion: 7,
+      schemaVersion: 8,
       state: {
         sessionId,
         scenarioId: patientProfileId,
@@ -1059,9 +1059,9 @@ describe('current owned encounter recovery', () => {
       status: 'ready',
       created_at: createdAt,
       updated_at: createdAt,
-      prompt_version: 'patient-scenario-prompt-v12',
+      prompt_version: 'patient-scenario-prompt-v13',
       model_version: 'gpt-6-luna',
-      schema_version: 7,
+      schema_version: 8,
       policy_version: 'patient-scenario-policy-v3'
     }
     const pool = {
@@ -1094,9 +1094,9 @@ describe('current owned encounter recovery', () => {
       status: 'initializing',
       created_at: new Date('2026-10-02T00:00:00.000Z'),
       updated_at: new Date('2026-10-02T00:00:00.000Z'),
-      prompt_version: 'patient-scenario-prompt-v12',
+      prompt_version: 'patient-scenario-prompt-v13',
       model_version: 'gpt-6-luna',
-      schema_version: 7,
+      schema_version: 8,
       policy_version: 'patient-scenario-policy-v3'
     }
     const stateStore = {
@@ -1134,7 +1134,7 @@ describe('assessment submission retries', () => {
         bodyType: generated.profile.bodyType, reasonForVisit: generated.profile.reasonForVisit,
         diagnosis: generated.profile.diagnosis
       },
-      conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 7,
+      conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 8,
       state: {
         sessionId, scenarioId: patientProfileId, status: 'completed', phase: 'debrief',
         interactionMode: 'transcript', openedAt: createdAt.toISOString(),
