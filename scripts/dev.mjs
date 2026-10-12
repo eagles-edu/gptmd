@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { parseEnv } from 'node:util'
 import { fileURLToPath } from 'node:url'
-import { setTimeout as delay } from 'node:timers/promises'
+import { waitForHttpReady } from './http-readiness.mjs'
 
 const projectRoot = fileURLToPath(new URL('../', import.meta.url))
 const localEnvPath = fileURLToPath(new URL('../.env', import.meta.url))
@@ -67,19 +67,14 @@ function startService(name, executable, args) {
 }
 
 async function waitForApi() {
-  const deadline = Date.now() + 30_000
-  while (Date.now() < deadline && !stopping && children.has('API')) {
-    try {
-      await fetch(`http://127.0.0.1:${apiPort}/readyz`, {
-        signal: AbortSignal.timeout(1_000)
-      })
-      return
-    } catch {
-      await delay(250)
-    }
-  }
+  const ready = await waitForHttpReady({
+    url: `http://127.0.0.1:${apiPort}/readyz`,
+    shouldStop: () => stopping || !children.has('API')
+  })
+  if (ready || stopping) return
+
   if (!stopping) {
-    process.stderr.write(`[API] Did not respond on 127.0.0.1:${apiPort} within 30 seconds.\n`)
+    process.stderr.write(`[API] Did not become ready at 127.0.0.1:${apiPort} within 30 seconds.\n`)
     exitCode = 1
     stopAll()
   }

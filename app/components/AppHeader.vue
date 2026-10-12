@@ -70,12 +70,15 @@ const { user, isConfigured, memberships, membershipLookupStatus, selectedTenantI
 const menuOpen = ref(false);
 const route = useRoute();
 const selectedRole = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role)
+const selectedMembership = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value))
+const visitEntitled = computed(() => Boolean(selectedMembership.value?.sessionsEnabled && selectedMembership.value.responsesEnabled))
 const canBeginVisit = computed(() => !user.value || !isConfigured.value ||
-  (membershipLookupStatus.value === 'ready' && selectedRole.value === 'learner'))
+  (membershipLookupStatus.value === 'ready' && selectedRole.value === 'learner' && visitEntitled.value))
 const visitAccessLabel = computed(() => {
   if (membershipLookupStatus.value === 'loading' || membershipLookupStatus.value === 'idle') return 'Checking workspace…'
   if (membershipLookupStatus.value === 'error') return 'Workspace access unavailable'
   if (memberships.value.length > 0 && !selectedRole.value) return 'Choose workspace'
+  if (selectedRole.value === 'learner' && !visitEntitled.value) return 'Visit access unavailable'
   return 'Learner role required'
 })
 

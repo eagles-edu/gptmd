@@ -180,6 +180,8 @@ describe('patient setup Conversation isolation', () => {
       .toContain('if a fourth pregnancy is current, G4P2')
     expect(setupInput?.role === 'developer' ? setupInput.content[0]?.text : '')
       .toContain('Do not infer parity from live births, stillbirths, gravidity, or living-child counts')
+    expect(setupInput?.role === 'developer' ? setupInput.content[0]?.text : '')
+      .toContain('For numeric obstetric counts, negative means a value of 0; use known for a positive count')
     expect(catalogBlock?.text).toBe(`Complete canonical patient-profile parameter catalog (intact JSON):\n${canonicalCatalog}`)
     expect(parsedCatalog.patientProfileFields).toEqual(PATIENT_PROFILE_FIELDS)
     expect(catalogBlock?.prompt_cache_breakpoint).toEqual({ mode: 'explicit' })

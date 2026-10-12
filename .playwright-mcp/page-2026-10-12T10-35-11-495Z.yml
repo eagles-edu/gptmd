@@ -1,0 +1,66 @@
+- generic [ref=f10e1]:
+  - text:   
+  - generic [ref=f10e4]:
+    - generic [ref=f10e5]:
+      - link [ref=f10e6] [cursor=pointer]:
+        - /url: /
+        - img "iNET" [ref=f10e7]
+      - heading "Chào mừng trở lại!" [level=2] [ref=f10e8]
+      - paragraph [ref=f10e9]: Một tài khoản iNET, dùng cho tất cả các dịch vụ.
+      - list [ref=f10e10]:
+        - listitem [ref=f10e11]:
+          - generic [ref=f10e12]: 
+          - text: Đăng nhập một lần (SSO)
+        - listitem [ref=f10e13]:
+          - generic [ref=f10e14]: 
+          - text: Bảo mật 2 lớp & Passkey
+        - listitem [ref=f10e15]:
+          - generic [ref=f10e16]: 
+          - text: Truy cập hệ sinh thái sản phẩm One*
+    - generic [ref=f10e17]:
+      - heading "Đăng nhập" [level=1] [ref=f10e18]
+      - paragraph [ref=f10e19]: Sử dụng tài khoản iNET của bạn
+      - generic [ref=f10e20]:
+        - generic [ref=f10e21]:
+          - link "Đăng nhập bằng Google" [ref=f10e22] [cursor=pointer]:
+            - /url: /auth/google
+          - generic [ref=f10e28]: hoặc
+          - generic [ref=f10e30]:
+            - generic [ref=f10e31]: Email đăng nhập
+            - textbox "Email đăng nhập" [active] [ref=f10e32]:
+              - /placeholder: ""
+          - generic [ref=f10e33]:
+            - generic [ref=f10e34]: Mật khẩu
+            - generic [ref=f10e35]:
+              - textbox "Mật khẩu" [ref=f10e36]:
+                - /placeholder: ""
+              - button "" [ref=f10e38] [cursor=pointer]
+          - link "Không thể đăng nhập?" [ref=f10e42] [cursor=pointer]:
+            - /url: /account/forgotpassword
+          - button "Đăng nhập" [ref=f10e44] [cursor=pointer]
+          - paragraph [ref=f10e45]:
+            - text: Chưa có tài khoản?
+            - link "Đăng ký ngay" [ref=f10e46] [cursor=pointer]:
+              - /url: /account/register
+        - generic [ref=f10e47]:
+          - link [ref=f10e49] [cursor=pointer]:
+            - /url: https://inet.vn/s/93cb71
+            - img "zalo" [ref=f10e50]
+            - strong [ref=f10e60]: Zalo OA
+          - link [ref=f10e62] [cursor=pointer]:
+            - /url: https://t.me/+7wiZuKz6Ew81MmJl
+            - strong [ref=f10e66]: iNET Official
+  - contentinfo [ref=f10e67]:
+    - generic [ref=f10e69]:
+      - generic [ref=f10e70]:
+        - link "Điều khoản sử dụng" [ref=f10e71] [cursor=pointer]:
+          - /url: https://inet.vn/thoa-thuan-su-dung
+        - link "Bảo mật thông tin" [ref=f10e72] [cursor=pointer]:
+          - /url: https://inet.vn/chinh-sach-bao-mat
+        - link "Trợ giúp" [ref=f10e73] [cursor=pointer]:
+          - /url: https://helpdesk.inet.vn
+      - generic [ref=f10e74]:
+        - generic [ref=f10e75]: Copyright © 2007 - 2026 Công ty TNHH Phần mềm iNET
+        - generic [ref=f10e76]: "Công ty TNHH Phần mềm iNET - Mã số thuế: 0103581701 cấp ngày: 11/03/2009 tại Phòng đăng ký kinh doanh Sở Kế hoạch và Đầu tư Thành phố Hà Nội - Đại diện: Ông Trần Kiên"
+        - generic [ref=f10e77]: "Hà Nội: Số 247 Cầu Giấy, Phường Cầu Giấy, TP. Hà Nội"
+        - generic [ref=f10e78]: "TP Hồ Chí Minh: Số 40 Hoàng Việt, Phường Tân Sơn Nhất, TP. HCM"

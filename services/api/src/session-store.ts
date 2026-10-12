@@ -153,6 +153,8 @@ export interface SessionStore {
     consentVersion: string
   ): Promise<StoreResult | { grantId: string }>
   recordAudioProviderSession(grantId: string, providerSessionId: string, providerCallId: string): Promise<void>
+  recordAudioTranscriptionUsage(providerCallId: string, providerEventId: string, audioSeconds: number): Promise<void>
+  setAudioUsageObserverStatus(providerCallId: string, status: 'connected' | 'interrupted'): Promise<void>
   createSession(
     principal: AuthenticatedPrincipal,
     versions: PatientScenarioVersionPins
@@ -366,13 +368,43 @@ export function createPostgresSessionStore(
 ): SessionStore {
   return {
     async getActiveMemberships(subjectId) {
-      const result = await pool.query<{ tenant_id: string; role: TenantRole }>(
-        `SELECT tenant_id, role FROM tenant_memberships
-         WHERE subject_id = $1 AND status = 'active'
-         ORDER BY tenant_id`,
+      const result = await pool.query<{
+        tenant_id: string
+        role: TenantRole
+        sessions_enabled: boolean
+        responses_enabled: boolean
+        audio_transcription_available: boolean
+      }>(
+        `SELECT m.tenant_id, m.role,
+                COALESCE(e.sessions_enabled, false) AS sessions_enabled,
+                COALESCE(e.responses_enabled, false) AS responses_enabled,
+                COALESCE(
+                  e.sessions_enabled
+                  AND e.audio_transcription_enabled
+                  AND e.audio_transcription_privacy_approved
+                  AND e.monthly_audio_transcription_session_quota IS NOT NULL
+                  AND e.monthly_audio_transcription_session_quota > audio_usage.used,
+                  false
+                ) AS audio_transcription_available
+         FROM tenant_memberships m
+         LEFT JOIN tenant_entitlements e ON e.tenant_id = m.tenant_id
+         LEFT JOIN LATERAL (
+           SELECT count(*)::integer AS used
+           FROM app_audio_transcription_sessions a
+           WHERE a.tenant_id = m.tenant_id AND a.subject_id = m.subject_id
+             AND a.created_at >= date_trunc('month', now())
+         ) audio_usage ON true
+         WHERE m.subject_id = $1 AND m.status = 'active'
+         ORDER BY m.tenant_id`,
         [subjectId]
       )
-      return result.rows.map((row) => ({ tenantId: row.tenant_id, role: row.role }))
+      return result.rows.map((row) => ({
+        tenantId: row.tenant_id,
+        role: row.role,
+        sessionsEnabled: row.sessions_enabled,
+        responsesEnabled: row.responses_enabled,
+        audioTranscriptionAvailable: row.audio_transcription_available
+      }))
     },
 
     async consumeQuota(principal, feature, sessionId) {
@@ -501,6 +533,37 @@ export function createPostgresSessionStore(
         [grantId, providerSessionId, providerCallId]
       )
       if (result.rowCount !== 1) throw new Error('Audio transcription grant could not be bound to its provider call')
+    },
+
+    async recordAudioTranscriptionUsage(providerCallId, providerEventId, audioSeconds) {
+      if (!Number.isFinite(audioSeconds) || audioSeconds < 0 || audioSeconds > 900) {
+        throw new Error('Invalid provider audio duration')
+      }
+      await pool.query(
+        `WITH inserted AS (
+           INSERT INTO app_audio_transcription_usage_events
+             (grant_id, provider_call_id, provider_event_id, audio_seconds)
+           SELECT grant_id, provider_call_id, $2, $3
+           FROM app_audio_transcription_sessions
+           WHERE provider_call_id = $1
+           ON CONFLICT (provider_call_id, provider_event_id) DO NOTHING
+           RETURNING grant_id, audio_seconds
+         )
+         UPDATE app_audio_transcription_sessions AS audio
+         SET provider_audio_seconds = audio.provider_audio_seconds + inserted.audio_seconds
+         FROM inserted
+         WHERE audio.grant_id = inserted.grant_id`,
+        [providerCallId, providerEventId, audioSeconds]
+      )
+    },
+
+    async setAudioUsageObserverStatus(providerCallId, status) {
+      await pool.query(
+        `UPDATE app_audio_transcription_sessions
+         SET usage_observer_status = $2
+         WHERE provider_call_id = $1`,
+        [providerCallId, status]
+      )
     },
 
     async createSession(principal, versions) {

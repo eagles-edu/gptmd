@@ -1,0 +1,24 @@
+[Unit]
+Description=GPTMD live test Nuxt web app
+After=network.target
+
+[Service]
+Type=simple
+LogNamespace=gptmd-live
+User=eaglesvn
+Group=eaglesvn
+WorkingDirectory=/home/obgyn.eaglesvn.club/gptmd/current/web
+EnvironmentFile=/home/eaglesvn/.config/gptmd-live/web.env
+Environment=NITRO_HOST=127.0.0.1
+Environment=NITRO_PORT=3100
+ExecStart=/usr/bin/node /home/obgyn.eaglesvn.club/gptmd/current/web/server/index.mjs
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

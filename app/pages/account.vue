@@ -19,9 +19,15 @@
       </select>
     </section>
     <p v-if="selectedRoleLabel" class="membership-status" role="status">Your role in this workspace: {{ selectedRoleLabel }}<template v-if="selectedRole !== 'learner'">. Role-specific tools are not available yet.</template></p>
+    <p v-if="selectedRole === 'learner' && selectedMembership" class="membership-status" role="status">
+      {{ visitEntitled ? 'Visit setup is included in this workspace. Remaining quota is checked when you begin.' : 'Visit setup is not enabled for this workspace. Contact your workspace administrator.' }}
+    </p>
+    <p v-if="selectedRole === 'learner' && selectedMembership" class="membership-status" role="status">
+      {{ selectedMembership.audioTranscriptionAvailable ? 'Voice transcription is available for this workspace.' : 'Voice transcription is unavailable for this workspace. Transcript mode remains available.' }}
+    </p>
     <div v-if="user" class="membership-status" aria-live="polite">
       <span v-if="membershipState === 'loading'">Loading workspace access…</span>
-      <span v-else-if="membershipState === 'ready' && memberships.length === 1">Workspace access is ready.</span>
+      <span v-else-if="membershipState === 'ready' && memberships.length === 1">Workspace membership loaded.</span>
       <span v-else-if="membershipState === 'ready' && memberships.length > 1">{{ memberships.length }} workspaces are available.</span>
       <button v-else-if="membershipState === 'error'" class="retry-button" type="button" @click="loadMemberships">Retry workspace access</button>
     </div>
@@ -106,7 +112,9 @@ const paymentCheckout6MonthUrl = safePaymentUrl(runtimeConfig.public.paymentChec
 const paymentCheckout12MonthUrl = safePaymentUrl(runtimeConfig.public.paymentCheckout12MonthUrl)
 const hasPaymentCheckout = Boolean(paymentCheckout6MonthUrl || paymentCheckout12MonthUrl)
 const tenantIds = computed(() => memberships.value.map((membership) => membership.tenantId))
-const selectedRole = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role)
+const selectedMembership = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value))
+const selectedRole = computed(() => selectedMembership.value?.role)
+const visitEntitled = computed(() => Boolean(selectedMembership.value?.sessionsEnabled && selectedMembership.value.responsesEnabled))
 const selectedRoleLabel = computed(() => {
   const role = selectedRole.value
   return role === 'customer_admin' ? 'Customer administrator'

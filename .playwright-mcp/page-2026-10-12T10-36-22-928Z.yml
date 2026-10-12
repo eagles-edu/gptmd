@@ -1,0 +1,129 @@
+- generic [ref=f15e4]:
+  - generic [ref=f15e7]:
+    - generic [ref=f15e10]:
+      - img "Google" [ref=f15e12]
+      - generic [ref=f15e13]: Sign in with Google
+    - generic [ref=f15e15]:
+      - generic [ref=f15e17]:
+        - heading "Sign in" [level=1] [ref=f15e18]
+        - paragraph [ref=f15e19]:
+          - text: to continue to
+          - button "iNET" [ref=f15e20] [cursor=pointer]
+      - generic [ref=f15e23]:
+        - generic [ref=f15e26]:
+          - generic [ref=f15e31]:
+            - textbox "Email or phone" [active] [ref=f15e32]
+            - generic: Email or phone
+          - paragraph [ref=f15e33]:
+            - link "Forgot email?" [ref=f15e34] [cursor=pointer]:
+              - /url: /signin/v2/usernamerecovery?app_domain=https://sso.inet.vn&client_id=366912283087-kkfb5arlp0b6o27gttn5n7afs5v71mlp.apps.googleusercontent.com&continue=https://accounts.google.com/signin/oauth/legacy/consent?authuser%3Dunknown%26part%3DAJi8hAMI01gZo9DPquVpDHzRh_t5HIY5p2R_5ZGrPAvqKYhR2TMDGGnon4MyPEadlpRS-gNmsxkg2Fx6VOBckZ-Z9PEx_U4ahR3sJgsuQbzPRnumyOp8O1_-5PN1iG-G9OTgzdEJHNvsQz96sPr2YRTnGHJwZ-zbTN84OSuyqjB0k8j2eXBRrEVRB7B81zUxJW45jLp64OdF64o2ORytP5zNQJMMFIReZCs_upa9Fqd9dDK87gG8EH-dJtyVJg2PAfAiZDD6sUI6x_tx31USNgJGvHeXTjiXu3bkZ4YztP68suowck7ztO_zNcyaqRX6vUV65YfLXJE6MXIf1YZldoRs0Su8L_vm9QDvsU0hluXuEAn2Kx1DXLPQt4W2v2oyCYUORvp4YTE0sMvwAAI7BJsUck9IuIDvnoxRODcSzb7kZgn9sSDGlBgz2kFv-XJha_cvFg1zfOS21WKaVxIllWbWzPvVG2xkm0tviUpXVbJF4VEi3rcllJMfbGSpHv-Ltv91VKzQk8WxM7Mu-OH1RRm99qR2LNUWFaWNW8qsk6euuGBTo8A9mdjBJfixFmPISifZAoKiZX5uBT5CPzM-ABqt4h-aJgWw9_BWG3UY3M8JYl5E_gbnFE4tiP_Uh7c6fB7xvwYe6RnY%26flowName%3DGeneralOAuthFlow%26as%3DS-1323914735%253A1791801381721414%26client_id%3D366912283087-kkfb5arlp0b6o27gttn5n7afs5v71mlp.apps.googleusercontent.com%23&dsh=S-1323914735:1791801381721414&flowName=GeneralOAuthLite&o2v=1&opparams=%253F&rart=ANgoxceKowHji-gNzxYGFIktk7ET4yflPQ7YoBedC6VmJ_xdYwRi-r-O9sU95OonAWmPC9MTUovqVQXUb182U4iQlwcW_7Lw-Zcxzigiw_kpu-fKsXecx_g&redirect_uri=https://sso.inet.vn/auth/google/callback&response_type=code&scope=profile+email&service=lso
+        - paragraph [ref=f15e37]:
+          - text: Before using this app, you can review iNET’s
+          - link "Privacy Policy" [ref=f15e38] [cursor=pointer]:
+            - /url: https://inet.vn/chinh-sach-bao-mat
+          - text: and
+          - link "Terms of Service" [ref=f15e39] [cursor=pointer]:
+            - /url: https://inet.vn/thoa-thuan-su-dung
+          - text: .
+        - generic [ref=f15e41]:
+          - button "Next" [ref=f15e43]
+          - link "Create account" [ref=f15e45] [cursor=pointer]:
+            - /url: /lifecycle/flows/signup?app_domain=https://sso.inet.vn&client_id=366912283087-kkfb5arlp0b6o27gttn5n7afs5v71mlp.apps.googleusercontent.com&continue=https://accounts.google.com/signin/oauth/legacy/consent?authuser%3Dunknown%26part%3DAJi8hAMI01gZo9DPquVpDHzRh_t5HIY5p2R_5ZGrPAvqKYhR2TMDGGnon4MyPEadlpRS-gNmsxkg2Fx6VOBckZ-Z9PEx_U4ahR3sJgsuQbzPRnumyOp8O1_-5PN1iG-G9OTgzdEJHNvsQz96sPr2YRTnGHJwZ-zbTN84OSuyqjB0k8j2eXBRrEVRB7B81zUxJW45jLp64OdF64o2ORytP5zNQJMMFIReZCs_upa9Fqd9dDK87gG8EH-dJtyVJg2PAfAiZDD6sUI6x_tx31USNgJGvHeXTjiXu3bkZ4YztP68suowck7ztO_zNcyaqRX6vUV65YfLXJE6MXIf1YZldoRs0Su8L_vm9QDvsU0hluXuEAn2Kx1DXLPQt4W2v2oyCYUORvp4YTE0sMvwAAI7BJsUck9IuIDvnoxRODcSzb7kZgn9sSDGlBgz2kFv-XJha_cvFg1zfOS21WKaVxIllWbWzPvVG2xkm0tviUpXVbJF4VEi3rcllJMfbGSpHv-Ltv91VKzQk8WxM7Mu-OH1RRm99qR2LNUWFaWNW8qsk6euuGBTo8A9mdjBJfixFmPISifZAoKiZX5uBT5CPzM-ABqt4h-aJgWw9_BWG3UY3M8JYl5E_gbnFE4tiP_Uh7c6fB7xvwYe6RnY%26flowName%3DGeneralOAuthFlow%26as%3DS-1323914735%253A1791801381721414%26client_id%3D366912283087-kkfb5arlp0b6o27gttn5n7afs5v71mlp.apps.googleusercontent.com%23&dsh=S-1323914735:1791801381721414&flowEntry=SignUp&flowName=GlifWebSignIn&o2v=1&opparams=%253F&rart=ANgoxceKowHji-gNzxYGFIktk7ET4yflPQ7YoBedC6VmJ_xdYwRi-r-O9sU95OonAWmPC9MTUovqVQXUb182U4iQlwcW_7Lw-Zcxzigiw_kpu-fKsXecx_g&redirect_uri=https://sso.inet.vn/auth/google/callback&response_type=code&scope=profile+email&service=lso&signInUrl=https://accounts.google.com/signin/oauth?app_domain%3Dhttps://sso.inet.vn%26client_id%3D366912283087-kkfb5arlp0b6o27gttn5n7afs5v71mlp.apps.googleusercontent.com%26continue%3Dhttps://accounts.google.com/signin/oauth/legacy/consent?authuser%253Dunknown%2526part%253DAJi8hAMI01gZo9DPquVpDHzRh_t5HIY5p2R_5ZGrPAvqKYhR2TMDGGnon4MyPEadlpRS-gNmsxkg2Fx6VOBckZ-Z9PEx_U4ahR3sJgsuQbzPRnumyOp8O1_-5PN1iG-G9OTgzdEJHNvsQz96sPr2YRTnGHJwZ-zbTN84OSuyqjB0k8j2eXBRrEVRB7B81zUxJW45jLp64OdF64o2ORytP5zNQJMMFIReZCs_upa9Fqd9dDK87gG8EH-dJtyVJg2PAfAiZDD6sUI6x_tx31USNgJGvHeXTjiXu3bkZ4YztP68suowck7ztO_zNcyaqRX6vUV65YfLXJE6MXIf1YZldoRs0Su8L_vm9QDvsU0hluXuEAn2Kx1DXLPQt4W2v2oyCYUORvp4YTE0sMvwAAI7BJsUck9IuIDvnoxRODcSzb7kZgn9sSDGlBgz2kFv-XJha_cvFg1zfOS21WKaVxIllWbWzPvVG2xkm0tviUpXVbJF4VEi3rcllJMfbGSpHv-Ltv91VKzQk8WxM7Mu-OH1RRm99qR2LNUWFaWNW8qsk6euuGBTo8A9mdjBJfixFmPISifZAoKiZX5uBT5CPzM-ABqt4h-aJgWw9_BWG3UY3M8JYl5E_gbnFE4tiP_Uh7c6fB7xvwYe6RnY%2526flowName%253DGeneralOAuthFlow%2526as%253DS-1323914735%25253A1791801381721414%2526client_id%253D366912283087-kkfb5arlp0b6o27gttn5n7afs5v71mlp.apps.googleusercontent.com%2523%26dsh%3DS-1323914735:1791801381721414%26flowName%3DGeneralOAuthLite%26o2v%3D1%26opparams%3D%25253F%26rart%3DANgoxceKowHji-gNzxYGFIktk7ET4yflPQ7YoBedC6VmJ_xdYwRi-r-O9sU95OonAWmPC9MTUovqVQXUb182U4iQlwcW_7Lw-Zcxzigiw_kpu-fKsXecx_g%26redirect_uri%3Dhttps://sso.inet.vn/auth/google/callback%26response_type%3Dcode%26scope%3Dprofile%2Bemail%26service%3Dlso
+  - contentinfo [ref=f15e46]:
+    - combobox [ref=f15e49] [cursor=pointer]:
+      - option "Afrikaans"
+      - option "azərbaycan"
+      - option "bosanski"
+      - option "català"
+      - option "Čeština"
+      - option "Cymraeg"
+      - option "Dansk"
+      - option "Deutsch"
+      - option "eesti"
+      - option "English (United Kingdom)"
+      - option "English (United States)" [selected]
+      - option "Español (España)"
+      - option "Español (Latinoamérica)"
+      - option "euskara"
+      - option "Filipino"
+      - option "Français (Canada)"
+      - option "Français (France)"
+      - option "Gaeilge"
+      - option "galego"
+      - option "Hrvatski"
+      - option "Indonesia"
+      - option "isiZulu"
+      - option "íslenska"
+      - option "Italiano"
+      - option "Kiswahili"
+      - option "latviešu"
+      - option "lietuvių"
+      - option "magyar"
+      - option "Melayu"
+      - option "Nederlands"
+      - option "norsk"
+      - option "o‘zbek"
+      - option "polski"
+      - option "Português (Brasil)"
+      - option "Português (Portugal)"
+      - option "română"
+      - option "shqip"
+      - option "Slovenčina"
+      - option "slovenščina"
+      - option "srpski (latinica)"
+      - option "Suomi"
+      - option "Svenska"
+      - option "Tiếng Việt"
+      - option "Türkçe"
+      - option "Ελληνικά"
+      - option "беларуская"
+      - option "български"
+      - option "кыргызча"
+      - option "қазақ тілі"
+      - option "македонски"
+      - option "монгол"
+      - option "Русский"
+      - option "српски (ћирилица)"
+      - option "Українська"
+      - option "ქართული"
+      - option "հայերեն"
+      - option "‫עברית‬‎"
+      - option "‫اردو‬‎"
+      - option "‫العربية‬‎"
+      - option "‫فارسی‬‎"
+      - option "አማርኛ"
+      - option "नेपाली"
+      - option "मराठी"
+      - option "हिन्दी"
+      - option "অসমীয়া"
+      - option "বাংলা"
+      - option "ਪੰਜਾਬੀ"
+      - option "ગુજરાતી"
+      - option "ଓଡ଼ିଆ"
+      - option "தமிழ்"
+      - option "తెలుగు"
+      - option "ಕನ್ನಡ"
+      - option "മലയാളം"
+      - option "සිංහල"
+      - option "ไทย"
+      - option "ລາວ"
+      - option "မြန်မာ"
+      - option "ខ្មែរ"
+      - option "한국어"
+      - option "中文（香港）"
+      - option "日本語"
+      - option "简体中文"
+      - option "繁體中文"
+    - list [ref=f15e50]:
+      - listitem [ref=f15e51]:
+        - link "Open Google Account Help Center (external, opens in a new window)" [ref=f15e52] [cursor=pointer]:
+          - /url: https://support.google.com/accounts?hl=en-US&p=account_iph
+          - text: Help
+      - listitem [ref=f15e53]:
+        - link "Privacy Policy (external, opens in a new window)" [ref=f15e54] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=VN&hl=en-US&privacy=true
+          - text: Privacy
+      - listitem [ref=f15e55]:
+        - link "Google Terms of Service (external, opens in a new window)" [ref=f15e56] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=VN&hl=en-US
+          - text: Terms

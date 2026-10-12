@@ -14,6 +14,11 @@ const STREAM_KEY = 'gptmd:session-events'
 const CONSUMER_GROUP = 'gptmd-session-history'
 const BATCH_SIZE = 10
 const CLAIM_IDLE_MS = 1_000
+const ACK_AND_DELETE_EVENT_SCRIPT = `
+local acknowledged = redis.call('XACK', KEYS[1], ARGV[1], ARGV[2])
+local deleted = redis.call('XDEL', KEYS[1], ARGV[2])
+return {acknowledged, deleted}
+`
 
 type StreamEntry = { id: string; fields: Record<string, string> }
 
@@ -97,7 +102,11 @@ export function createSessionEventWorker(
         const persistenceLagMs = Math.max(0, Date.now() - Date.parse(occurredAt))
         maxPersistenceLagMsSinceMetrics = Math.max(maxPersistenceLagMsSinceMetrics ?? 0, persistenceLagMs)
         processedEventsSinceMetrics += 1
-        await redis.sendCommand(['XACK', STREAM_KEY, CONSUMER_GROUP, entry.id])
+        // PostgreSQL has committed the event; atomically acknowledge and remove it
+        // so persisted entries do not accumulate in the live Redis stream.
+        await redis.sendCommand([
+          'EVAL', ACK_AND_DELETE_EVENT_SCRIPT, '1', STREAM_KEY, CONSUMER_GROUP, entry.id
+        ])
         completed += 1
       }
       if (options.onMetrics && Date.now() - lastMetricsAt >= metricsIntervalMs) {

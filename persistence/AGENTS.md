@@ -306,3 +306,23 @@
 
 <!-- curatormd:record_id=3b2a61010745ff2f49443612714dd433;content_sha256=c9780463ee8d2aaa97ff77ab5339b43aadb6ecbb7c70cb7b2e9c224ea58c22c4 -->
 <!-- curatormd:fingerprint=57eba1bce9d8eb851b17e96f78f8054e3e7cdaeeabf6ef0a593e494c1bfcc4e0 -->
+
+- ## Build GPTMD patient profile and resumable encounter setup
+
+**Beginning — trigger and context:** The modernization work exposed gaps across patient scenario fields, what the learner sees before entering an encounter, and recovery from interrupted setup. The user directed work toward a complete, verifiable setup-to-first-turn path while refining the patient profile (PP) as the shared source for generated scenarios and patient answers.
+
+**Middle — decisions and work:** Aligned the 67 PP history fields across the TypeScript runtime schema, JSON catalog, generated enums, and documentation. Added patient-language and clinician-assisted response examples for each field, made direct answers the normal case, retained sensitive refusal as a respectful option, and used miscellaneousDetailsNos as the catchall. The user clarified that the chart shows only name, date of birth, and reason for visit; bodyType selects portrait assets internally. Kept newly refactored contracts strict instead of adding legacy fallbacks. The implementation then extended through cue-gated disclosure, bounded pain instances, clinically constrained scenario checks, chart and consent flow, prompt-cache measurements, and a server-owned session lifecycle with stable scenario identity, idempotent setup/turns, durable events, transcript recovery, and assessment draft recovery. Added browser coverage for viewport layouts and Opera/WebKit emulation, plus an end-to-end verifier that drives the built Nuxt app through authenticated setup, chart readiness, preflight, and a typed turn.
+
+**End — outcome and verification:** The October 7 verification reported the full project check passing with 191 unit tests, 33 desktop browser tests, and 32 preflight cases across Chromium, Firefox, WebKit, and iPhone WebKit emulation; Opera Stable passed 11 main and 8 preflight cases in a separate run. The phase-two verifier passed against the built app, Express, PostgreSQL, and isolated Redis, covering setup, retry, owner-scoped recovery, transcript persistence, and assessment drafts. A live setup request observed 4,046 cached input tokens, confirming a cache hit in that run only. The broader modernization remains in progress: clinical content still needs educator review, physical microphone behavior and production reliability are not established, and the emulated iPhone profile is not a physical iOS test.
+
+**Rationale:** This records the coherent modernization thread that connected canonical patient-profile answers to a recoverable learner encounter, while retaining the explicit limits on clinical and live-device evidence.
+
+**Future utility:** Future work can follow the verified PP-to-setup-to-first-turn path, preserve the learner-safe chart boundary, and distinguish passing local recovery checks from clinical approval and production readiness.
+
+**Project impact:** Observed: profile contracts, encounter setup, recovery paths, and automated browser coverage gained regression and integration evidence. Expected: keeping one canonical profile definition and a server-owned idempotent session identity should reduce mismatched patient data and make interrupted encounters recoverable. No clinical validity or production reliability was established.
+
+**Follow-up:** Continue the open modernization checklist by resolving educator-reviewed clinical rules and separately validating production ingress and real microphone behavior.
+  - **Why:** Future work can follow the verified PP-to-setup-to-first-turn path, preserve the learner-safe chart boundary, and distinguish passing local recovery checks from clinical approval and production readiness.
+
+<!-- curatormd:record_id=e8e4e64dab3a19c4f217b0d90d5cb439;content_sha256=768fd07b7ee0c65f8ed59b6f1f94425068b37986d040ad793d766e852903cfb7 -->
+<!-- curatormd:fingerprint=1b4a760da05062cfa663a7963db4ecc81b29af4fc1fecc2c15ac357ee913ebbb -->

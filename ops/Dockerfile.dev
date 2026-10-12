@@ -1,0 +1,8 @@
+FROM node:24-bookworm-slim
+
+WORKDIR /workspace
+COPY . .
+RUN npm ci --no-audit --no-fund \
+  && npm --prefix services/api ci --no-audit --no-fund
+
+ENV NODE_ENV=development

@@ -35,8 +35,8 @@ import {
   type SessionTurnVersionPins
 } from './session-contracts.ts'
 
-export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v8'
-export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v8'
+export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v10'
+export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v10'
 
 const ProposedFactSchema = z.object({
   field: PatientReportedFactExpansionSchema.shape.field,
@@ -69,6 +69,21 @@ export type PatientTurnGenerationContext = {
   phase: EncounterPhase
   learnerMessage: string
   retryAfterValidationFailure?: boolean
+}
+
+function catchallDetailList(value: unknown): string[] | null {
+  if (typeof value === 'string') return [value]
+  return Array.isArray(value) && value.every((item): item is string => typeof item === 'string')
+    ? value
+    : null
+}
+
+function isAppendOnlyCatchallExpansion(previous: unknown, next: unknown): boolean {
+  const previousDetails = catchallDetailList(previous)
+  const nextDetails = catchallDetailList(next)
+  if (!previousDetails || !nextDetails || nextDetails.length <= previousDetails.length) return false
+  if (!previousDetails.every((detail, index) => nextDetails[index] === detail)) return false
+  return new Set(nextDetails).size === nextDetails.length
 }
 
 export type AcceptedPatientTurnContent = {
@@ -147,8 +162,15 @@ const HISTORY_CUES: Record<PatientScenarioProfile['history'][number]['field'], s
   miscellaneousDetailsNos: [
     'other history', 'anything else about your health', 'anything else about your symptoms',
     'any other symptoms', 'associated symptoms', 'other symptoms', 'relevant negatives',
-    'fever', 'chills', 'nausea', 'vomiting', 'dizziness', 'vaginal discharge', 'vaginal bleeding',
-    'painful urination', 'burning when urinating', 'dysuria', 'bowel changes'
+    'fever', 'chills', 'nausea', 'nauseated', 'feeling nauseated', 'vomiting', 'dizziness', 'vaginal discharge', 'vaginal bleeding',
+    'painful urination', 'burning when urinating', 'dysuria', 'bowel changes',
+    'bloating', 'bloated', 'abdominal swelling', 'abdominal distension', 'abdominal distention', 'gas',
+    'pelvic pressure', 'pressure in your pelvis', 'abdominal pressure', 'pressure in your abdomen',
+    'feeling full quickly', 'feel full quickly', 'felt full quickly', 'get full quickly', 'early satiety',
+    'feeling full sooner than usual', 'trouble eating', 'difficulty eating',
+    'urinary urgency', 'urinary frequency', 'frequent urination', 'urinate more often', 'pee more often',
+    'urgent need to urinate', 'need to pee urgently', 'constipation', 'constipated', 'diarrhea', 'loose stools',
+    'unusual vaginal bleeding', 'bleeding between periods', 'bleeding after menopause', 'abnormal discharge'
   ]
 }
 const PAIN_CUES: Record<(typeof PAIN_PROFILE_FIELDS)[number], string[]> = {
@@ -158,7 +180,7 @@ const PAIN_CUES: Record<(typeof PAIN_PROFILE_FIELDS)[number], string[]> = {
   painLocationRadiationWhere: ['where is the pain', 'where does it hurt', 'where is it located', 'does the pain travel', 'does it radiate', 'pain location', 'pain radiation'],
   'painSeverity0-10': ['pain severity', 'how severe is the pain', 'how bad is the pain', 'rate the pain', 'pain scale', 'out of 10'],
   timePainOnset: ['when did the pain start', 'when did it start', 'when did the pain begin', 'when did it begin', 'pain onset', 'when did symptoms start', 'onset'],
-  constantIntermittentPain: ['constant or intermittent', 'constant or does it come and go', 'does it come and go', 'comes and goes', 'intermittent pain', 'constant pain', 'how often does the pain occur'],
+  constantIntermittentPain: ['constant or intermittent', 'constant or does it come and go', 'does the pain come and go', 'does your pain come and go', 'does it come and go', 'comes and goes', 'intermittent pain', 'constant pain', 'how often does the pain occur'],
   durationPain: ['how long have you had the pain', 'how long have you had it', 'how long does each episode last', 'duration of pain', 'how long does it last']
 }
 
@@ -198,7 +220,7 @@ const patientTurnInstructions = [
   'Use only the supplied patient-known scenario details and the accepted encounter transcript.',
   'Do not reveal or rely on any private diagnosis, answer key, rubric, or clinician-only interpretation, including information already present in this session Conversation.',
   'Do not invent or volunteer details for history fields that are not directly matched to the learner’s question. When a directly matched scenario history field is marked unknown, you may provide a concise, case-consistent patient-reported answer to the asked topic and record it as a proposed fact so it remains stable. Do not create a fact if the patient hesitates or declines to answer.',
-  'The unknown miscellaneousDetailsNos history field is an expandable patient-reported catchall: when the learner asks about other or associated symptoms, relevant negatives, or a specific related symptom, create details only for what was asked. If an accepted catchall fact exists, use only its recorded detail and do not add contradictory or unrecorded facts.',
+  'The miscellaneousDetailsNos history field is an expandable patient-reported catchall. When asked about a new related symptom, relevant negative, or other detail, answer only that asked topic and add a concise case-consistent detail if supported. An earlier catchall answer does not close the field: preserve every previously accepted detail string verbatim and unchanged, and when proposing an update include the complete prior list plus only the newly asked detail. Never remove, rewrite, contradict, or duplicate accepted details, and never add an unasked or unrelated detail.',
   'Pain is organized as up to two separately identified episodes. Keep each episode’s label and PQRST facts attached to its painEpisodeId. For a general any-pain question, address all supplied episodes separately; for a PQRST question that could refer to both, distinguish the answer for each episode instead of blending details. If there are no episodes, answer that the patient has no pain. Never create a third episode, invent an episode, infer a cause, or transfer a detail between episodes. Propose and disclose unknown PQRST details using the matching painEpisodeId and field; keep each accepted answer stable.',
   'For an unknown timePainOnset detail, answer an onset question with a brief, approximate, plausible patient-reported timeframe scoped to that painEpisodeId and record it as a proposed pain fact. Keep it stable in later turns; never back-calculate an exact date from the encounter date or infer onset from cycle pattern.',
   'Use matchedFieldResponseGuidance only for fields matched to the latest question. Common patient wording is illustrative, not a required answer. Treat clinician-assisted guidance as an internal fidelity constraint: preserve only the details actually present in the scenario or patient answer, do not infer missing details, and do not speak clinician wording as the patient.',
@@ -227,12 +249,14 @@ export async function generatePatientTurn(
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
   const matchedPainFields = new Set(matchPainCueFields(context.learnerMessage))
   const scenarioFields = new Set(context.profile.history.map((entry) => entry.field))
-  const acceptedFacts = context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts)
-    .filter((fact) => matchedFields.has(fact.field))
+  const acceptedFacts = new Map<string, PatientReportedFactExpansion>()
+  for (const fact of context.acceptedTurns.flatMap((turn) => turn.patientReportedFacts)) {
+    if (matchedFields.has(fact.field)) acceptedFacts.set(fact.field, fact)
+  }
   const relevantHistory = context.profile.history
     .filter((entry) => matchedFields.has(entry.field))
     .map((entry) => {
-      const accepted = acceptedFacts.find((fact) => fact.field === entry.field)
+      const accepted = acceptedFacts.get(entry.field)
       return accepted
         ? { field: entry.field, status: 'known', value: accepted.value, source: 'patient_reported' }
         : { ...entry, source: entry.status === 'unknown' ? 'expandable_seed_cue' : 'scenario_seed' }
@@ -383,7 +407,9 @@ export function validatePatientTurnOutput(
   for (const turn of context.acceptedTurns) {
     for (const fact of turn.patientReportedFacts) {
       const prior = priorFacts.get(fact.field)
-      if (prior && canonicalJsonStringify(prior.value) !== canonicalJsonStringify(fact.value)) {
+      const unchanged = prior && canonicalJsonStringify(prior.value) === canonicalJsonStringify(fact.value)
+      if (prior && !unchanged && (fact.field !== 'miscellaneousDetailsNos' ||
+          !isAppendOnlyCatchallExpansion(prior.value, fact.value))) {
         throw new Error('Accepted patient history contains conflicting facts')
       }
       priorFacts.set(fact.field, fact)
@@ -428,10 +454,12 @@ export function validatePatientTurnOutput(
 
     const prior = priorFacts.get(proposed.field)
     if (prior) {
-      if (canonicalJsonStringify(prior.value) !== canonicalJsonStringify(proposed.value)) {
+      const unchanged = canonicalJsonStringify(prior.value) === canonicalJsonStringify(proposed.value)
+      if (!unchanged && (proposed.field !== 'miscellaneousDetailsNos' ||
+          !isAppendOnlyCatchallExpansion(prior.value, proposed.value))) {
         throw new Error('Patient turn conflicts with an already accepted patient fact')
       }
-      continue
+      if (unchanged) continue
     }
 
     const scenarioField = scenarioFields.get(proposed.field)
@@ -457,8 +485,8 @@ export function validatePatientTurnOutput(
     const priorFact = priorFacts.get(field)
     const proposedFact = patientReportedFacts.find((fact) => fact.field === field)
     const scenarioField = scenarioFields.get(field)
-    if (priorFact) disclosedFactIds.push(priorFact.factId)
-    else if (proposedFact) disclosedFactIds.push(proposedFact.factId)
+    if (proposedFact) disclosedFactIds.push(proposedFact.factId)
+    else if (priorFact) disclosedFactIds.push(priorFact.factId)
     else if (scenarioField && (scenarioField.status === 'known' || scenarioField.status === 'negative')) {
       disclosedFactIds.push(`seed:${context.scenarioId}:${field}`)
     } else {

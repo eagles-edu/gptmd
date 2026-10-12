@@ -2,6 +2,9 @@ export type TenantRole = 'learner' | 'instructor' | 'customer_admin'
 export interface TenantMembership {
   tenantId: string
   role: TenantRole
+  sessionsEnabled: boolean
+  responsesEnabled: boolean
+  audioTranscriptionAvailable: boolean
 }
 type TenantMembershipResponse = { memberships: TenantMembership[] }
 
@@ -10,7 +13,10 @@ function parseTenantMemberships(value: unknown): TenantMembership[] {
     || !(value as TenantMembershipResponse).memberships.every((membership) =>
       membership && typeof membership === 'object' &&
       typeof membership.tenantId === 'string' && membership.tenantId.length > 0 &&
-      ['learner', 'instructor', 'customer_admin'].includes(membership.role))) {
+      ['learner', 'instructor', 'customer_admin'].includes(membership.role) &&
+      typeof membership.sessionsEnabled === 'boolean' &&
+      typeof membership.responsesEnabled === 'boolean' &&
+      typeof membership.audioTranscriptionAvailable === 'boolean')) {
     throw new Error('The account service returned an invalid workspace membership list.')
   }
   return (value as TenantMembershipResponse).memberships

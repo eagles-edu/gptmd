@@ -1,0 +1,37 @@
+- generic [active] [ref=f8e1]:
+  - main [ref=f8e2]:
+    - generic [ref=f8e3]:
+      - heading "403" [level=1] [ref=f8e4]
+      - paragraph [ref=f8e5]: Bị cấm (lỗi phía máy khách)
+    - generic [ref=f8e6]:
+      - text: "Mã truy vết:"
+      - code [ref=f8e7] [cursor=pointer]: 01M4QT71X4B9GDX63FRA8JT3NB
+    - generic [ref=f8e8]:
+      - generic [ref=f8e35]:
+        - generic [ref=f8e36]: Máy khách
+        - paragraph [ref=f8e37]: Bị cấm
+      - generic [ref=f8e41]:
+        - link [ref=f8e42] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f8e80]:
+          - generic [ref=f8e81]: Oneshield
+          - paragraph [ref=f8e82]: Hoạt động
+      - generic [ref=f8e117]:
+        - generic [ref=f8e118]: Máy chủ web
+        - paragraph [ref=f8e119]: Hoạt động
+    - generic [ref=f8e120]:
+      - generic [ref=f8e121]:
+        - heading "Điều gì đã xảy ra?" [level=2] [ref=f8e122]
+        - paragraph [ref=f8e123]: Truy cập vào tài nguyên này đã bị chặn bởi quy tắc bảo mật.
+      - generic [ref=f8e124]:
+        - heading "Tôi có thể làm gì?" [level=2] [ref=f8e125]
+        - paragraph [ref=f8e126]: Nếu bạn cho rằng đây là lỗi, vui lòng liên hệ quản trị viên và cung cấp mã truy vết bên dưới.
+    - generic [ref=f8e127]:
+      - link "Về trang chủ" [ref=f8e128] [cursor=pointer]:
+        - /url: /
+      - button "Xem chi tiết" [ref=f8e129] [cursor=pointer]
+  - contentinfo [ref=f8e130]:
+    - paragraph [ref=f8e131]:
+      - text: Trang web này được bảo vệ bởi
+      - link "Oneshield" [ref=f8e132] [cursor=pointer]:
+        - /url: /

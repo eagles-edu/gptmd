@@ -13,8 +13,13 @@ iPhone SE, Galaxy S24, open Galaxy Z Fold 5, and iPad Mini viewport sizes. It
 also opens a mocked encounter at each size, confirms the Chart tab is selected
 when entering the room, verifies patient details and image load, and repeats the
 overflow check after rotating to landscape. It uses Chromium viewport and touch
-emulation; it does not run iOS Safari, Android Chrome, or the MobileViewer
-website itself.
+emulation; it does not run iOS Safari or Android Chrome. The full E2E command
+also opens the hosted MobileViewer and checks that its iframe loads a fixture
+and responds to a device preset and rotation. Point that smoke test at a public
+preview with `GPTMD_MOBILEVIEWER_TARGET_URL` and set
+`GPTMD_MOBILEVIEWER_EXPECTED_TEXT` to text visible on that page. The target must
+allow embedding in an iframe; the app's content security policy remains
+unchanged.
 
 ## Manual visual review with MobileViewer
 
@@ -50,7 +55,9 @@ npm run test:e2e:opera
 The runner uses `/usr/bin/opera` by default; set `OPERA_EXECUTABLE_PATH` when
 Opera is installed elsewhere. It runs the main browser checks and the encounter
 preflight checks against Opera. On 2026-10-07, Opera 136.0.6008.80 passed 13
-main UI tests and 10 encounter-preflight tests.
+main UI tests and 10 encounter-preflight tests. To run the iPhone WebKit
+emulation profile on its own, use `npm run test:e2e:iphone-webkit`; on
+2026-10-10, all 10 encounter-preflight tests passed in that profile.
 
 WebKit is not a universal proxy for every iOS browser. Apple offers alternative
 browser-engine entitlements for qualifying apps in the EU (iOS/iPadOS 17.4+)

@@ -15,7 +15,7 @@ if (!existsSync(operaExecutablePath)) {
 export default defineConfig({
   globalSetup: './tests/e2e/opera.global-setup.ts',
   testDir: './tests/e2e',
-  testIgnore: 'encounter-preflight.spec.ts',
+  testIgnore: ['encounter-preflight.spec.ts', 'mobileviewer-tool.spec.ts'],
   fullyParallel: true,
   reporter: 'list',
   use: {

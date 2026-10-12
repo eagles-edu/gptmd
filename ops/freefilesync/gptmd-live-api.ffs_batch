@@ -1,0 +1,54 @@
+<?xml version="1.0" encoding="utf-8"?>
+<FreeFileSync XmlType="BATCH" XmlFormat="23">
+    <Notes/>
+    <Compare>
+        <Variant>TimeAndSize</Variant>
+        <Symlinks>Exclude</Symlinks>
+        <IgnoreTimeShift/>
+    </Compare>
+    <Synchronize>
+        <Differences LeftOnly="right" LeftNewer="right" RightNewer="right" RightOnly="right"/>
+        <DeletionPolicy>Permanent</DeletionPolicy>
+        <VersioningFolder Style="Replace"/>
+    </Synchronize>
+    <Filter>
+        <Include>
+            <Item>\dist\</Item>
+            <Item>\migrations\</Item>
+            <Item>\catalog\</Item>
+            <Item>\package.json</Item>
+            <Item>\package-lock.json</Item>
+        </Include>
+        <Exclude>
+            <Item>\node_modules\</Item>
+            <Item>\src\</Item>
+            <Item>\test\</Item>
+            <Item>\tests\</Item>
+            <Item>*.env</Item>
+            <Item>*.env.*</Item>
+            <Item>*credentials*</Item>
+            <Item>*secret*</Item>
+            <Item>*.pem</Item>
+            <Item>*.key</Item>
+        </Exclude>
+        <SizeMin Unit="None">0</SizeMin>
+        <SizeMax Unit="None">0</SizeMax>
+        <TimeSpan Type="None">0</TimeSpan>
+    </Filter>
+    <FolderPairs>
+        <Pair>
+            <Left>/home/eaglesvn/dockerz/gptmd/services/api</Left>
+            <Right>/home/obgyn.eaglesvn.club/gptmd/staging/api</Right>
+        </Pair>
+    </FolderPairs>
+    <Errors Ignore="false" Retry="0" Delay="5"/>
+    <PostSyncCommand Condition="Completion"/>
+    <LogFolder>/home/eaglesvn/.local/state/gptmd/ffs-logs</LogFolder>
+    <EmailNotification Condition="Always"/>
+    <GridViewType>Action</GridViewType>
+    <Batch>
+        <ProgressDialog Minimized="true" AutoClose="true"/>
+        <ErrorDialog>Cancel</ErrorDialog>
+        <PostSyncAction>None</PostSyncAction>
+    </Batch>
+</FreeFileSync>

@@ -8,8 +8,8 @@ const turn = {
   turnId: 'turn-1', sessionId, sequence: 1,
   acceptedAt: '2026-10-01T00:01:00.000Z', phase: 'history', learnerMessage: 'What brings you in?',
   versions: {
-    promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
-    schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
+    promptVersion: 'patient-turn-prompt-v10', modelVersion: 'gpt-6-luna',
+    schemaVersion: 4, policyVersion: 'patient-turn-policy-v10', rubricVersion: null
   },
   learnerModality: 'typed', patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
   patientReportedPainFacts: [],
@@ -89,9 +89,9 @@ function workerHarness(options: {
       if (command[0] === 'XREADGROUP') {
         return [['gptmd:session-events', [['1-0', ['event', streamEvent]]]]]
       }
-      if (command[0] === 'XACK') {
-        order.push('ack')
-        return 1
+      if (command[0] === 'EVAL') {
+        order.push('ack-delete')
+        return [1, 1]
       }
       if (command[0] === 'XINFO' && command[1] === 'GROUPS') {
         return [[
@@ -188,16 +188,24 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack-delete'])
+    const ackDeleteCall = harness.redis.sendCommand.mock.calls.find(([command]) => command[0] === 'EVAL')?.[0]
+    expect(ackDeleteCall).toEqual([
+      'EVAL', expect.stringContaining("redis.call('XACK'"), '1',
+      'gptmd:session-events', 'gptmd-session-history', '1-0'
+    ])
+    const ackDeleteScript = ackDeleteCall?.[1] ?? ''
+    expect(ackDeleteScript).toContain("redis.call('XDEL'")
+    expect(ackDeleteScript.indexOf('XACK')).toBeLessThan(ackDeleteScript.indexOf('XDEL'))
     expect(onError).toHaveBeenCalledWith(expect.objectContaining({ message: 'metrics sink unavailable' }))
   })
 
-  it('commits accepted history before acknowledging its stream entry', async () => {
+  it('commits accepted history before atomically acknowledging and trimming its stream entry', async () => {
     const harness = workerHarness()
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack-delete'])
     expect(harness.client.release).toHaveBeenCalledOnce()
   })
 
@@ -206,7 +214,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'commit', 'ack-delete'])
     expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_events'), expect.anything())
   })
 
@@ -216,7 +224,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'insert', 'insert-usage', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert', 'insert-usage', 'commit', 'ack-delete'])
     expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
       expect.any(String), sessionId, 'tenant-a', 'learner-a', turn.turnId, 'resp-private',
       'gpt-6-luna', null, 120, 20, 0, 30, 150, null, null, 842, turn.acceptedAt
@@ -242,7 +250,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'commit', 'ack-delete'])
     expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), expect.anything())
   })
 
@@ -255,7 +263,7 @@ describe('PostgreSQL session event worker', () => {
     await expect(harness.worker.processOnce()).rejects.toThrow('different provider usage')
 
     expect(harness.order).toEqual(['begin', 'rollback'])
-    expect(harness.redis.sendCommand).not.toHaveBeenCalledWith(['XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'])
+    expect(harness.redis.sendCommand.mock.calls.filter(([command]) => command[0] === 'EVAL')).toHaveLength(0)
   })
 
   it('persists setup-generation usage without adding it to clinical session history', async () => {
@@ -268,7 +276,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'insert-usage', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert-usage', 'commit', 'ack-delete'])
     expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
       expect.any(String), sessionId, 'tenant-a', 'learner-a', 'scenario_generation',
       'resp-setup', 'gpt-6-luna', null, 900, 0, 0, 300, 1200, null, null, 3420, turn.acceptedAt
@@ -295,7 +303,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'commit', 'ack-delete'])
     expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), expect.anything())
   })
 
@@ -312,9 +320,7 @@ describe('PostgreSQL session event worker', () => {
       const harness = workerHarness({ streamEvent })
       await expect(harness.worker.processOnce()).rejects.toThrow()
       expect(harness.order).toEqual([])
-      expect(harness.redis.sendCommand).not.toHaveBeenCalledWith([
-        'XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'
-      ])
+      expect(harness.redis.sendCommand.mock.calls.filter(([command]) => command[0] === 'EVAL')).toHaveLength(0)
     }
   })
 
@@ -324,7 +330,7 @@ describe('PostgreSQL session event worker', () => {
     await expect(harness.worker.processOnce()).rejects.toThrow('database unavailable')
 
     expect(harness.order).toEqual(['begin', 'rollback'])
-    expect(harness.redis.sendCommand).not.toHaveBeenCalledWith(['XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'])
+    expect(harness.redis.sendCommand.mock.calls.filter(([command]) => command[0] === 'EVAL')).toHaveLength(0)
   })
 
   it('leaves the accepted event pending when usage persistence fails', async () => {
@@ -336,7 +342,7 @@ describe('PostgreSQL session event worker', () => {
     await expect(harness.worker.processOnce()).rejects.toThrow('usage database unavailable')
 
     expect(harness.order).toEqual(['begin', 'insert', 'rollback'])
-    expect(harness.redis.sendCommand).not.toHaveBeenCalledWith(['XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'])
+    expect(harness.redis.sendCommand.mock.calls.filter(([command]) => command[0] === 'EVAL')).toHaveLength(0)
   })
 
   it('persists each disclosure after its accepted turn using a per-turn ordinal', async () => {
@@ -352,7 +358,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack-delete'])
     expect(harness.query).toHaveBeenCalledWith(
       expect.stringContaining('event_ordinal, event_type'),
       [disclosure.eventId, sessionId, disclosure.sequence, disclosure.eventOrdinal,
@@ -372,7 +378,7 @@ describe('PostgreSQL session event worker', () => {
     const harness = workerHarness({ streamEvent: phaseChange, prior: { sequence: 1, event_ordinal: 0 } })
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
-    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack-delete'])
   })
 
   it('persists the unscored assessment after the phase event in the same turn sequence', async () => {
@@ -388,7 +394,7 @@ describe('PostgreSQL session event worker', () => {
     const harness = workerHarness({ streamEvent: submission, prior: { sequence: 1, event_ordinal: 1 } })
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
-    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack-delete'])
     const insert = harness.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO session_events'))
     expect(insert?.[1]?.slice(0, 6)).toEqual([
       submission.eventId, sessionId, submission.sequence, submission.eventOrdinal,
@@ -407,7 +413,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'insert-audit', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'insert-audit', 'commit', 'ack-delete'])
     expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_turn_audits'), [
       audit.eventId, sessionId, audit.payload.turnIdHash, audit.eventType, audit.payload.attemptCount, audit.occurredAt
     ])
@@ -429,7 +435,7 @@ describe('PostgreSQL session event worker', () => {
 
     await expect(harness.worker.processOnce()).resolves.toBe(1)
 
-    expect(harness.order).toEqual(['begin', 'commit', 'ack'])
+    expect(harness.order).toEqual(['begin', 'commit', 'ack-delete'])
     expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_turn_audits'), expect.anything())
   })
 
@@ -444,8 +450,6 @@ describe('PostgreSQL session event worker', () => {
     await expect(harness.worker.processOnce()).rejects.toThrow('database unavailable')
 
     expect(harness.order).toEqual(['begin', 'rollback'])
-    expect(harness.redis.sendCommand).not.toHaveBeenCalledWith([
-      'XACK', 'gptmd:session-events', 'gptmd-session-history', '1-0'
-    ])
+    expect(harness.redis.sendCommand.mock.calls.filter(([command]) => command[0] === 'EVAL')).toHaveLength(0)
   })
 })

@@ -30,6 +30,7 @@ function makeAuthCookie(): string {
 test('home exposes the planned learning and account entry points', async ({ page }) => {
   await page.goto('/')
 
+  await expect(page).toHaveTitle('Home | GPTpatient')
   await expect(page.getByRole('heading', { name: 'Your practice space' })).toBeVisible()
   const entryCards = page.locator('.entry-grid')
   await expect(entryCards.getByRole('link', { name: /Instructions/ })).toHaveAttribute('href', '/tutorial')
@@ -67,7 +68,7 @@ test('main navigation has icons and collapses behind a mobile hamburger', async 
 })
 
 test('account requires sign-in when Supabase is configured', async ({ page }) => {
-  await page.goto('/account')
+  await page.goto('/account', { waitUntil: 'domcontentloaded' })
 
   await expect(page).toHaveURL(/\/login\?redirect=\/account$/)
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
@@ -124,8 +125,10 @@ test('signed-in account workspace context carries through the home into Begin Vi
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ memberships: [
-      { tenantId: 'tenant-one', role: 'learner' },
-      { tenantId: 'tenant-two', role: 'customer_admin' }
+      { tenantId: 'tenant-one', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true },
+      { tenantId: 'tenant-two', role: 'customer_admin', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true },
+      { tenantId: 'tenant-three', role: 'learner', sessionsEnabled: true, responsesEnabled: false, audioTranscriptionAvailable: false },
+      { tenantId: 'tenant-four', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: false }
     ] })
   }))
   await page.route('**/api/encounters/current', async (route) => route.fulfill({
@@ -135,7 +138,7 @@ test('signed-in account workspace context carries through the home into Begin Vi
   }))
   const sessionId = 's'.repeat(43)
   const versionPins = {
-    promptVersion: 'patient-scenario-prompt-v10',
+    promptVersion: 'patient-scenario-prompt-v12',
     modelVersion: 'gpt-6-luna',
     schemaVersion: 7,
     policyVersion: 'patient-scenario-policy-v3'
@@ -186,9 +189,12 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await expect(page.getByText('Signed in as learner@example.test')).toBeVisible()
   const accountWorkspace = page.getByRole('combobox', { name: 'GPTpatient workspace' })
   await expect(accountWorkspace).toBeVisible()
-  await expect(accountWorkspace.locator('option')).toHaveText(['Workspace 1', 'Workspace 2'])
+  await expect(accountWorkspace.locator('option')).toHaveText(['Workspace 1', 'Workspace 2', 'Workspace 3', 'Workspace 4'])
   await accountWorkspace.selectOption('tenant-two')
   await expect(page.getByText('Your role in this workspace: Customer administrator. Role-specific tools are not available yet.')).toBeVisible()
+  await accountWorkspace.selectOption('tenant-three')
+  await expect(page.getByText('Visit setup is not enabled for this workspace. Contact your workspace administrator.')).toBeVisible()
+  await accountWorkspace.selectOption('tenant-two')
   await expect(page.getByText('Choose the workspace you want to use before starting an encounter.')).toBeHidden()
   await page.screenshot({ path: '/tmp/gptmd-signed-in-account-desktop.png', fullPage: false })
 
@@ -200,6 +206,9 @@ test('signed-in account workspace context carries through the home into Begin Vi
   const mainNavigation = page.getByRole('navigation', { name: 'Main navigation' })
   await expect(mainNavigation.getByRole('button', { name: 'Learner role required' })).toBeDisabled()
   await expect(mainNavigation.getByRole('link', { name: 'Begin Visit' })).toHaveCount(0)
+  await page.getByLabel('Practice workspace').selectOption('tenant-three')
+  await expect(page.locator('.welcome-panel').getByRole('button', { name: 'Visit access unavailable' })).toBeDisabled()
+  await expect(page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' })).toHaveCount(0)
   await page.getByLabel('Practice workspace').selectOption('tenant-one')
   await expect(page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' })).toBeEnabled()
   await expect(mainNavigation.getByRole('link', { name: 'Begin Visit' })).toBeVisible()
@@ -222,6 +231,18 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await page.getByRole('button', { name: 'Enter Room' }).click()
   await expect(page.locator('.status-row [role="status"]')).toContainText(/green light.*your turn/i)
   expect(sessionTenantId).toBe('tenant-one')
+
+  await page.setViewportSize({ width: 1440, height: 900 })
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Home' }).click()
+  await page.getByLabel('Practice workspace').selectOption('tenant-four')
+  await page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' }).click()
+  const transcriptOnlyPreflight = page.getByRole('dialog', { name: 'Before you begin' })
+  await expect(transcriptOnlyPreflight.locator('input[name="interaction-mode"][value="transcript"]')).toBeChecked()
+  await expect(transcriptOnlyPreflight.getByRole('radio', { name: /Voice conversation/ })).toBeDisabled()
+  await expect(transcriptOnlyPreflight.getByText(/voice transcription is unavailable for this workspace/i)).toBeVisible()
+  await expect(transcriptOnlyPreflight.getByRole('checkbox', { name: /send my microphone audio to OpenAI/i })).toHaveCount(0)
+  await transcriptOnlyPreflight.getByRole('checkbox', { name: /use fictional details only/i }).check()
+  await expect(transcriptOnlyPreflight.getByRole('button', { name: 'Continue with transcript' })).toBeEnabled()
   expect(pageErrors).toEqual([])
   expect(consoleErrors).toEqual([])
 })

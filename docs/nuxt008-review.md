@@ -1,4 +1,4 @@
-## What it is
+# What it is
 
 `nuxgpt008` is a Nuxt 3/Vue 3 web app for **GPTpatient: OBGYN**, intended to let clinicians practice medical-English patient conversations. The repo also contains backend services and Docker Compose setup for sessions, simulated-patient setup, speech recognition, and spoken replies.
 

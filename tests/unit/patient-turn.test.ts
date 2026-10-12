@@ -4,6 +4,7 @@ import {
   generatePatientTurn,
   matchHistoryCueFields,
   matchPainCueFields,
+  PatientTurnModelOutputSchema,
   validatePatientTurnOutput,
   type PatientTurnGenerationContext
 } from '../../services/api/src/patient-turn.ts'
@@ -33,8 +34,8 @@ const profile: PatientScenarioProfile = {
 const context: PatientTurnGenerationContext = {
   scenarioId: 'scenario-1', profile, conversationId: 'conv_private',
   versions: {
-    promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
-    schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
+    promptVersion: 'patient-turn-prompt-v10', modelVersion: 'gpt-6-luna',
+    schemaVersion: 4, policyVersion: 'patient-turn-policy-v10', rubricVersion: null
   },
   acceptedTurns: [], phase: 'history', learnerMessage: 'Do you have pain?'
 }
@@ -85,7 +86,7 @@ describe('patient turn generation and validation', () => {
     expect(request?.input?.[0]?.content).toContain('a refusal is an occasional, topic-specific response')
     expect(request?.input?.[0]?.content).toContain('invite the patient to revisit the question')
     expect(request?.input?.[0]?.content).toContain('When a directly matched scenario history field is marked unknown')
-    expect(request?.input?.[0]?.content).toContain('unknown miscellaneousDetailsNos history field is an expandable patient-reported catchall')
+    expect(request?.input?.[0]?.content).toContain('An earlier catchall answer does not close the field')
     expect(request?.input?.[0]?.content).toContain('Conversation repair is mutual and follows a volley')
     expect(request?.input?.[0]?.content).toContain('one repair step at a time in this order')
     expect(request?.input?.[0]?.content).toContain('up to three or four times')
@@ -94,6 +95,9 @@ describe('patient turn generation and validation', () => {
     const userInput = JSON.parse(String(request?.input?.[1]?.content)) as Record<string, unknown>
     expect(userInput.patientScenario).not.toHaveProperty('diagnosis')
     expect(userInput.patientScenario).not.toHaveProperty('bodyType')
+    expect(userInput.patientScenario).not.toHaveProperty('vitalSigns')
+    expect(userInput.patientScenario).not.toHaveProperty('physicalExamFindings')
+    expect(userInput.patientScenario).not.toHaveProperty('supportedExamFindings')
     expect(userInput.patientScenario).toMatchObject({
       painHistoryStatus: 'present',
       relevantHistory: [],
@@ -111,6 +115,32 @@ describe('patient turn generation and validation', () => {
     expect(userInput.matchedFieldResponseGuidance).not.toHaveProperty('painQuality')
     expect(userInput).not.toHaveProperty('acceptedEncounter')
     expect(userInput).toMatchObject({ phase: 'history', latestLearnerMessage: context.learnerMessage })
+  })
+
+  it('rejects model-created exam actions, findings, and test results', () => {
+    const validOutput = {
+      patientResponse: 'I understand.',
+      proposedFacts: [],
+      historyCoverage: [],
+      disclosedHistoryFields: []
+    }
+
+    expect(PatientTurnModelOutputSchema.safeParse({
+      ...validOutput,
+      clinicalActions: [{
+        kind: 'exam', status: 'completed', examName: 'lung auscultation', finding: 'clear',
+        actionId: 'action-1', sessionId: 's'.repeat(43), turnId: 'turn-0001',
+        occurredAt: '2026-10-10T12:00:00.000Z', chaperone: 'not_required'
+      }]
+    }).success).toBe(false)
+    expect(PatientTurnModelOutputSchema.safeParse({
+      ...validOutput,
+      supportedExamFindings: ['lungs clear']
+    }).success).toBe(false)
+    expect(PatientTurnModelOutputSchema.safeParse({
+      ...validOutput,
+      supportedTestResults: [{ testName: 'ultrasound', result: 'normal' }]
+    }).success).toBe(false)
   })
 
   it('does not send profile history when the learner message matches no history cue', async () => {
@@ -143,6 +173,12 @@ describe('patient turn generation and validation', () => {
     expect(matchHistoryCueFields('How many children do you have?')).toEqual(['numberChildren'])
     expect(matchHistoryCueFields('Do you have any other associated symptoms, such as fever or nausea?'))
       .toEqual(['miscellaneousDetailsNos'])
+    expect(matchHistoryCueFields('Have you had abdominal bloating, pelvic pressure, or felt full quickly?'))
+      .toEqual(['miscellaneousDetailsNos'])
+    expect(matchHistoryCueFields('Have you noticed that you urinate more often or have constipation?'))
+      .toEqual(['miscellaneousDetailsNos'])
+    expect(matchHistoryCueFields('Does the pain come and go?')).toEqual([])
+    expect(matchPainCueFields('Does the pain come and go?')).toEqual(['constantIntermittentPain'])
   })
 
   it.each([
@@ -266,18 +302,18 @@ describe('patient turn generation and validation', () => {
     }])
   })
 
-  it('accepts an on-demand catchall response only when the learner asks about associated symptoms', () => {
+  it('appends newly asked catchall details across turns without changing earlier disclosures', async () => {
     const catchallContext: PatientTurnGenerationContext = {
       ...context,
-      learnerMessage: 'Do you have any other associated symptoms?',
+      learnerMessage: 'Have you felt bloated or full quickly?',
       profile: {
         ...profile,
         history: [{ field: 'miscellaneousDetailsNos', status: 'unknown', value: null }]
       }
     }
     const accepted = validatePatientTurnOutput({
-      patientResponse: 'I have not had a fever or nausea.',
-      proposedFacts: [{ field: 'miscellaneousDetailsNos', value: ['No fever', 'No nausea'] }],
+      patientResponse: 'I have felt bloated after meals, but I do not get full unusually quickly.',
+      proposedFacts: [{ field: 'miscellaneousDetailsNos', value: ['Bloating after meals', 'No early fullness'] }],
       historyCoverage: ['miscellaneousDetailsNos'],
       disclosedHistoryFields: ['miscellaneousDetailsNos']
     }, catchallContext, 'turn-other-symptoms', 1, acceptedAt)
@@ -286,8 +322,91 @@ describe('patient turn generation and validation', () => {
     expect(accepted.patientReportedFacts[0]).toMatchObject({
       field: 'miscellaneousDetailsNos',
       section: 'Safety, trauma, and other information',
-      value: ['No fever', 'No nausea']
+      value: ['Bloating after meals', 'No early fullness']
     })
+
+    const firstFact = accepted.patientReportedFacts[0]!
+    const priorTurn = {
+      turnId: 'turn-other-symptoms', sessionId: 's'.repeat(43), sequence: 1, acceptedAt,
+      phase: 'history' as const, learnerModality: 'typed' as const, versions: context.versions,
+      learnerMessage: catchallContext.learnerMessage,
+      patientResponse: 'I have felt bloated after meals, but I do not get full unusually quickly.',
+      patientReportedFacts: [firstFact], patientReportedPainFacts: [],
+      historyCoverage: ['miscellaneousDetailsNos' as const],
+      disclosedHistoryFields: ['miscellaneousDetailsNos' as const],
+      disclosedFactIds: accepted.disclosedFactIds,
+      painHistoryCoverage: [], painDisclosures: [],
+      historyCoverageState: accepted.historyCoverageState, clinicalActions: []
+    }
+
+    const expansionContext: PatientTurnGenerationContext = {
+      ...catchallContext,
+      learnerMessage: 'Have you felt nauseated too?',
+      acceptedTurns: [priorTurn]
+    }
+    const expandedDetails = ['Bloating after meals', 'No early fullness', 'Nausea after meals']
+    const { streamFactory } = createMockResponsesStream({
+      id: 'resp-catchall-expansion', status: 'completed',
+      output_parsed: {
+        patientResponse: 'I have felt nauseated after meals too.',
+        proposedFacts: [{ field: 'miscellaneousDetailsNos', value: expandedDetails }],
+        historyCoverage: ['miscellaneousDetailsNos'],
+        disclosedHistoryFields: ['miscellaneousDetailsNos']
+      }
+    })
+    const client = { responses: { stream: streamFactory } } as unknown as OpenAI
+    await generatePatientTurn(client, 'gpt-6-luna', expansionContext)
+    const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
+    const input = JSON.parse(String(request?.input?.[1]?.content)) as {
+      patientScenario: { relevantHistory: Array<{ field: string; value: unknown }> }
+    }
+    expect(input.patientScenario.relevantHistory).toEqual([{
+      field: 'miscellaneousDetailsNos', value: ['Bloating after meals', 'No early fullness'],
+      status: 'known', source: 'patient_reported'
+    }])
+
+    const expanded = validatePatientTurnOutput({
+      patientResponse: 'I have felt nauseated after meals too.',
+      proposedFacts: [{ field: 'miscellaneousDetailsNos', value: expandedDetails }],
+      historyCoverage: ['miscellaneousDetailsNos'],
+      disclosedHistoryFields: ['miscellaneousDetailsNos']
+    }, expansionContext, 'turn-other-nausea', 2, '2026-10-03T03:05:05.000Z')
+    const expandedFact = expanded.patientReportedFacts[0]!
+    expect(expandedFact).toMatchObject({ field: 'miscellaneousDetailsNos', value: expandedDetails })
+    expect(expanded.disclosedFactIds).toEqual([expandedFact.factId])
+
+    expect(() => validatePatientTurnOutput({
+      patientResponse: 'I only remember nausea now.',
+      proposedFacts: [{ field: 'miscellaneousDetailsNos', value: ['Nausea after meals'] }],
+      historyCoverage: ['miscellaneousDetailsNos'],
+      disclosedHistoryFields: ['miscellaneousDetailsNos']
+    }, expansionContext, 'turn-other-rewrite', 2, '2026-10-03T03:05:06.000Z'))
+      .toThrow('Patient turn conflicts with an already accepted patient fact')
+
+    const expandedTurn = {
+      ...priorTurn,
+      turnId: 'turn-other-nausea',
+      sequence: 2,
+      acceptedAt: '2026-10-03T03:05:05.000Z',
+      learnerMessage: expansionContext.learnerMessage,
+      patientResponse: 'I have felt nauseated after meals too.',
+      patientReportedFacts: [expandedFact],
+      disclosedFactIds: expanded.disclosedFactIds,
+      historyCoverageState: expanded.historyCoverageState
+    }
+    const repeated = validatePatientTurnOutput({
+      patientResponse: 'Yes, I still feel bloated after meals.',
+      proposedFacts: [],
+      historyCoverage: ['miscellaneousDetailsNos'],
+      disclosedHistoryFields: ['miscellaneousDetailsNos']
+    }, {
+      ...catchallContext,
+      learnerMessage: 'Have you still felt bloated after meals?',
+      acceptedTurns: [priorTurn, expandedTurn]
+    }, 'turn-repeat-other-symptoms', 3, '2026-10-03T03:06:05.000Z')
+
+    expect(repeated.patientReportedFacts).toEqual([])
+    expect(repeated.disclosedFactIds).toEqual(expanded.disclosedFactIds)
   })
 
   it('accepts a new fact only for a scenario history field explicitly marked unknown', () => {
@@ -574,6 +693,15 @@ describe('patient turn generation and validation', () => {
     expect(validatePatientTurnOutput(
       makeOutput('2026-10-01'), lmpContext, 'turn-lmp-valid', 1, acceptedAt
     ).patientReportedFacts).toHaveLength(1)
+    expect(validatePatientTurnOutput(
+      makeOutput('the 13th of last month'), lmpContext, 'turn-lmp-last-month', 1, acceptedAt
+    ).patientReportedFacts).toHaveLength(1)
+    expect(() => validatePatientTurnOutput(
+      makeOutput('June 4'), {
+        ...lmpContext,
+        profile: { ...lmpContext.profile, dateOfBirth: '2026-06-05' }
+      }, 'turn-lmp-yearless-before-birth', 1, acceptedAt
+    )).toThrow('Last menstrual period date must fall between')
     expect(validatePatientTurnOutput(
       makeOutput('about three weeks ago'), lmpContext, 'turn-lmp-relative-valid', 1, acceptedAt
     ).patientReportedFacts).toHaveLength(1)

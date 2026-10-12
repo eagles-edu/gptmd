@@ -13,6 +13,7 @@ Environment=PORT=4000
 ExecStart=/usr/bin/node /home/eaglesvn/dockerz/gptmd/scripts/gptmd-api-env.mjs start
 Restart=on-failure
 RestartSec=3
+TimeoutStopSec=30s
 NoNewPrivileges=true
 PrivateTmp=true
 ProtectSystem=full

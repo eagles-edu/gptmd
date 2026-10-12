@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { createInterface } from 'node:readline/promises'
+import { createInterface } from 'node:readline'
 import { stdin, stdout } from 'node:process'
 
 const VERSION_PATTERN = /gptMD-dev\\?_(\d+)\.(\d+)\.(\d+)\.(\d+)/i
@@ -60,14 +60,18 @@ async function main() {
   }
 
   const prompt = createInterface({ input: stdin, output: stdout })
-  let message
-  try {
-    message = (await prompt.question(`Commit message [${suggestedMessage}]: `)).trim()
-  } finally {
-    prompt.close()
-  }
+  const message = await new Promise((resolve, reject) => {
+    prompt.question('Commit message (edit, Enter accepts): ', (answer) => {
+      prompt.close()
+      resolve(answer.trim() || suggestedMessage)
+    })
+    prompt.write(suggestedMessage)
+    prompt.once('SIGINT', () => {
+      prompt.close()
+      reject(new Error('Commit cancelled.'))
+    })
+  })
 
-  message ||= suggestedMessage
   runGit(['add', '.'])
   runGit(['commit', '-m', message])
   runGit(['push'])

@@ -227,8 +227,8 @@ describe('Redis patient state store', () => {
       turnId: 'turn-1', sessionId, sequence: 1, acceptedAt: '2026-10-01T00:01:00.000Z',
       phase: 'history', learnerModality: 'typed',
       versions: {
-        promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
-        schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
+        promptVersion: 'patient-turn-prompt-v10', modelVersion: 'gpt-6-luna',
+        schemaVersion: 4, policyVersion: 'patient-turn-policy-v10', rubricVersion: null
       },
       learnerMessage: 'What brings you in?', patientResponse: 'I have pelvic pain.',
       patientReportedFacts: [], historyCoverage: [], disclosedHistoryFields: [],

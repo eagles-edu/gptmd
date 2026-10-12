@@ -254,3 +254,47 @@ source.
 
 <!-- curatormd:record_id=8705cd21d024b1b845925f7cf29ba88d;content_sha256=2ffe96f58304078014ac8d4725cd493d20ba04f1950fa3313d86e4a0c045d72f -->
 <!-- curatormd:fingerprint=d2b0fec99ed6ba8164b26c3b520864a9d276bba4491094659d78397668f49ece -->
+
+## Install and activate GPTMD Node through nvm
+
+**Added:** 2026-10-12
+
+## Install and activate GPTMD Node through nvm
+
+**Beginning — trigger and context:** A GPTMD shell could not run `nvm use` because the `nvm` command was unavailable. The repository requires Node >=24 <25 and pins Node 24 in `.nvmrc`; the task was to make the project runtime selectable through nvm.
+
+**Middle — decisions and work:** Checked the project version pin and shell setup. Installed nvm in the user's home directory and configured Bash startup to load `~/.nvm/nvm.sh` and its completion script. Used the repository `.nvmrc` to install and select Node 24.21.0 rather than adding another runtime version.
+
+**End — outcome and verification:** A fresh interactive Bash shell loaded nvm 0.40.6, `nvm use` selected Node v24.21.0, and npm reported 11.19.0. The current checkout also confirms `nvm install` reports v24.21.0 already installed and `nvm use` selects it. No application tests were run because this was a user-level runtime setup.
+
+**Rationale:** Records how to restore the project Node runtime when Bash does not recognize nvm, while keeping the version aligned with `.nvmrc`, package engine ranges, and CI.
+
+**Future utility:** Future GPTMD shell setup can source nvm from Bash startup and use `.nvmrc` to install/select the supported runtime.
+
+**Project impact:** Observed: a fresh interactive Bash shell can resolve nvm and select the pinned Node and npm versions. Expected: this makes project commands consistently use the runtime declared by the repository; application behavior was not tested.
+
+**Verification:** Observed: a fresh interactive Bash shell can resolve nvm and select the pinned Node and npm versions. Expected: this makes project commands consistently use the runtime declared by the repository; application behavior was not tested.
+
+<!-- curatormd:record_id=f57faa169f22591ec64fb9e3f367fee3;content_sha256=0d685690197a0cf19c5f817d9f61495e26f00553e03db8f8ddd8c673620b9cb9 -->
+<!-- curatormd:fingerprint=04428a6a43d339979bb7e8f5a7d19b7fdf05950f5894e62a4b07932580fdb827 -->
+
+## Reuse authenticated desktop Chrome for OnePortal
+
+**Added:** 2026-10-12
+
+## Reuse authenticated desktop Chrome for OnePortal
+
+**Beginning — trigger and context:** Repeated OnePortal work triggered another login cycle because an isolated Playwright browser profile was used even though the user's desktop Chrome already had an authenticated OnePortal session. The user asked to codify and repeat the successful method.
+
+**Middle — decisions and work:** Launched the exact OneShield WAF URL with `google-chrome --new-tab 'https://portal.inet.vn/list-service/one-shield/waf/eaglesvn.club'`. Chrome reported that it opened the URL in the existing browser session. Captured the existing Chrome window and visually confirmed the authenticated OnePortal WAF Rules page for `eaglesvn.club`. This parent domain is the applicable WAF scope for the `obgyn` DNS host record. No credentials, cookies, or browser storage were accessed, and no WAF settings were changed.
+
+**End — outcome and verification:** The authenticated desktop Chrome session was reused successfully and the parent-domain WAF page was visible. The repeatable entry command and verification approach are ready to record in the project SOP; the visual screenshot is current-turn evidence. An isolated Playwright profile remains separate and must not be treated as the authenticated browser.
+
+**Future utility:** Prevents repeated sign-in requests by directing OnePortal work to the persistent desktop Chrome profile and checking the visible signed-in page before continuing.
+
+**Project impact:** Observed: Chrome opened the requested WAF URL in its existing session and showed the authenticated OnePortal page. Expected: future work can resume authenticated portal tasks without repeating sign-in, while preserving secrets and avoiding accidental changes.
+
+**Verification:** Observed: Chrome opened the requested WAF URL in its existing session and showed the authenticated OnePortal page. Expected: future work can resume authenticated portal tasks without repeating sign-in, while preserving secrets and avoiding accidental changes.
+
+<!-- curatormd:record_id=14ac9226e487f64d679dfff15f464e93;content_sha256=05f0ddb79f1aaeaa4dc658ebf120ef79253684d075c763bb1c592324d7cd521c -->
+<!-- curatormd:fingerprint=5668612a4b101d35d4cd1c50a6966bb1bf5eadd7f36af502b32546d7957cd82f -->

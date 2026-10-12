@@ -1,6 +1,6 @@
 import { once } from 'node:events'
 import type { Server } from 'node:http'
-import { createHmac, randomBytes } from 'node:crypto'
+import { createHash, createHmac, randomBytes } from 'node:crypto'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { createApiApp, type ApiDependencies } from '../../services/api/src/app.js'
 import { createServiceClients, realtimeTranscriptionSessionConfig } from '../../services/api/src/clients.js'
@@ -39,7 +39,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 const sessionVersions: PatientScenarioVersionPins = {
-  promptVersion: 'patient-scenario-prompt-v10',
+  promptVersion: 'patient-scenario-prompt-v12',
   modelVersion: 'gpt-6-luna',
   schemaVersion: 7,
   policyVersion: 'patient-scenario-policy-v3'
@@ -56,11 +56,13 @@ function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore
   }
   return {
     getActiveMemberships: vi.fn().mockResolvedValue([
-      { tenantId: 'tenant-a', role: 'learner' }, { tenantId: 'tenant-b', role: 'learner' }
+      { tenantId: 'tenant-a', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }, { tenantId: 'tenant-b', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }
     ]),
     consumeQuota: vi.fn().mockResolvedValue('allowed'),
     createAudioTranscriptionGrant: vi.fn().mockResolvedValue({ grantId: 'audio-grant-test' }),
     recordAudioProviderSession: vi.fn().mockResolvedValue(undefined),
+    recordAudioTranscriptionUsage: vi.fn().mockResolvedValue(undefined),
+    setAudioUsageObserverStatus: vi.fn().mockResolvedValue(undefined),
     createSession: vi.fn().mockResolvedValue(record),
     setupScenario: vi.fn().mockResolvedValue('not_found'),
     submitPatientTurn: vi.fn().mockResolvedValue('not_found'),
@@ -96,6 +98,7 @@ const createDependencies = (overrides: Partial<ApiDependencies> = {}): ApiDepend
   createTranscriptionCall: vi.fn().mockResolvedValue({
     answerSdp: 'mock-answer', providerCallId: 'call_provider_test', providerSessionId: 'sess_provider_test'
   }),
+  observeTranscriptionUsage: vi.fn().mockResolvedValue(vi.fn()),
   hangupTranscriptionCall: vi.fn().mockResolvedValue(undefined),
   model: 'gpt-6-luna',
   jwt: { secret: jwtSecret, issuer: 'https://issuer.test', audience: 'gptmd-api' },
@@ -130,12 +133,69 @@ describe('GPTMD API integrations', () => {
       type: 'transcription',
       audio: {
         input: {
-          format: { type: 'audio/pcm', rate: 24_000 },
           transcription: { model: 'gpt-live-transcribe', languages: ['en'] },
           turn_detection: null
         }
       }
     })
+  })
+
+  it('reports bounded provider call errors without exposing the ephemeral secret', async () => {
+    const requestId = 'req_live_test_123'
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        value: 'ek_ephemeral-secret-value',
+        expires_at: 1_800_000_000,
+        session: { id: 'sess_test', object: 'realtime.transcription_session', type: 'transcription' }
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        error: { type: 'server_error', message: 'Temporary provider failure' }
+      }), {
+        status: 500,
+        headers: { 'content-type': 'application/json', 'x-request-id': requestId }
+      }))
+    const clients = createServiceClients({ OPENAI_API_KEY: 'unit-test-openai-key' })
+    try {
+      const failure = await clients.dependencies.createTranscriptionCall?.('v=0\r\n').catch((error: unknown) => error)
+      expect(failure).toMatchObject({
+        status: 500,
+        message: expect.stringContaining(`HTTP 500, code server_error, details Temporary provider failure, request ${requestId}`)
+      })
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).not.toContain('ek_ephemeral-secret-value')
+    } finally {
+      await clients.close()
+    }
+  })
+
+  it('preserves safe gateway headers for non-JSON Realtime failures without exposing the response body', async () => {
+    vi.spyOn(globalThis, 'fetch')
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        value: 'ek_ephemeral-secret-value',
+        expires_at: 1_800_000_000,
+        session: { id: 'sess_test', object: 'realtime.transcription_session', type: 'transcription' }
+      }), { status: 200, headers: { 'content-type': 'application/json' } }))
+      .mockResolvedValueOnce(new Response('Internal Server Error', {
+        status: 500,
+        headers: {
+          'content-type': 'text/plain; charset=utf-8',
+          server: 'gateway-test',
+          'cf-ray': 'ray-test-123'
+        }
+      }))
+    const clients = createServiceClients({ OPENAI_API_KEY: 'unit-test-openai-key' })
+    try {
+      const failure = await clients.dependencies.createTranscriptionCall?.('v=0\r\n').catch((error: unknown) => error)
+      expect(failure).toBeInstanceOf(Error)
+      expect((failure as Error).message).toContain('HTTP 500')
+      expect((failure as Error).message).toContain('details non-JSON text/plain; charset=utf-8 (21 bytes)')
+      expect((failure as Error).message).toContain('server gateway-test')
+      expect((failure as Error).message).toContain('cf-ray ray-test-123')
+      expect((failure as Error).message).not.toContain('Internal Server Error')
+      expect((failure as Error).message).not.toContain('ek_ephemeral-secret-value')
+    } finally {
+      await clients.close()
+    }
   })
 
   it('defaults the OpenAI model to GPT-6 Luna', async () => {
@@ -174,6 +234,36 @@ describe('GPTMD API integrations', () => {
     expect(command).toContain('redis.call(\'INCR\', KEYS[1])')
     expect(command).toContain('redis.call(\'EXPIRE\', KEYS[1], ARGV[1])')
     expect(key).not.toContain('192.0.2.10')
+  })
+
+  it('ignores caller-supplied forwarded IP when no proxy is trusted', async () => {
+    const increment = vi.fn().mockResolvedValue({ count: 1, ttlSeconds: 60 })
+    await withApi(createDependencies({
+      trustedProxyAddresses: [],
+      requestRateLimitStore: { increment }
+    }), async (baseUrl) => {
+      await fetch(`${baseUrl}/api/not-found`, {
+        headers: { 'x-forwarded-for': '198.51.100.99' }
+      })
+
+      expect(increment).toHaveBeenCalledOnce()
+      expect(increment).toHaveBeenCalledWith(hashRateLimitKey('ip', '127.0.0.1'), 60)
+    })
+  })
+
+  it('uses the single client IP resolved by the configured loopback ingress proxy', async () => {
+    const increment = vi.fn().mockResolvedValue({ count: 1, ttlSeconds: 60 })
+    await withApi(createDependencies({
+      trustedProxyAddresses: ['127.0.0.1'],
+      requestRateLimitStore: { increment }
+    }), async (baseUrl) => {
+      await fetch(`${baseUrl}/api/not-found`, {
+        headers: { 'x-forwarded-for': '203.0.113.25' }
+      })
+
+      expect(increment).toHaveBeenCalledOnce()
+      expect(increment).toHaveBeenCalledWith(hashRateLimitKey('ip', '203.0.113.25'), 60)
+    })
   })
 
   it('keeps liveness available while reporting unavailable dependencies in readiness', async () => {
@@ -215,6 +305,21 @@ describe('GPTMD API integrations', () => {
       })
       expect(dependencies.redis?.ping).toHaveBeenCalledOnce()
       expect(dependencies.postgres?.query).toHaveBeenCalledOnce()
+    })
+  })
+
+  it('issues a unique server-generated request ID and ignores caller-supplied IDs', async () => {
+    await withApi(createDependencies(), async (baseUrl) => {
+      const suppliedId = 'attacker-controlled-request-id'
+      const first = await fetch(`${baseUrl}/healthz`, { headers: { 'x-request-id': suppliedId } })
+      const second = await fetch(`${baseUrl}/healthz`)
+      const firstId = first.headers.get('x-request-id')
+      const secondId = second.headers.get('x-request-id')
+
+      expect(firstId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+      expect(secondId).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i)
+      expect(firstId).not.toBe(suppliedId)
+      expect(secondId).not.toBe(firstId)
     })
   })
 
@@ -404,7 +509,7 @@ describe('GPTMD API integrations', () => {
 
   it.each(['instructor', 'customer_admin'] as const)(
     'loads the active %s role and denies non-learners from encounter routes', async (role) => {
-      const getActiveMemberships = vi.fn().mockResolvedValue([{ tenantId: 'tenant-a', role }])
+      const getActiveMemberships = vi.fn().mockResolvedValue([{ tenantId: 'tenant-a', role, sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }])
       const sessionStore = createSessionStore({ getActiveMemberships })
       await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
         const response = await fetch(`${baseUrl}/api/sessions`, {
@@ -473,8 +578,9 @@ describe('GPTMD API integrations', () => {
     const createTranscriptionCall = vi.fn().mockResolvedValue({
       answerSdp: 'mock-answer', providerCallId: 'call_provider_test', providerSessionId: 'sess_provider_test'
     })
+    const observeTranscriptionUsage = vi.fn().mockResolvedValue(vi.fn().mockResolvedValue(undefined))
     const hangupTranscriptionCall = vi.fn().mockResolvedValue(undefined)
-    await withApi(createDependencies({ sessionStore, createTranscriptionCall, hangupTranscriptionCall }), async (baseUrl) => {
+    await withApi(createDependencies({ sessionStore, createTranscriptionCall, observeTranscriptionUsage, hangupTranscriptionCall }), async (baseUrl) => {
       const url = `${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`
       const denied = await fetch(url, { method: 'POST', headers: authHeaders(), body: JSON.stringify({}) })
       expect(denied.status).toBe(400)
@@ -495,7 +601,34 @@ describe('GPTMD API integrations', () => {
       expect(sessionStore.recordAudioProviderSession).toHaveBeenCalledWith(
         'audio-grant-test', 'sess_provider_test', 'call_provider_test'
       )
+      expect(sessionStore.setAudioUsageObserverStatus).toHaveBeenCalledWith('call_provider_test', 'connected')
+      expect(observeTranscriptionUsage).toHaveBeenCalledWith(
+        'call_provider_test', expect.any(Function), expect.any(Function)
+      )
       expect(createTranscriptionCall).toHaveBeenCalledWith('v=0\\r\\n')
+    })
+  })
+
+  it('persists only provider-reported transcription duration from the server observer', async () => {
+    const sessionStore = createSessionStore()
+    let observedUsage: ((usage: { eventId: string; seconds: number }) => Promise<void>) | undefined
+    const observeTranscriptionUsage = vi.fn(async (
+      _callId: string,
+      onUsage: (usage: { eventId: string; seconds: number }) => Promise<void>
+    ) => {
+      observedUsage = onUsage
+      return vi.fn()
+    })
+    await withApi(createDependencies({ sessionStore, observeTranscriptionUsage }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1', sdp: 'v=0\\r\\n' })
+      })
+      expect(response.status).toBe(200)
+      await observedUsage?.({ eventId: 'event_provider_1', seconds: 4.25 })
+      expect(sessionStore.recordAudioTranscriptionUsage).toHaveBeenCalledWith(
+        'call_provider_test', 'event_provider_1', 4.25
+      )
     })
   })
 
@@ -529,6 +662,22 @@ describe('GPTMD API integrations', () => {
     })
   })
 
+  it('hangs up and marks the provider call interrupted if its usage observer cannot attach', async () => {
+    const sessionStore = createSessionStore()
+    const hangupTranscriptionCall = vi.fn().mockResolvedValue(undefined)
+    const observeTranscriptionUsage = vi.fn().mockRejectedValue(new Error('sideband unavailable'))
+    await withApi(createDependencies({ sessionStore, hangupTranscriptionCall, observeTranscriptionUsage }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${randomBytes(32).toString('base64url')}/audio-transcription`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ consentVersion: 'gptmd-audio-transcription-v1', sdp: 'v=0\\r\\n' })
+      })
+      expect(response.status).toBe(503)
+      expect(await response.json()).toEqual({ error: 'Voice transcription could not be authorized or initialized' })
+      expect(sessionStore.setAudioUsageObserverStatus).toHaveBeenCalledWith('call_provider_test', 'interrupted')
+      expect(hangupTranscriptionCall).toHaveBeenCalledWith('call_provider_test')
+    })
+  })
+
   it('rejects oversized SDP before granting audio transcription', async () => {
     const sessionStore = createSessionStore()
     const createTranscriptionCall = vi.fn()
@@ -545,7 +694,7 @@ describe('GPTMD API integrations', () => {
 
   it('resolves Supabase identities against GPTMD memberships and rejects unlisted tenant headers', async () => {
     const getActiveMemberships = vi.fn().mockResolvedValue([
-      { tenantId: 'tenant-a', role: 'instructor' }, { tenantId: 'tenant-b', role: 'learner' }
+      { tenantId: 'tenant-a', role: 'instructor', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }, { tenantId: 'tenant-b', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }
     ])
     const sessionStore = createSessionStore({ getActiveMemberships })
     const dependencies = createDependencies({ sessionStore })
@@ -556,7 +705,8 @@ describe('GPTMD API integrations', () => {
       })
       expect(tenants.status).toBe(200)
       expect(await tenants.json()).toEqual({ memberships: [
-        { tenantId: 'tenant-a', role: 'instructor' }, { tenantId: 'tenant-b', role: 'learner' }
+        { tenantId: 'tenant-a', role: 'instructor', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true },
+        { tenantId: 'tenant-b', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }
       ] })
 
       const missingSelection = await fetch(`${baseUrl}/api/sessions`, {
@@ -584,7 +734,7 @@ describe('GPTMD API integrations', () => {
 
   it('selects a sole membership automatically and permits only configured browser origins', async () => {
     const sessionStore = createSessionStore({
-      getActiveMemberships: vi.fn().mockResolvedValue([{ tenantId: 'tenant-only', role: 'learner' }])
+      getActiveMemberships: vi.fn().mockResolvedValue([{ tenantId: 'tenant-only', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }])
     })
     const dependencies = createDependencies({
       sessionStore,
@@ -895,6 +1045,7 @@ describe('GPTMD API integrations', () => {
     const recordSessionCommitTiming = vi.fn((_operation: string, _elapsedMs: number) => {
       throw new Error('metrics sink unavailable')
     })
+    const info = vi.spyOn(console, 'info').mockImplementation(() => undefined)
     const dependencies = createDependencies({
       sessionStore, generatePatientTurn, recordSessionCommitTiming, allowedOrigins: ['https://gptmd.test']
     })
@@ -910,7 +1061,21 @@ describe('GPTMD API integrations', () => {
       expect(response.headers.get('server-timing')).toMatch(
         /^interactive_capacity_wait;dur=\d+\.\d{3}, session_lock_attempt;dur=2\.500, redis_turn_state_event_commit;dur=3\.750, responses_first_token;dur=12\.000, responses_completion;dur=24\.000$/
       )
-      expect(response.headers.get('access-control-expose-headers')).toBe('Server-Timing')
+      expect(response.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/i)
+      expect(response.headers.get('x-gptmd-turn-id')).toBe(turnId)
+      expect(response.headers.get('access-control-expose-headers')).toBe(
+        'Server-Timing, X-Request-ID, X-GPTMD-Turn-ID'
+      )
+      const correlationLog = info.mock.calls
+        .map(([message]) => JSON.parse(String(message)) as Record<string, unknown>)
+        .find((entry) => entry.event === 'patient_turn_request')
+      expect(correlationLog).toEqual({
+        event: 'patient_turn_request',
+        requestId: response.headers.get('x-request-id'),
+        turnIdHash: createHash('sha256').update(turnId).digest('hex')
+      })
+      expect(JSON.stringify(correlationLog)).not.toContain(turnId)
+      expect(JSON.stringify(correlationLog)).not.toContain('Where does it hurt?')
       expect(recordSessionCommitTiming).toHaveBeenCalledWith('turn', 3.75)
       expect(submitPatientTurn).toHaveBeenCalledWith(
         { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' }, sessionId, turnId,

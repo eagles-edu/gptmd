@@ -1,0 +1,175 @@
+x-gptmd-local-log-policy: &gptmd-local-log-policy
+  driver: local
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    logging: *gptmd-local-log-policy
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?Set POSTGRES_DB in .env}
+      POSTGRES_USER: ${POSTGRES_USER:?Set POSTGRES_USER in .env}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      POSTGRES_MCP_USER: ${POSTGRES_MCP_USER:?Set POSTGRES_MCP_USER in .env}
+      POSTGRES_MCP_PASSWORD: ${POSTGRES_MCP_PASSWORD:?Set POSTGRES_MCP_PASSWORD in .env}
+    ports:
+      - "127.0.0.1:${GPTMD_DEV_POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - gptmd-postgres-data:/var/lib/postgresql/data
+      - ./postgres/10-create-mcp-readonly.sh:/docker-entrypoint-initdb.d/10-create-mcp-readonly.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 10s
+    networks:
+      - gptmd-data
+
+  redis:
+    image: redis/redis-stack-server@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
+    restart: unless-stopped
+    logging: *gptmd-local-log-policy
+    environment:
+      REDIS_ARGS: --requirepass ${GPTMD_LOCAL_REDIS_PASSWORD:?Run npm run dev to configure the local Redis password}
+      REDISCLI_AUTH: ${GPTMD_LOCAL_REDIS_PASSWORD:?Run npm run dev to configure the local Redis password}
+    ports:
+      - "127.0.0.1:${GPTMD_DEV_REDIS_PORT:-6381}:6379"
+    volumes:
+      - gptmd-dev-redis-data:/data
+      - ./redis-dev.conf:/redis-stack.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user default ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+    networks:
+      - gptmd-data
+
+  api:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.dev
+    restart: unless-stopped
+    logging: *gptmd-local-log-policy
+    stop_grace_period: 30s
+    working_dir: /workspace/services/api
+    command: ["node", "--import", "tsx", "--watch", "src/server.ts"]
+    environment: &api-environment
+      NODE_ENV: development
+      HOST: 0.0.0.0
+      PORT: "4000"
+      GPTMD_PRIVATE_COMPOSE_BIND: "true"
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-gpt-6-luna}
+      REDIS_URL: redis://default:${GPTMD_LOCAL_REDIS_PASSWORD}@redis:6379/0
+      DATABASE_URL: ${GPTMD_LOCAL_DATABASE_URL:?Run npm run dev to configure Compose database access}
+      API_AUTH_JWT_SECRET: ${API_AUTH_JWT_SECRET:-}
+      API_AUTH_JWT_ISSUER: ${API_AUTH_JWT_ISSUER:-}
+      API_AUTH_JWT_AUDIENCE: ${API_AUTH_JWT_AUDIENCE:-}
+      API_AUTH_JWT_JWKS_URL: ${API_AUTH_JWT_JWKS_URL:-}
+      API_CORS_ORIGINS: ${GPTMD_LOCAL_API_CORS_ORIGINS:?Run npm run dev to configure local CORS origins}
+      API_SETUP_MAX_CONCURRENT: ${API_SETUP_MAX_CONCURRENT:-2}
+      API_SETUP_MAX_QUEUED: ${API_SETUP_MAX_QUEUED:-4}
+      API_SETUP_QUEUE_TIMEOUT_MS: ${API_SETUP_QUEUE_TIMEOUT_MS:-15000}
+      API_RATE_LIMIT_WINDOW_SECONDS: ${API_RATE_LIMIT_WINDOW_SECONDS:-60}
+      API_RATE_LIMIT_PER_IP: ${API_RATE_LIMIT_PER_IP:-1200}
+      API_RATE_LIMIT_PER_IDENTITY: ${API_RATE_LIMIT_PER_IDENTITY:-300}
+    ports:
+      - "127.0.0.1:${GPTMD_DEV_API_PORT:-4000}:4000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    networks:
+      - gptmd-data
+      - gptmd-egress
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:4000/readyz').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 20s
+
+  worker:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.dev
+    restart: unless-stopped
+    logging: *gptmd-local-log-policy
+    working_dir: /workspace/services/api
+    command: ["node", "--import", "tsx", "--watch", "src/worker.ts"]
+    environment:
+      <<: *api-environment
+      HOST: ""
+      PORT: ""
+      GPTMD_PRIVATE_COMPOSE_BIND: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      api:
+        condition: service_healthy
+    networks:
+      - gptmd-data
+      - gptmd-egress
+
+  web:
+    build:
+      context: ..
+      dockerfile: ops/Dockerfile.dev
+    restart: unless-stopped
+    logging: *gptmd-local-log-policy
+    working_dir: /workspace
+    command: ["npm", "run", "dev:web", "--", "--host", "0.0.0.0", "--port", "3000"]
+    environment:
+      NODE_ENV: development
+      NUXT_PUBLIC_API_BASE: http://127.0.0.1:${GPTMD_DEV_API_PORT:-4000}
+      NUXT_PUBLIC_SUPABASE_URL: ${NUXT_PUBLIC_SUPABASE_URL:-}
+      NUXT_PUBLIC_SUPABASE_KEY: ${NUXT_PUBLIC_SUPABASE_KEY:-}
+      NUXT_PUBLIC_PAYMENT_PORTAL_URL: ${NUXT_PUBLIC_PAYMENT_PORTAL_URL:-}
+      NUXT_PUBLIC_PAYMENT_CHECKOUT_6_MONTH_URL: ${NUXT_PUBLIC_PAYMENT_CHECKOUT_6_MONTH_URL:-}
+      NUXT_PUBLIC_PAYMENT_CHECKOUT_12_MONTH_URL: ${NUXT_PUBLIC_PAYMENT_CHECKOUT_12_MONTH_URL:-}
+      NUXT_PUBLIC_SUPPORT_EMAIL: ${NUXT_PUBLIC_SUPPORT_EMAIL:-}
+      NUXT_PUBLIC_MERCHANT_LEGAL_NAME: ${NUXT_PUBLIC_MERCHANT_LEGAL_NAME:-}
+      NUXT_PUBLIC_MERCHANT_TAX_ID: ${NUXT_PUBLIC_MERCHANT_TAX_ID:-}
+      NUXT_PUBLIC_MERCHANT_TAX_ID_ISSUED: ${NUXT_PUBLIC_MERCHANT_TAX_ID_ISSUED:-}
+      NUXT_PUBLIC_MERCHANT_ADDRESS: ${NUXT_PUBLIC_MERCHANT_ADDRESS:-}
+      NUXT_PUBLIC_MERCHANT_PHONE: ${NUXT_PUBLIC_MERCHANT_PHONE:-}
+      NUXT_PUBLIC_MOIT_VERIFICATION_URL: ${NUXT_PUBLIC_MOIT_VERIFICATION_URL:-}
+    ports:
+      - "127.0.0.1:${GPTMD_DEV_WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_started
+    networks:
+      - gptmd-egress
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 10s
+      timeout: 3s
+      retries: 10
+      start_period: 25s
+
+volumes:
+  gptmd-postgres-data:
+  gptmd-dev-redis-data:
+
+networks:
+  gptmd-data:
+    internal: true
+  gptmd-egress: {}

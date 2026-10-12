@@ -12,7 +12,7 @@
       <NuxtLink v-if="canBeginVisit" class="primary-link" to="/encounter">Begin Visit <span aria-hidden="true">→</span></NuxtLink>
       <NuxtLink v-else-if="user && membershipState === 'error'" class="primary-link" to="/account">Review account access <span aria-hidden="true">→</span></NuxtLink>
       <button v-else-if="user" class="primary-link primary-link-disabled" type="button" disabled>
-        {{ membershipState === 'loading' ? 'Loading workspace…' : selectedRole !== 'learner' && selectedRole ? 'Learner access is required' : 'Workspace access needed' }}
+        {{ membershipState === 'loading' ? 'Loading workspace…' : selectedRole !== 'learner' && selectedRole ? 'Learner access is required' : selectedMembership && !visitEntitled ? 'Visit access unavailable' : 'Workspace access needed' }}
       </button>
       <NuxtLink v-else class="primary-link" to="/encounter">Begin Visit <span aria-hidden="true">→</span></NuxtLink>
     </div>
@@ -36,8 +36,13 @@
       <p v-else-if="selectedRole && selectedRole !== 'learner'" class="membership-message" role="status">
         This workspace is for {{ selectedRole === 'customer_admin' ? 'customer administration' : 'instructor tools' }}. Learner encounters are unavailable to this role.
       </p>
+      <p v-else-if="selectedRole === 'learner' && !visitEntitled" class="membership-message" role="status">
+        Visit setup is not enabled for this workspace. Contact your workspace administrator.
+      </p>
       <p v-else-if="membershipState === 'loading'" class="membership-message" role="status">Checking workspace access…</p>
-      <p v-else-if="tenantIds.length === 1" class="membership-message">Workspace access is ready.</p>
+      <p v-else-if="selectedRole === 'learner' && selectedMembership" class="membership-message" role="status">
+        {{ visitEntitled ? 'Visit setup is included in this workspace. Remaining quota is checked when you begin.' : 'Visit setup is not enabled for this workspace. Contact your workspace administrator.' }}
+      </p>
     </section>
 
     <div class="entry-grid" role="group" aria-label="Home and account links">
@@ -82,14 +87,18 @@
 </template>
 
 <script setup lang="ts">
+useHead({ title: 'Home | GPTpatient' })
+
 const { user, isConfigured, memberships, loadTenantMemberships, selectedTenantId } = useGptmdAuth()
 const tenantIds = computed(() => memberships.value.map((membership) => membership.tenantId))
-const selectedRole = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role)
+const selectedMembership = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value))
+const selectedRole = computed(() => selectedMembership.value?.role)
+const visitEntitled = computed(() => Boolean(selectedMembership.value?.sessionsEnabled && selectedMembership.value.responsesEnabled))
 const membershipState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
 const membershipMessage = ref('')
 const hasSelectedWorkspace = computed(() => Boolean(selectedTenantId.value && tenantIds.value.includes(selectedTenantId.value)))
 const canBeginVisit = computed(() => !user.value || !isConfigured.value ||
-  (membershipState.value === 'ready' && hasSelectedWorkspace.value && selectedRole.value === 'learner'))
+  (membershipState.value === 'ready' && hasSelectedWorkspace.value && selectedRole.value === 'learner' && visitEntitled.value))
 
 async function loadMemberships(): Promise<void> {
   if (!user.value) return
@@ -108,6 +117,8 @@ async function loadMemberships(): Promise<void> {
     const role = memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.role
     if (role && role !== 'learner') {
       membershipMessage.value = `Your workspace role is ${role === 'customer_admin' ? 'customer administrator' : 'instructor'}. Learner encounters are unavailable to this role; role-specific tools are not implemented yet.`
+    } else if (role === 'learner' && !visitEntitled.value) {
+      membershipMessage.value = 'Visit setup is not enabled for this workspace. Contact your workspace administrator.'
     }
     membershipState.value = 'ready'
   } catch {

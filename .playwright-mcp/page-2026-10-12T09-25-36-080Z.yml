@@ -1,0 +1,129 @@
+- generic [ref=f4e4]:
+  - generic [ref=f4e7]:
+    - generic [ref=f4e10]:
+      - img "Google" [ref=f4e12]
+      - generic [ref=f4e13]: Sign in with Google
+    - generic [ref=f4e14]:
+      - generic [ref=f4e16]:
+        - heading "Sign in" [level=1] [ref=f4e17]
+        - paragraph [ref=f4e18]:
+          - text: to continue to
+          - button "gptMD-web-oauth" [ref=f4e19] [cursor=pointer]
+      - generic [ref=f4e22]:
+        - generic [ref=f4e25]:
+          - generic [ref=f4e30]:
+            - textbox "Email or phone" [active] [ref=f4e31]
+            - generic: Email or phone
+          - paragraph [ref=f4e32]:
+            - link "Forgot email?" [ref=f4e33] [cursor=pointer]:
+              - /url: /signin/v2/usernamerecovery?app_domain=http://localhost:8000&client_id=176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com&continue=https://accounts.google.com/signin/oauth/legacy/consent?authuser%3Dunknown%26part%3DAJi8hAOW3ztXQ9PK1ZQHhVMvOyfzSqeUW1DmX1N2oYYUPPC3YYBi7HQCWXdU-sS-ZLS-eoplKXbwYakjLkH1VDefR_nnVqgzpaOULaLFsl-BdsV31NMdIUaszjVz7NW37ySelxuYc9KqlQMEKWJC__HR1l2G0N9T3caUlly9EdcEXODz_hDbasHwHKFcu6CXga2s1SBzc7LT99C8lcTQEsERxAGkxp6vwC--jTmyE97Yiz04OLgdKSkHfA1tVRGNMCbIM-N_bcIQ0CQNsfANUOX4SvYM6q4RJa3hnVMYUX_5zdesIueSzeBML9A9yXOZYkh00y-Ok0Ryz0TD7cWL7l94Owy5WLEHWLd-od3Ms3RQnoA68cWliv24wwg-EY9Z9p_7ehX7UPocaYfpCRsude7XcWuvTn_OiCJebc8DPYqox4kVe57Pb1JJsF_rVkuQC8bYcn7db5_Ce2Yx1Sw6tGqeNuSPqkUgDGuTjxHvtRLObooi68GZTfyV2cj9ZN8PG64FZ3Uv5OO1HJHgTp8GF_g7SFTYvKlY0_ySJ2mO2W3Chr0pmm2SDQrkVH1WQPqgR_-wSdgFdnJkNjNTFIBI1rtlz_ldsZQbru6uzx2QoQqpYXvklcjol4BTlToO-vmmf-CFTicFnbSW%26flowName%3DGeneralOAuthFlow%26as%3DS-1506013539%253A1791797135031091%26client_id%3D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%23&dsh=S-1506013539:1791797135031091&flowName=GeneralOAuthLite&o2v=2&opparams=%253Fredirect_to%253Dhttps%25253A%25252F%25252Fobgyn.eaglesvn.club%25252Fconfirm&rart=ANgoxccsECryB3RqlxyTLfwK1lSUZWDmI6sikE1KELJDm86cXp2XhqXgHNIZTHhGNSymvBnllp3EVegjfkrhsEdNLNRUuiasKmT6afZWvjZ5CbIt9RFlSc8&redirect_uri=http://localhost:8000/auth/v1/callback&response_type=code&scope=email+profile&service=lso&state=0b2011cf-eea2-480d-b8ea-35f3e3bafce6
+        - paragraph [ref=f4e36]:
+          - text: Before using this app, you can review gptMD-web-oauth’s
+          - link "Privacy Policy" [ref=f4e37] [cursor=pointer]:
+            - /url: https://obgyn.gptpatient.com/privacy-policy.html
+          - text: and
+          - link "Terms of Service" [ref=f4e38] [cursor=pointer]:
+            - /url: https://obgyn.gptpatient.com/terms.html
+          - text: .
+        - generic [ref=f4e40]:
+          - button "Next" [ref=f4e42]
+          - link "Create account" [ref=f4e44] [cursor=pointer]:
+            - /url: /lifecycle/flows/signup?app_domain=http://localhost:8000&client_id=176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com&continue=https://accounts.google.com/signin/oauth/legacy/consent?authuser%3Dunknown%26part%3DAJi8hAOW3ztXQ9PK1ZQHhVMvOyfzSqeUW1DmX1N2oYYUPPC3YYBi7HQCWXdU-sS-ZLS-eoplKXbwYakjLkH1VDefR_nnVqgzpaOULaLFsl-BdsV31NMdIUaszjVz7NW37ySelxuYc9KqlQMEKWJC__HR1l2G0N9T3caUlly9EdcEXODz_hDbasHwHKFcu6CXga2s1SBzc7LT99C8lcTQEsERxAGkxp6vwC--jTmyE97Yiz04OLgdKSkHfA1tVRGNMCbIM-N_bcIQ0CQNsfANUOX4SvYM6q4RJa3hnVMYUX_5zdesIueSzeBML9A9yXOZYkh00y-Ok0Ryz0TD7cWL7l94Owy5WLEHWLd-od3Ms3RQnoA68cWliv24wwg-EY9Z9p_7ehX7UPocaYfpCRsude7XcWuvTn_OiCJebc8DPYqox4kVe57Pb1JJsF_rVkuQC8bYcn7db5_Ce2Yx1Sw6tGqeNuSPqkUgDGuTjxHvtRLObooi68GZTfyV2cj9ZN8PG64FZ3Uv5OO1HJHgTp8GF_g7SFTYvKlY0_ySJ2mO2W3Chr0pmm2SDQrkVH1WQPqgR_-wSdgFdnJkNjNTFIBI1rtlz_ldsZQbru6uzx2QoQqpYXvklcjol4BTlToO-vmmf-CFTicFnbSW%26flowName%3DGeneralOAuthFlow%26as%3DS-1506013539%253A1791797135031091%26client_id%3D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%23&dsh=S-1506013539:1791797135031091&flowEntry=SignUp&flowName=GlifWebSignIn&o2v=2&opparams=%253Fredirect_to%253Dhttps%25253A%25252F%25252Fobgyn.eaglesvn.club%25252Fconfirm&rart=ANgoxccsECryB3RqlxyTLfwK1lSUZWDmI6sikE1KELJDm86cXp2XhqXgHNIZTHhGNSymvBnllp3EVegjfkrhsEdNLNRUuiasKmT6afZWvjZ5CbIt9RFlSc8&redirect_uri=http://localhost:8000/auth/v1/callback&response_type=code&scope=email+profile&service=lso&signInUrl=https://accounts.google.com/signin/oauth?app_domain%3Dhttp://localhost:8000%26client_id%3D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%26continue%3Dhttps://accounts.google.com/signin/oauth/legacy/consent?authuser%253Dunknown%2526part%253DAJi8hAOW3ztXQ9PK1ZQHhVMvOyfzSqeUW1DmX1N2oYYUPPC3YYBi7HQCWXdU-sS-ZLS-eoplKXbwYakjLkH1VDefR_nnVqgzpaOULaLFsl-BdsV31NMdIUaszjVz7NW37ySelxuYc9KqlQMEKWJC__HR1l2G0N9T3caUlly9EdcEXODz_hDbasHwHKFcu6CXga2s1SBzc7LT99C8lcTQEsERxAGkxp6vwC--jTmyE97Yiz04OLgdKSkHfA1tVRGNMCbIM-N_bcIQ0CQNsfANUOX4SvYM6q4RJa3hnVMYUX_5zdesIueSzeBML9A9yXOZYkh00y-Ok0Ryz0TD7cWL7l94Owy5WLEHWLd-od3Ms3RQnoA68cWliv24wwg-EY9Z9p_7ehX7UPocaYfpCRsude7XcWuvTn_OiCJebc8DPYqox4kVe57Pb1JJsF_rVkuQC8bYcn7db5_Ce2Yx1Sw6tGqeNuSPqkUgDGuTjxHvtRLObooi68GZTfyV2cj9ZN8PG64FZ3Uv5OO1HJHgTp8GF_g7SFTYvKlY0_ySJ2mO2W3Chr0pmm2SDQrkVH1WQPqgR_-wSdgFdnJkNjNTFIBI1rtlz_ldsZQbru6uzx2QoQqpYXvklcjol4BTlToO-vmmf-CFTicFnbSW%2526flowName%253DGeneralOAuthFlow%2526as%253DS-1506013539%25253A1791797135031091%2526client_id%253D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%2523%26dsh%3DS-1506013539:1791797135031091%26flowName%3DGeneralOAuthLite%26o2v%3D2%26opparams%3D%25253Fredirect_to%25253Dhttps%2525253A%2525252F%2525252Fobgyn.eaglesvn.club%2525252Fconfirm%26rart%3DANgoxccsECryB3RqlxyTLfwK1lSUZWDmI6sikE1KELJDm86cXp2XhqXgHNIZTHhGNSymvBnllp3EVegjfkrhsEdNLNRUuiasKmT6afZWvjZ5CbIt9RFlSc8%26redirect_uri%3Dhttp://localhost:8000/auth/v1/callback%26response_type%3Dcode%26scope%3Demail%2Bprofile%26service%3Dlso%26state%3D0b2011cf-eea2-480d-b8ea-35f3e3bafce6&state=0b2011cf-eea2-480d-b8ea-35f3e3bafce6
+  - contentinfo [ref=f4e45]:
+    - combobox [ref=f4e48] [cursor=pointer]:
+      - option "Afrikaans"
+      - option "azərbaycan"
+      - option "bosanski"
+      - option "català"
+      - option "Čeština"
+      - option "Cymraeg"
+      - option "Dansk"
+      - option "Deutsch"
+      - option "eesti"
+      - option "English (United Kingdom)"
+      - option "English (United States)" [selected]
+      - option "Español (España)"
+      - option "Español (Latinoamérica)"
+      - option "euskara"
+      - option "Filipino"
+      - option "Français (Canada)"
+      - option "Français (France)"
+      - option "Gaeilge"
+      - option "galego"
+      - option "Hrvatski"
+      - option "Indonesia"
+      - option "isiZulu"
+      - option "íslenska"
+      - option "Italiano"
+      - option "Kiswahili"
+      - option "latviešu"
+      - option "lietuvių"
+      - option "magyar"
+      - option "Melayu"
+      - option "Nederlands"
+      - option "norsk"
+      - option "o‘zbek"
+      - option "polski"
+      - option "Português (Brasil)"
+      - option "Português (Portugal)"
+      - option "română"
+      - option "shqip"
+      - option "Slovenčina"
+      - option "slovenščina"
+      - option "srpski (latinica)"
+      - option "Suomi"
+      - option "Svenska"
+      - option "Tiếng Việt"
+      - option "Türkçe"
+      - option "Ελληνικά"
+      - option "беларуская"
+      - option "български"
+      - option "кыргызча"
+      - option "қазақ тілі"
+      - option "македонски"
+      - option "монгол"
+      - option "Русский"
+      - option "српски (ћирилица)"
+      - option "Українська"
+      - option "ქართული"
+      - option "հայերեն"
+      - option "‫עברית‬‎"
+      - option "‫اردو‬‎"
+      - option "‫العربية‬‎"
+      - option "‫فارسی‬‎"
+      - option "አማርኛ"
+      - option "नेपाली"
+      - option "मराठी"
+      - option "हिन्दी"
+      - option "অসমীয়া"
+      - option "বাংলা"
+      - option "ਪੰਜਾਬੀ"
+      - option "ગુજરાતી"
+      - option "ଓଡ଼ିଆ"
+      - option "தமிழ்"
+      - option "తెలుగు"
+      - option "ಕನ್ನಡ"
+      - option "മലയാളം"
+      - option "සිංහල"
+      - option "ไทย"
+      - option "ລາວ"
+      - option "မြန်မာ"
+      - option "ខ្មែរ"
+      - option "한국어"
+      - option "中文（香港）"
+      - option "日本語"
+      - option "简体中文"
+      - option "繁體中文"
+    - list [ref=f4e49]:
+      - listitem [ref=f4e50]:
+        - link "Open Google Account Help Center (external, opens in a new window)" [ref=f4e51] [cursor=pointer]:
+          - /url: https://support.google.com/accounts?hl=en-US&p=account_iph
+          - text: Help
+      - listitem [ref=f4e52]:
+        - link "Privacy Policy (external, opens in a new window)" [ref=f4e53] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=VN&hl=en-US&privacy=true
+          - text: Privacy
+      - listitem [ref=f4e54]:
+        - link "Google Terms of Service (external, opens in a new window)" [ref=f4e55] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=VN&hl=en-US
+          - text: Terms

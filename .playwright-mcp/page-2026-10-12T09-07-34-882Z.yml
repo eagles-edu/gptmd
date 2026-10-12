@@ -1,0 +1,75 @@
+- generic [ref=f2e5]:
+  - banner [ref=f2e6]:
+    - link "GPTpatient home" [ref=f2e7] [cursor=pointer]:
+      - /url: /
+      - img "GPTpatient" [ref=f2e8]
+    - navigation "Main navigation" [ref=f2e9]:
+      - link "Home" [ref=f2e10] [cursor=pointer]:
+        - /url: /
+      - link "Instructions" [ref=f2e14] [cursor=pointer]:
+        - /url: /tutorial
+      - link "History Overview" [ref=f2e18] [cursor=pointer]:
+        - /url: /history-taking
+      - link "Account" [ref=f2e22] [cursor=pointer]:
+        - /url: /account
+      - link "Contact" [ref=f2e27] [cursor=pointer]:
+        - /url: /contact
+      - link "Begin Visit" [ref=f2e32] [cursor=pointer]:
+        - /url: /encounter
+    - button "Switch to dark theme" [ref=f2e36] [cursor=pointer]:
+      - generic [aria-hidden] [ref=f2e37]: ☾
+      - generic [ref=f2e38]: Dark
+  - main [ref=f2e39]:
+    - region [ref=f2e40]:
+      - generic [ref=f2e41]:
+        - generic [ref=f2e42]:
+          - paragraph [ref=f2e43]: GPTpatient · OBGYN clinical communication
+          - heading "Your practice space" [level=1] [ref=f2e44]
+          - paragraph [ref=f2e45]: Build confidence taking a focused history with fictional patients. Choose a guide to get started, or begin a visit when you are ready.
+        - link "Begin Visit" [ref=f2e46] [cursor=pointer]:
+          - /url: /encounter
+          - text: Begin Visit
+          - generic [aria-hidden] [ref=f2e47]: →
+      - group "Home and account links" [ref=f2e48]:
+        - link "Instructions Learn how to start and guide a patient encounter." [ref=f2e49] [cursor=pointer]:
+          - /url: /tutorial
+          - generic [aria-hidden] [ref=f2e50]: "01"
+          - generic [ref=f2e51]:
+            - strong [ref=f2e52]: Instructions
+            - generic [ref=f2e53]: Learn how to start and guide a patient encounter.
+          - generic [aria-hidden] [ref=f2e54]: ↗
+        - link "History-Taking Overview Review a practical structure for a complete, patient-led history." [ref=f2e55] [cursor=pointer]:
+          - /url: /history-taking
+          - generic [aria-hidden] [ref=f2e56]: "02"
+          - generic [ref=f2e57]:
+            - strong [ref=f2e58]: History-Taking Overview
+            - generic [ref=f2e59]: Review a practical structure for a complete, patient-led history.
+          - generic [aria-hidden] [ref=f2e60]: ↗
+        - link "Account Status Usage, metrics, downloads, and payment access." [ref=f2e61] [cursor=pointer]:
+          - /url: /account
+          - generic [aria-hidden] [ref=f2e62]: "03"
+          - generic [ref=f2e63]:
+            - strong [ref=f2e64]: Account Status
+            - generic [ref=f2e65]: Usage, metrics, downloads, and payment access.
+          - generic [aria-hidden] [ref=f2e66]: ↗
+        - link "Contact Us Find support contact information for GPTpatient." [ref=f2e67] [cursor=pointer]:
+          - /url: /contact
+          - generic [aria-hidden] [ref=f2e68]: "04"
+          - generic [ref=f2e69]:
+            - strong [ref=f2e70]: Contact Us
+            - generic [ref=f2e71]: Find support contact information for GPTpatient.
+          - generic [aria-hidden] [ref=f2e72]: ↗
+      - paragraph [ref=f2e73]: Use fictional details only. Do not enter real patient identifiers or private health information.
+  - contentinfo [ref=f2e74]:
+    - generic [ref=f2e75]:
+      - generic [ref=f2e76]: GPTpatient · OBGYN standardized-patient practice
+      - generic [ref=f2e77]: Fictional training scenarios; not a clinical record or medical advice.
+    - navigation "Policies" [ref=f2e78]:
+      - link "Privacy" [ref=f2e79] [cursor=pointer]:
+        - /url: /privacy
+      - link "Terms" [ref=f2e80] [cursor=pointer]:
+        - /url: /terms
+      - link "Service provision" [ref=f2e81] [cursor=pointer]:
+        - /url: /service-provision
+      - link "Refunds and cancellation" [ref=f2e82] [cursor=pointer]:
+        - /url: /refunds

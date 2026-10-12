@@ -132,3 +132,74 @@ never commits or modifies application source.
 
 <!-- curatormd:record_id=498fe326fdde3e8e8287cea87042e725;content_sha256=f2a07cb56c718b0cb5e75aaf79971c64cd584f7c7f216fb016b14716db2d40d9 -->
 <!-- curatormd:fingerprint=4be923f12c3b6fc97128ba99eb327d43027f6c429177d3871512b48016055b9b -->
+
+## 2026-10-10 — Set the manual OLS site workflow and install acme.sh
+
+**Decision:** ## Set the manual OLS site workflow and install acme.sh
+
+**Beginning — trigger and context:** On 2026-10-07, the user described limitations in iNET.vn OneDash and asked for help creating webroots and configuring OpenLiteSpeed behind Nginx. The existing eaglesvn.club OLS vhost was found disabled by filename: the main config references vhconf.conf while only vhconf.conf.disabled exists. The user chose to work from the VNC console and use the production Nginx hierarchy.
+
+**Middle — decisions and work:** The workflow boundary was set: OneDash-managed Nginx files should be preserved; DNS remains in iNET/OneShield controls; OLS owns virtual hosts and document roots. The proposed provisioning script would create the webroot and OLS configuration, validate before reload, and use /etc/nginx/sites-available with /etc/nginx/sites-enabled for Nginx. The user then requested ACME installation. acme.sh 3.1.6 was installed as root at /root/.acme.sh/acme.sh, and its automatic renewal cron job was verified.
+
+**End — outcome and verification:** The ACME client and renewal schedule were reported installed. No certificate was requested, and Nginx or OLS configuration was not changed by that installation. The eaglesvn.club vhost repair and reusable site provisioning script remain unfinished; the thread left open whether to repair eaglesvn.club first or build a new-domain tool.
+
+**Rationale:** Preserves the verified server change and the chosen ownership boundaries for a later manual migration, while keeping the still-broken OLS vhost and unbuilt provisioning script explicit.
+
+**Future utility:** Future site work can retain OneDash-managed Nginx files, manage DNS at iNET, configure OLS vhosts and roots separately, validate before reload, and use the installed acme.sh client without assuming a certificate or web-server change has already happened.
+
+**Project impact:** Observed: acme.sh 3.1.6 and its automatic renewal cron job were verified. Expected: separating DNS, Nginx, and OLS responsibilities should reduce accidental overwrite risk during manual provisioning. The target site's OLS vhost still requires repair, and no certificate issuance or site provisioning was verified.
+
+**Follow-up:** Repair and validate the eaglesvn.club OLS vhost before using it as a production template; then implement the chosen provisioning workflow and request certificates only after DNS and challenge routing are ready.
+
+**Rationale:** Future site work can retain OneDash-managed Nginx files, manage DNS at iNET, configure OLS vhosts and roots separately, validate before reload, and use the installed acme.sh client without assuming a certificate or web-server change has already happened.
+
+**Impact:** Observed: acme.sh 3.1.6 and its automatic renewal cron job were verified. Expected: separating DNS, Nginx, and OLS responsibilities should reduce accidental overwrite risk during manual provisioning. The target site's OLS vhost still requires repair, and no certificate issuance or site provisioning was verified.
+
+<!-- curatormd:record_id=75b180e28552e0ca91b8b1c8edce39ea;content_sha256=38f1b31fdd6c0612f87d68d4ac769dca54cdaba09fec8e29e95f1249fb39a4d6 -->
+<!-- curatormd:fingerprint=9a458020f121e7bd0d381454e25db3f396fe45212a0a895754759a2b553ffc04 -->
+
+## 2026-10-10 — Isolate local Compose data services
+
+**Beginning — trigger and context:** The delivery checklist completed local startup but left the Postgres/Redis network boundary open. All services shared Compose's default network, allowing Nuxt to resolve the data-service names.
+
+**Middle — decisions and work:** Added an internal `gptmd-data` network for PostgreSQL and Redis. API and worker attach to both that network and the outbound app network; Nuxt attaches only to the app network. The resolved Compose configuration is validated by `npm run dev:compose:config`, and unit coverage rejects public-network data stores or a web-to-data connection. Host database ports remain loopback-published for local tools. Production exposure remains deferred until ingress is selected.
+
+**End — outcome and verification:** The Compose config validator and seven focused tests passed. An isolated project started PostgreSQL and Redis as healthy containers on a network reported `Internal=true`; both containers were stopped and only the two volumes labelled for that disposable project were removed. Existing `ops-postgres-1` and `redis-stack` remained running with their original start times. No application database, production ingress, or archive-retention policy was changed.
+
+**Future utility:** Preserves database isolation in local development while allowing API/worker provider egress and web/API app traffic. The same separation should be retained when a production Compose topology is designed.
+
+## 2026-10-10 — Build pinned non-root production images
+
+**Beginning — trigger and context:** The delivery checklist had a development Dockerfile only. Nuxt and Express needed separate production artifacts without bundling local credentials or development tooling into their runtime images.
+
+**Middle — decisions and work:** Added `ops/Dockerfile.production` with separate web and API targets. Each build installs from its lockfile using the official Node 24 multi-platform image pinned by digest. The web runtime contains Nuxt's generated `.output`; the API runtime contains compiled `dist` plus production-only dependencies. Both run under the unprivileged `node` user. The API target also supports the history worker entry point. Documentation requires unique release tags and states that build commands do not publish or deploy images.
+
+**End — outcome and verification:** Both production targets built successfully from the current worktree. The Nuxt build completed without warnings; the API TypeScript build passed. Image inspection showed user `node` and distinct content-addressed image IDs. The web container returned HTTP 200 and rendered its home-page heading. Its temporary container was removed; the two local verification images remain available. No deployment, database migration, registry push, or production exposure change was made.
+
+**Future utility:** Establishes a reproducible production image boundary for later deployment work while keeping host, secret injection, database, registry, and TLS choices separate.
+
+## 2026-10-10 — Drain API requests before closing clients
+
+**Beginning — trigger and context:** The API exposed health and readiness routes, but SIGTERM stopped the process with an unbounded `server.close()` wait. It did not reject new work on existing keep-alive connections, and its `finally(process.exit(0))` reported success even if client cleanup failed.
+
+**Middle — decisions and work:** Added a drain gate that returns `503` and `Connection: close` for requests received after shutdown starts. The API now stops accepting requests, waits up to 25 seconds for in-flight HTTP work, closes remaining sockets at the deadline, then closes provider observers and storage clients. Repeated termination signals force-close sockets. The development Compose service and systemd unit allow 30 seconds for cleanup.
+
+**End — outcome and verification:** Shutdown unit tests cover successful draining, rejection of new work, and deadline force-close; API TypeScript build passed. The full `npm run check` passed: 238 unit tests, API build, schema and diagram checks, production build, 33 standard browser tests, 40 preflight tests, 10 viewport tests, and one hosted MobileViewer test. Compose config validation and `git diff --check` passed. No running systemd unit or public ingress was changed.
+
+**Future utility:** Gives the API a bounded stop sequence for local Compose and future ingress deployments, with explicit behavior for in-flight requests and process cleanup errors.
+
+## 2026-10-10 — Trust forwarded client addresses only from configured proxies
+
+**Decision:** Express no longer trusts a fixed one-hop proxy chain. The API defaults to trusting no forwarded address and accepts an explicit, validated `API_TRUSTED_PROXY_ADDRESSES` list of proxy peer IPs/CIDRs.
+
+**Rationale:** A fixed hop count can let a direct caller influence `request.ip` by supplying `X-Forwarded-For`. Rate limits must derive a forwarded client address only when the immediate peer is an operator-configured proxy.
+
+**Impact:** Focused tests prove untrusted forwarded headers do not change the per-IP Redis limiter key, and reject wildcard/default-route trust configurations. The release checklist remains open until the production ingress peers and its forwarded-header sanitization are configured and verified.
+
+## 2026-10-10 — Add an opt-in live transcription verifier
+
+**Beginning — trigger and context:** The Realtime audio path was covered by mocked browser events, but those tests could not prove that a real provider call accepted browser WebRTC audio or that provider duration reached PostgreSQL.
+
+**Middle — decisions and work:** Added `npm run verify:live-realtime-transcription`, which extends the disposable live session verifier with a generated speech WAV played through Chromium WebRTC, the authenticated Express audio route, a finalized transcript submitted through the regular patient-turn route, and a check for persisted provider-reported audio duration. The command is explicitly opt-in because it makes billable setup and response requests. The Realtime session setup omits a fixed audio format for WebRTC; the browser negotiates media format through SDP. Failure output is bounded and redacts credentials; raw audio, SDP, and transcript text are not logged.
+
+**End — outcome and verification:** The script compiles, focused API integration tests pass, and all created provider Conversations were deleted after live attempts. The OpenAI client secret was created, but `POST /v1/realtime/calls` returned HTTP 500 before a call ID was returned, so no provider audio call, live transcript, duration event, or voice patient turn was verified. The checklist keeps `i07` open pending provider-call success and physical-microphone testing. `npm run verify:live-realtime-transcription` is not included in `npm run check`.

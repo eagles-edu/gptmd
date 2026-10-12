@@ -7,6 +7,28 @@ const policyPages = [
   { path: '/refunds', link: 'Refunds and cancellation', title: 'Refunds and cancellation', vi: 'Chính sách hoàn tiền và hủy dịch vụ' }
 ]
 
+test('same-origin microphone access is allowed while camera access stays disabled', async ({ page }, testInfo) => {
+  const response = await page.goto('/')
+  expect(response?.status()).toBe(200)
+
+  const permissionsPolicy = response?.headers()['permissions-policy'] ?? ''
+  expect(permissionsPolicy).toContain('microphone=(self)')
+  expect(permissionsPolicy).toContain('camera=()')
+
+  if (testInfo.project.name === 'chromium') {
+    const effectivePolicy = await page.evaluate(() => {
+      const policy = (document as Document & {
+        featurePolicy?: { allowsFeature: (feature: string) => boolean }
+      }).featurePolicy
+      return policy ? {
+        microphone: policy.allowsFeature('microphone'),
+        camera: policy.allowsFeature('camera')
+      } : null
+    })
+    expect(effectivePolicy).toEqual({ microphone: true, camera: false })
+  }
+})
+
 test('policy pages show bilingual current terms and footer navigation', async ({ page }) => {
   const pageErrors: string[] = []
   const consoleErrors: string[] = []

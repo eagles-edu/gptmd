@@ -45,7 +45,7 @@ test('resumes a saved encounter and sends the next turn through its existing ses
   await page.route('**/api/account/tenants', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/encounters/current', async (route) => {
     currentReads.push(`${route.request().method()} ${new URL(route.request().url()).pathname}`)
@@ -58,7 +58,7 @@ test('resumes a saved encounter and sends the next turn through its existing ses
           status: 'active',
           createdAt: '2026-10-01T00:00:00.000Z',
           updatedAt: '2026-10-01T00:05:00.000Z',
-          versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
+          versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
           patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS },
           phase: 'history',
           currentTurnSequence: 1,
@@ -147,7 +147,7 @@ test('transient setup retry reuses the same owned session and idempotency key', 
   let createSessionCount = 0
   let setupAttemptCount = 0
   await page.route('**/api/account/tenants', (route) => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', async (route) => {
     if (route.request().method() === 'POST' && new URL(route.request().url()).pathname.endsWith('/api/sessions')) {
@@ -155,14 +155,14 @@ test('transient setup retry reuses the same owned session and idempotency key', 
     }
     await route.fulfill({
       status: 201, contentType: 'application/json',
-      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
+      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
     })
   })
   await page.route(`**/api/sessions/${sessionId}`, (route) => {
     lookupPaths.push(`${route.request().method()} ${route.request().url()}`)
     return route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
+      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
     })
   })
   await page.route(`**/api/sessions/${sessionId}/setup`, async (route) => {
@@ -174,7 +174,7 @@ test('transient setup retry reuses the same owned session and idempotency key', 
     }
     await route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z', patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS }, versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }, readiness: { profile: true, redis: true, conversation: true } })
+      body: JSON.stringify({ sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z', patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS }, versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }, readiness: { profile: true, redis: true, conversation: true } })
     })
   })
   await page.context().addCookies([{
@@ -189,8 +189,10 @@ test('transient setup retry reuses the same owned session and idempotency key', 
   expect(createSessionCount).toBe(1)
   expect(lookupPaths).toHaveLength(1)
   const sessionLookup = lookupPaths[0] ?? ''
-  expect(sessionLookup).toMatch(/^GET https?:\/\/127\.0\.0\.1:4000\/api\/sessions\//)
-  expect(new URL(sessionLookup.slice(4)).pathname).toBe(`/api/sessions/${sessionId}`)
+  const sessionLookupUrl = new URL(sessionLookup.slice(4))
+  expect(sessionLookupUrl.hostname).toBe('127.0.0.1')
+  expect(Number(sessionLookupUrl.port)).toBeGreaterThan(0)
+  expect(sessionLookupUrl.pathname).toBe(`/api/sessions/${sessionId}`)
   expect(setupAttemptCount).toBe(2)
   expect(setupKeys).toEqual([`scenario-setup-${sessionId}`, `scenario-setup-${sessionId}`])
 })
@@ -204,7 +206,7 @@ test('terminal setup retry creates a fresh session and setup idempotency key', a
   const lookups: Array<{ sessionId: string; status: string }> = []
 
   await page.route('**/api/account/tenants', (route) => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', async (route) => {
     if (route.request().method() !== 'POST' || !new URL(route.request().url()).pathname.endsWith('/api/sessions')) {
@@ -216,14 +218,14 @@ test('terminal setup retry creates a fresh session and setup idempotency key', a
     createdSessionIds.push(sessionId)
     await route.fulfill({
       status: 201, contentType: 'application/json',
-      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
+      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
     })
   })
   await page.route(`**/api/sessions/${firstSessionId}`, (route) => {
     lookups.push({ sessionId: firstSessionId, status: 'failed' })
     return route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ sessionId: firstSessionId, status: 'failed', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:01:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
+      body: JSON.stringify({ sessionId: firstSessionId, status: 'failed', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:01:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
     })
   })
   await page.route(`**/api/sessions/${firstSessionId}/setup`, async (route) => {
@@ -236,7 +238,7 @@ test('terminal setup retry creates a fresh session and setup idempotency key', a
     setupKeys.push(route.request().headers()['idempotency-key'] ?? '')
     await route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ sessionId: secondSessionId, status: 'ready', createdAt: '2026-10-01T00:02:00.000Z', patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS }, versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }, readiness: { profile: true, redis: true, conversation: true } })
+      body: JSON.stringify({ sessionId: secondSessionId, status: 'ready', createdAt: '2026-10-01T00:02:00.000Z', patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS }, versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }, readiness: { profile: true, redis: true, conversation: true } })
     })
   })
   await page.context().addCookies([{
@@ -256,6 +258,7 @@ test('terminal setup retry creates a fresh session and setup idempotency key', a
 })
 
 test('preflight explains voice privacy and lets the learner choose transcript or voice conversation', async ({ page }) => {
+  test.setTimeout(60_000)
   const pageErrors: string[] = []
   const consoleErrors: string[] = []
   const setupRequests: string[] = []
@@ -266,20 +269,20 @@ test('preflight explains voice privacy and lets the learner choose transcript or
     } })
   })
   await page.route('**/api/account/tenants', (route) => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', async (route) => {
     setupRequests.push('session')
     await route.fulfill({
       status: 201, contentType: 'application/json',
-      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
+      body: JSON.stringify({ sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' } })
     })
   })
   await page.route(`**/api/sessions/${sessionId}/setup`, async (route) => {
     setupRequests.push('setup')
     await route.fulfill({
       status: 200, contentType: 'application/json',
-      body: JSON.stringify({ sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z', patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS }, versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }, readiness: { profile: true, redis: true, conversation: true } })
+      body: JSON.stringify({ sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z', patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS }, versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }, readiness: { profile: true, redis: true, conversation: true } })
     })
   })
   page.on('pageerror', (error) => pageErrors.push(error.message))
@@ -376,7 +379,7 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
     createdAt: '2026-10-01T00:00:00.000Z',
     updatedAt: '2026-10-01T00:00:00.000Z',
     versions: {
-      promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna',
+      promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna',
       schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3'
     }
   }
@@ -495,7 +498,7 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
     pageWindow.__holdSpeech = true
   })
   await page.route('**/api/account/tenants', (route) => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', (route) => route.fulfill({
     status: 201, contentType: 'application/json', body: JSON.stringify(sessionResponse)
@@ -793,19 +796,19 @@ test('Realtime channel loss flushes one finalized utterance and leaves transcrip
     }
   })
   await page.route('**/api/account/tenants', (route) => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', (route) => route.fulfill({
     status: 201, contentType: 'application/json', body: JSON.stringify({
       sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
-      versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
+      versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
     })
   }))
   await page.route(`**/api/sessions/${sessionId}/setup`, (route) => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({
       sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z',
       patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS },
-      versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
+      versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
       readiness: { profile: true, redis: true, conversation: true }
     })
   }))
@@ -862,11 +865,11 @@ test('assessment phase is confirmed and keeps the draft editable after field val
     status: 'initializing',
     createdAt: '2026-10-01T00:00:00.000Z',
     updatedAt: '2026-10-01T00:00:00.000Z',
-    versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
+    versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
   }
   let assessmentAttempts = 0
   let assessmentPhaseTransitions = 0
-  await page.route('**/api/account/tenants', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] }) }))
+  await page.route('**/api/account/tenants', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] }) }))
   await page.route('**/api/sessions', (route) => route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(sessionResponse) }))
   await page.route(`**/api/sessions/${sessionId}/setup`, (route) => route.fulfill({
     status: 200, contentType: 'application/json', body: JSON.stringify({
@@ -946,7 +949,7 @@ test('restores and autosaves an unsubmitted assessment draft through the owner s
   }
   const saveRequests: Array<{ revision: number; summary: string; plan: string }> = []
   await page.route('**/api/account/tenants', (route) => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/encounters/current', (route) => route.fulfill({
     status: 200,
@@ -956,7 +959,7 @@ test('restores and autosaves an unsubmitted assessment draft through the owner s
       status: 'active',
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:05:00.000Z',
-      versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
+      versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
       patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS },
       phase: 'assessment',
       currentTurnSequence: 1,
@@ -1006,14 +1009,14 @@ test('voice conversation falls back to transcript when Realtime WebRTC is unsupp
     } })
   })
   await page.route('**/api/account/tenants', (route) => route.fulfill({
-    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', (route) => route.fulfill({
     status: 201,
     contentType: 'application/json',
     body: JSON.stringify({
       sessionId, status: 'initializing', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z',
-      versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
+      versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
     })
   }))
   await page.route(`**/api/sessions/${sessionId}/setup`, (route) => route.fulfill({
@@ -1022,7 +1025,7 @@ test('voice conversation falls back to transcript when Realtime WebRTC is unsupp
     body: JSON.stringify({
       sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z',
       patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS },
-      versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
+      versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
       readiness: { profile: true, redis: true, conversation: true }
     })
   }))
@@ -1047,7 +1050,7 @@ test('voice conversation falls back to transcript when Realtime WebRTC is unsupp
 test('starts setup on entry and withholds preflight until Redis setup and the patient portrait are ready', async ({ page }) => {
   const sessionId = 's'.repeat(43)
   const versionPins = {
-    promptVersion: 'patient-scenario-prompt-v10',
+    promptVersion: 'patient-scenario-prompt-v12',
     modelVersion: 'gpt-6-luna',
     schemaVersion: 7,
     policyVersion: 'patient-scenario-policy-v3'
@@ -1058,7 +1061,7 @@ test('starts setup on entry and withholds preflight until Redis setup and the pa
   await page.route('**/api/account/tenants', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', async (route) => route.fulfill({
     status: 201,

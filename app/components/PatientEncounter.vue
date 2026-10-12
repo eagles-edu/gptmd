@@ -43,9 +43,13 @@
               <input v-model="interactionMode" type="radio" name="interaction-mode" value="transcript">
               <span><strong>Transcript</strong><small>Type questions and read written replies. The browser never requests microphone access.</small></span>
             </label>
-            <label class="mode-option">
-              <input v-model="interactionMode" type="radio" name="interaction-mode" value="audio">
-              <span><strong>Voice conversation</strong><small>OpenAI transcribes your microphone audio; the patient replies in text, which this browser reads aloud.</small></span>
+            <label class="mode-option" :class="{ 'mode-option-unavailable': !audioTranscriptionAvailable }">
+              <input v-model="interactionMode" type="radio" name="interaction-mode" value="audio" :disabled="!audioTranscriptionAvailable">
+              <span>
+                <strong>Voice conversation</strong>
+                <small v-if="audioTranscriptionAvailable">OpenAI transcribes your microphone audio; the patient replies in text, which this browser reads aloud.</small>
+                <small v-else>Voice transcription is unavailable for this workspace right now. Continue with Transcript mode.</small>
+              </span>
             </label>
           </fieldset>
 
@@ -301,7 +305,9 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { usePatientApi, type CurrentEncounterResult, type PatientProfile } from '../composables/usePatientApi'
 import type { AssessmentFields } from '../schemas/patient-api'
+import { derivePatientPortraitPath } from '../utils/patient-portrait'
 import { classifyVoiceRepair, isAssessmentTransitionCue, MicrophoneSilenceCommitter, shouldSpeakPatientReply, VoiceTurnBuffer } from '../utils/voice-turn'
+import { useGptmdAuth } from '../composables/useGptmdAuth'
 
 type EncounterStatus = 'idle' | 'creating' | 'preloading' | 'ready' | 'active' | 'working' | 'error'
 type Message = {
@@ -328,7 +334,12 @@ type PendingLocalUtterance = {
 }
 type InteractionMode = 'transcript' | 'audio'
 const api = usePatientApi()
+const { memberships, selectedTenantId } = useGptmdAuth()
+const audioTranscriptionAvailable = computed(() => Boolean(
+  memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.audioTranscriptionAvailable
+))
 const sessionId = ref<string | null>(null)
+const sessionCreatedAt = ref<string | null>(null)
 const recoverableEncounter = ref<CurrentEncounterResult['encounter']>(null)
 const restorePromptOpen = ref(false)
 const profile = ref<PatientProfile | null>(null)
@@ -468,9 +479,8 @@ const phaseLabel = computed(() => ({
 
 const patientImage = computed(() => {
   if (!profile.value) return '/assets/images/exam-room-entry-hallway-v3.webp'
-  const age = calculateAge(profile.value.dateOfBirth)
-  const decade = age < 20 ? '1019' : age < 30 ? '2029' : age < 40 ? '3039' : age < 50 ? '4049' : '5059'
-  return `/assets/images/${decade}-${profile.value.bodyType}/portrait-prototype.webp`
+  if (!sessionCreatedAt.value) throw new Error('Patient portrait cannot load without the session creation time.')
+  return derivePatientPortraitPath(profile.value, sessionCreatedAt.value)
 })
 
 function continueWithMode(): void {
@@ -478,6 +488,12 @@ function continueWithMode(): void {
   preflightError.value = ''
   preflightComplete.value = true
   preflightOpen.value = false
+}
+
+function prepareModeForPreflight(): void {
+  interactionMode.value = audioTranscriptionAvailable.value ? 'audio' : 'transcript'
+  audioTranscriptionConsent.value = false
+  microphoneAccessGranted.value = false
 }
 
 function formatBloodPressure(reading: PatientProfile['vitalSigns']['bpSitting'] | null): string {
@@ -1039,7 +1055,9 @@ async function startNewPatientSession(): Promise<void> {
   status.value = 'creating'
   errorMessage.value = ''
   try {
-    sessionId.value = (await api.createSession()).sessionId
+    const session = await api.createSession()
+    sessionId.value = session.sessionId
+    sessionCreatedAt.value = session.createdAt
     await preparePatientSession(sessionId.value)
     recoverableEncounter.value = null
   } catch (error) {
@@ -1051,6 +1069,7 @@ async function startNewPatientSession(): Promise<void> {
 function resetEncounterForNewVisit(): void {
   stopVoiceConversation(false)
   sessionId.value = null
+  sessionCreatedAt.value = null
   profile.value = null
   backendReady.value = false
   imageReady.value = false
@@ -1090,6 +1109,7 @@ async function preparePatientSession(id: string): Promise<void> {
   await preloadImage(patientImage.value)
   imageReady.value = true
   status.value = 'ready'
+  prepareModeForPreflight()
   preflightOpen.value = true
 }
 
@@ -1101,6 +1121,7 @@ async function resumeCurrentEncounter(): Promise<void> {
   errorMessage.value = ''
   try {
     sessionId.value = encounter.sessionId
+    sessionCreatedAt.value = encounter.createdAt
     backendReady.value = false
     imageReady.value = false
     roomEntered.value = false
@@ -1162,6 +1183,7 @@ async function resumeCurrentEncounter(): Promise<void> {
       await preloadImage(patientImage.value)
       imageReady.value = true
       status.value = 'ready'
+      prepareModeForPreflight()
       preflightOpen.value = true
     }
     recoverableEncounter.value = null
@@ -1213,6 +1235,7 @@ async function retryReadiness(): Promise<void> {
     await preloadImage(patientImage.value)
     imageReady.value = true
     status.value = 'ready'
+    prepareModeForPreflight()
     preflightOpen.value = true
   } catch (error) {
     status.value = 'error'
@@ -1332,15 +1355,6 @@ function createTurnId(): string {
     throw new Error('A secure browser context is required to create a turn identifier.')
   }
   return globalThis.crypto.randomUUID()
-}
-
-function calculateAge(dateOfBirth: string): number {
-  const birthDate = new Date(`${dateOfBirth}T00:00:00`)
-  if (Number.isNaN(birthDate.getTime())) return 30
-  const today = new Date()
-  let age = today.getFullYear() - birthDate.getFullYear()
-  if (today.getMonth() < birthDate.getMonth() || (today.getMonth() === birthDate.getMonth() && today.getDate() < birthDate.getDate())) age -= 1
-  return Math.max(0, age)
 }
 
 function readableError(error: unknown): string {

@@ -1,0 +1,23 @@
+[Unit]
+Description=GPTMD live test durable event and cleanup worker
+After=network.target docker.service gptmd-live-api.service
+
+[Service]
+Type=simple
+LogNamespace=gptmd-live
+User=eaglesvn
+Group=eaglesvn
+WorkingDirectory=/home/obgyn.eaglesvn.club/gptmd/current/api
+EnvironmentFile=/home/eaglesvn/.config/gptmd-live/api.env
+Environment=NODE_ENV=production
+ExecStart=/usr/bin/node /home/obgyn.eaglesvn.club/gptmd/current/api/dist/worker.js
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=30s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

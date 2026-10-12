@@ -12,6 +12,7 @@ import { exportJWK, generateKeyPair, SignJWT } from 'jose'
 import { parseEnv } from 'node:util'
 import { createApiApp } from '../services/api/src/app.ts'
 import { createRedisPatientStateStore } from '../services/api/src/patient-state-store.ts'
+import { createRedisRequestRateLimitStore, hashRateLimitKey } from '../services/api/src/request-rate-limit.ts'
 import { createPostgresSessionStore } from '../services/api/src/session-store.ts'
 import { createSessionEventWorker } from '../services/api/src/session-event-worker.ts'
 import { createSessionIdentityVerificationWorker } from '../services/api/src/session-identity-verification-worker.ts'
@@ -107,6 +108,12 @@ if (isolatedRedisDatabase === null) {
   throw new Error('No empty non-default Redis logical database is available for isolated local verification')
 }
 const streamKey = 'gptmd:session-events'
+async function assertPersistedStreamEntriesWereTrimmed(stage) {
+  const remaining = Number(await redis.sendCommand(['XLEN', streamKey]))
+  if (remaining !== 0) {
+    throw new Error(`Redis session events remained after PostgreSQL persistence at ${stage}: ${remaining}`)
+  }
+}
 const currentStreamLength = Number(await redis.sendCommand(['XLEN', streamKey]))
 if (currentStreamLength !== 0) {
   await redis.quit()
@@ -161,7 +168,8 @@ try {
     '019_patient_scenario_conversation_cleanup.sql',
     '020_session_identity_binding.sql',
     '021_assessment_drafts.sql',
-    '022_session_local_utterances.sql'
+    '022_session_local_utterances.sql',
+    '023_realtime_transcription_usage.sql'
   ]) {
     const sql = await readFile(new URL(`../services/api/migrations/${file}`, import.meta.url), 'utf8')
     await testPool.query(sql)
@@ -217,7 +225,7 @@ try {
     [tenantId]
   )
   await testPool.query(
-    `INSERT INTO tenant_memberships (tenant_id, subject_id, status) VALUES ($1, $2, 'active')`,
+    `INSERT INTO tenant_memberships (tenant_id, subject_id, status, role) VALUES ($1, $2, 'active', 'learner')`,
     [tenantId, subjectId]
   )
   const stateStore = createRedisPatientStateStore(redis)
@@ -331,6 +339,7 @@ try {
     model: 'gpt-6-luna',
     jwt: { secret: null, issuer: testIssuer, audience: 'authenticated', jwksUrl },
     sessionStore,
+    requestRateLimitStore: createRedisRequestRateLimitStore(redis),
     allowedOrigins: [webOrigin]
   }).listen(apiPort, '127.0.0.1')
   await once(apiServer, 'listening')
@@ -344,7 +353,10 @@ try {
   const memberships = await membershipsResponse.json()
   if (membershipsResponse.status !== 200 ||
       JSON.stringify(memberships.memberships) !== JSON.stringify([{ tenantId, role: 'learner' }])) {
-    throw new Error('Supabase-style ES256 authentication could not resolve the active learner tenant membership')
+    throw new Error(
+      `Supabase-style ES256 authentication could not resolve the active learner tenant membership ` +
+      `(HTTP ${membershipsResponse.status}; response=${JSON.stringify(memberships)})`
+    )
   }
   const forgedToken = `${token.slice(0, token.lastIndexOf('.') + 1)}${randomBytes(32).toString('base64url')}`
   const forgedTokenResponse = await fetch(`${apiBase}/api/account/tenants`, {
@@ -446,6 +458,45 @@ try {
   if (duplicateIdentityCount.rows[0]?.count !== 1) {
     throw new Error('Same-key setup retry duplicated or lost the immutable session identity binding')
   }
+  await testPool.query(
+    `UPDATE tenant_entitlements
+     SET audio_transcription_enabled = true,
+         audio_transcription_privacy_approved = true,
+         monthly_audio_transcription_session_quota = 3
+     WHERE tenant_id = $1`,
+    [tenantId]
+  )
+  const audioGrant = await sessionStore.createAudioTranscriptionGrant(
+    principal, sessionId, 'gptmd-audio-transcription-v1'
+  )
+  if (typeof audioGrant === 'string') throw new Error(`Audio grant setup failed in isolated verifier: ${audioGrant}`)
+  const audioCallId = `rtc_${randomBytes(8).toString('hex')}`
+  await sessionStore.recordAudioProviderSession(audioGrant.grantId, 'realtime-session-verifier', audioCallId)
+  await sessionStore.recordAudioTranscriptionUsage(audioCallId, 'event_usage_verifier', 2.75)
+  await sessionStore.recordAudioTranscriptionUsage(audioCallId, 'event_usage_verifier', 2.75)
+  await sessionStore.setAudioUsageObserverStatus(audioCallId, 'connected')
+  const audioUsage = await testPool.query(
+    `SELECT audio.usage_observer_status, audio.provider_audio_seconds,
+            count(events.provider_event_id)::int AS event_count
+     FROM app_audio_transcription_sessions AS audio
+     LEFT JOIN app_audio_transcription_usage_events AS events USING (grant_id)
+     WHERE audio.grant_id = $1
+     GROUP BY audio.grant_id`,
+    [audioGrant.grantId]
+  )
+  if (audioUsage.rows[0]?.usage_observer_status !== 'connected' ||
+      Number(audioUsage.rows[0]?.provider_audio_seconds) !== 2.75 ||
+      audioUsage.rows[0]?.event_count !== 1) {
+    throw new Error('Provider transcription duration was not stored exactly once with observer state')
+  }
+  await sessionStore.setAudioUsageObserverStatus(audioCallId, 'interrupted')
+  const interruptedAudioUsage = await testPool.query(
+    `SELECT usage_observer_status FROM app_audio_transcription_sessions WHERE grant_id = $1`,
+    [audioGrant.grantId]
+  )
+  if (interruptedAudioUsage.rows[0]?.usage_observer_status !== 'interrupted') {
+    throw new Error('Audio usage observer interruption was not persisted')
+  }
   const readySessionResponse = await fetch(`${apiBase}/api/sessions/${sessionId}`, { headers: authHeaders })
   const readySession = await readySessionResponse.json()
   if (readySessionResponse.status !== 200 || readySession.status !== 'ready' ||
@@ -495,6 +546,7 @@ try {
       Number(durableSetupUsage.rows[0]?.output_tokens) !== setupUsage.outputTokens) {
     throw new Error('Scenario-generation usage did not persist from setup through Redis and the PostgreSQL worker')
   }
+  await assertPersistedStreamEntriesWereTrimmed('setup usage')
   const turnId = `turn-${randomBytes(6).toString('hex')}`
   const learnerMessage = 'What is your biggest concern?'
   const submitTurn = (text = learnerMessage) => fetch(`${apiBase}/api/sessions/${sessionId}/turns`, {
@@ -539,6 +591,7 @@ try {
         Number(row.sequence) !== turn.sequence || new Date(row.occurred_at).toISOString() !== turn.acceptedAt)) {
     throw new Error('Durable transcript projection did not preserve speaker, time, phase, modality, and turn ID')
   }
+  await assertPersistedStreamEntriesWereTrimmed('accepted turn and disclosure')
   const localUtteranceId = randomUUID()
   const localUtteranceRequest = {
     utteranceId: localUtteranceId, kind: 'repair', speaker: 'learner', content: 'Could you repeat that?'
@@ -594,6 +647,7 @@ try {
   }
   await redis.sendCommand(['XADD', streamKey, '*', 'event', JSON.stringify(turnEnvelope)])
   if (await worker.processOnce() !== 1) throw new Error('Worker did not acknowledge the idempotent PostgreSQL retry')
+  await assertPersistedStreamEntriesWereTrimmed('idempotent PostgreSQL retry')
   const durableTurnCount = await testPool.query(
     `SELECT count(*)::int AS count FROM session_events WHERE session_id = $1`, [sessionId]
   )
@@ -933,11 +987,12 @@ try {
     sessionResume: 'owner-scoped current-encounter lookup resumed the same ready session and rebuilt the same Redis identity from PostgreSQL after deleting Redis session, profile, retry, and owner-index keys',
     turnRetry: 'saved reply returned; accepted turn and disclosure events emitted atomically',
     transcript: 'ordered learner/patient utterances and append-only voice repair projected with time, phase, modality, and stable IDs; same-ID retries are idempotent and conflicting retries are rejected',
-    workerRetry: 'turn and disclosure persisted once; acknowledged after commit',
+    workerRetry: 'turn and disclosure persisted once; acknowledged and trimmed after commit',
     providerUsage: 'patient-turn and scenario-generation token counts, model/tier metadata, versioned public-rate estimates, and duration persisted through the worker',
     turnFailureAudit: 'identifier-only failure metadata persisted through Redis and the PostgreSQL worker',
     assessmentOutcome: 'confirmed phase, unscored submission, and terminal events persisted in order',
     assessmentDraft: 'partial assessment fields survive owner-scoped restore; monotonically increasing revisions reject late stale saves',
+    realtimeAudioUsage: 'migration 023 applied to the disposable database; provider-event duration stored once despite duplicate delivery and observer interruption persisted without storing transcript text',
     missingStateRecovery: 'rebuilt accepted patient fact, disclosure, assessment, and terminal event from PostgreSQL while preserving the immutable seeded profile',
     browserSessionLoop: 'signed-in Nuxt browser displayed the authenticated account and active workspace access, created and set up a patient through real Express/PostgreSQL/Redis, entered with Chart selected, submitted a transcript question, restored the accepted reply through the owner route, and persisted provider usage through the worker',
     terminalRedisTtlSeconds: redisTtl
@@ -982,6 +1037,11 @@ try {
     const ownerIndexKey = `gptmd:owner-session:${createHash('sha256').update(`${tenantId}\0${subjectId}`).digest('hex')}`
     await redis.sendCommand(['DEL', ...redisKeys, ownerIndexKey, streamKey])
   }
+  const rateLimitKeys = [hashRateLimitKey('ip', '127.0.0.1')]
+  if (tenantId && subjectId) {
+    rateLimitKeys.push(hashRateLimitKey('identity', `${tenantId}\0${subjectId}`))
+  }
+  await redis.sendCommand(['DEL', ...rateLimitKeys])
   await testPool?.end()
   await adminPool.query(`DROP DATABASE IF EXISTS "${temporaryDatabase}"`)
   await adminPool.end()

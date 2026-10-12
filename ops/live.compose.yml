@@ -1,0 +1,26 @@
+services:
+  redis:
+    image: redis/redis-stack-server@sha256:798ab84d9f266936b034ab11c4d04a2b8e4b441884c5aa7d17ac951eefdf742a
+    restart: unless-stopped
+    logging:
+      driver: local
+      options:
+        max-size: "10m"
+        max-file: "3"
+    environment:
+      REDIS_ARGS: --requirepass ${GPTMD_LIVE_REDIS_PASSWORD:?Set GPTMD_LIVE_REDIS_PASSWORD in the private live compose env}
+      REDISCLI_AUTH: ${GPTMD_LIVE_REDIS_PASSWORD:?Set GPTMD_LIVE_REDIS_PASSWORD in the private live compose env}
+    ports:
+      - "127.0.0.1:6382:6379"
+    volumes:
+      - gptmd-live-redis-data:/data
+      - ./live.redis.conf:/redis-stack.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --user default ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 15s
+
+volumes:
+  gptmd-live-redis-data:

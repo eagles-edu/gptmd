@@ -79,16 +79,16 @@ const validVitalSigns = TEST_LEARNER_CHART_VITAL_SIGNS
 describe('shared patient API schemas', () => {
   it('pins scenario responses and patient turns to their exact schema versions', () => {
     const scenarioPins = {
-      promptVersion: 'patient-scenario-prompt-v10',
+      promptVersion: 'patient-scenario-prompt-v12',
       modelVersion: 'gpt-6-luna',
       schemaVersion: 7,
       policyVersion: 'patient-scenario-policy-v3'
     }
     const turnPins = {
-      promptVersion: 'patient-turn-prompt-v8',
+      promptVersion: 'patient-turn-prompt-v10',
       modelVersion: 'gpt-6-luna',
       schemaVersion: 4,
-      policyVersion: 'patient-turn-policy-v8',
+      policyVersion: 'patient-turn-policy-v10',
       rubricVersion: null
     }
 
@@ -102,13 +102,22 @@ describe('shared patient API schemas', () => {
     }
   })
 
-  it('keeps the JSON profile catalog aligned and its five-field projection as a template', async () => {
+  it('keeps the JSON profile catalog and PP response examples aligned, and its five-field projection as a template', async () => {
     const path = resolve(process.cwd(), 'services/api/catalog/patient-profile.json')
     const document = PatientProfileCatalogSchema.parse(
       JSON.parse(await readFile(path, 'utf8')) as unknown
     )
+    const responseExamples = await readFile(
+      resolve(process.cwd(), 'docs/schemas/pp-possible-values.md'), 'utf8'
+    )
+    const responseGuidanceText = responseExamples.split('## Vitals in the PP')[0] ?? ''
+    const documentedFields = [...responseGuidanceText
+      .matchAll(/^\| `([^`]+)` \|/gm)].map((match) => match[1]!)
 
     expect(document.patientProfileFields).toEqual(PATIENT_PROFILE_FIELDS)
+    expect([...documentedFields].filter((field) => field !== 'reasonForVisit').sort())
+      .toEqual([...document.patientProfileFields].filter((field) => field !== 'reasonForVisit').sort())
+    expect(responseGuidanceText).toContain('`reasonForVisit` is required setup information')
     expect(document.painEpisodePolicy.maximumInstances).toBe(2)
     expect(document.painEpisodePolicy.details).toEqual([
       'whatProvokesPalliatesPain', 'painQuality', 'painLocationRadiationWhere', 'painSeverity0-10',
@@ -285,6 +294,14 @@ describe('shared patient API schemas', () => {
     }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isPatientScenarioConsistent({
       ...profile,
+      history: [{ field: 'numberAbortions', status: 'negative', value: 1 }]
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isPatientScenarioConsistent({
+      ...profile,
+      history: [{ field: 'numberAbortions', status: 'negative', value: 0 }]
+    }, new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isPatientScenarioConsistent({
+      ...profile,
       history: [{ field: 'lastMenstrualPeriod', status: 'known', value: '2026-10-02' }]
     }, new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isPatientScenarioConsistent({
@@ -308,6 +325,13 @@ describe('shared patient API schemas', () => {
     expect(isHistoryDatePlausible('1990-01-01', 'October 2, 2026', new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isHistoryDatePlausible('1990-01-01', '20 September 1989', new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isHistoryDatePlausible('1990-01-01', 'September 31, 2026', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'the 13th of last month', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('2026-09-20', '13th of last month', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'June 4', new Date('2026-10-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('2026-06-05', 'June 4', new Date('2026-10-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'February 29', new Date('2026-03-01T00:00:00Z'))).toBe(true)
+    expect(isHistoryDatePlausible('2024-03-01', 'February 29', new Date('2026-03-01T00:00:00Z'))).toBe(false)
+    expect(isHistoryDatePlausible('1990-01-01', 'September 31', new Date('2026-10-01T00:00:00Z'))).toBe(false)
     expect(isHistoryDatePlausible('1990-01-01', 'about three weeks ago', new Date('2026-10-01T00:00:00Z'))).toBe(true)
     expect(isHistoryDatePlausible('1990-01-01', 'yesterday', new Date('2026-10-01T00:00:00Z'))).toBe(true)
     expect(isHistoryDatePlausible('2026-10-01', 'yesterday', new Date('2026-10-01T00:00:00Z'))).toBe(false)
@@ -441,8 +465,8 @@ describe('shared patient API schemas', () => {
       acceptedAt: '2026-10-01T00:01:00Z', phase: 'history', learnerModality: 'typed',
       learnerMessage: 'What brings you in?',
       versions: {
-        promptVersion: 'patient-turn-prompt-v8', modelVersion: 'gpt-6-luna',
-        schemaVersion: 4, policyVersion: 'patient-turn-policy-v8', rubricVersion: null
+        promptVersion: 'patient-turn-prompt-v10', modelVersion: 'gpt-6-luna',
+        schemaVersion: 4, policyVersion: 'patient-turn-policy-v10', rubricVersion: null
       },
       patientResponse: 'I have pelvic pain.', patientReportedFacts: [], historyCoverage: [],
       patientReportedPainFacts: [],

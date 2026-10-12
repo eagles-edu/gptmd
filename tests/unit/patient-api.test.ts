@@ -36,7 +36,7 @@ describe('patient API response contracts', () => {
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v10',
+        promptVersion: 'patient-scenario-prompt-v12',
         modelVersion: 'gpt-6-luna',
         schemaVersion: 7,
         policyVersion: 'patient-scenario-policy-v3'
@@ -66,7 +66,7 @@ describe('patient API response contracts', () => {
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v10',
+        promptVersion: 'patient-scenario-prompt-v12',
         modelVersion: 'gpt-6-luna',
         schemaVersion,
         policyVersion: 'patient-scenario-policy-v3'
@@ -85,7 +85,7 @@ describe('patient API response contracts', () => {
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v10',
+        promptVersion: 'patient-scenario-prompt-v12',
         modelVersion: 'gpt-6-luna',
         schemaVersion: 7,
         policyVersion: 'patient-scenario-policy-v3'
@@ -106,7 +106,7 @@ describe('patient API response contracts', () => {
       createdAt: '2026-10-01T00:00:00.000Z',
       updatedAt: '2026-10-01T00:00:00.000Z',
       versions: {
-        promptVersion: 'patient-scenario-prompt-v10',
+        promptVersion: 'patient-scenario-prompt-v12',
         modelVersion: 'gpt-6-luna',
         schemaVersion: 7,
         policyVersion: 'patient-scenario-policy-v3'
@@ -144,7 +144,7 @@ describe('patient API response contracts', () => {
         vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS
       },
       versions: {
-        promptVersion: 'patient-scenario-prompt-v10',
+        promptVersion: 'patient-scenario-prompt-v12',
         modelVersion: 'gpt-6-luna',
         schemaVersion: 7,
         policyVersion: 'patient-scenario-policy-v3'

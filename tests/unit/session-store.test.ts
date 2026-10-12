@@ -60,20 +60,37 @@ describe('tenant membership roles', () => {
   it('returns active workspace IDs and roles for one authenticated subject', async () => {
     const pool = {
       query: vi.fn().mockResolvedValue({ rows: [
-        { tenant_id: 'tenant-a', role: 'instructor' },
-        { tenant_id: 'tenant-b', role: 'customer_admin' }
+        { tenant_id: 'tenant-a', role: 'instructor', sessions_enabled: true, responses_enabled: true, audio_transcription_available: true },
+        { tenant_id: 'tenant-b', role: 'customer_admin', sessions_enabled: true, responses_enabled: true, audio_transcription_available: true }
       ], rowCount: 2 })
     } as unknown as Pool
     const store = createPostgresSessionStore(pool)
 
     await expect(store.getActiveMemberships('learner-a')).resolves.toEqual([
-      { tenantId: 'tenant-a', role: 'instructor' },
-      { tenantId: 'tenant-b', role: 'customer_admin' }
+      { tenantId: 'tenant-a', role: 'instructor', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true },
+      { tenantId: 'tenant-b', role: 'customer_admin', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }
     ])
     expect(pool.query).toHaveBeenCalledWith(
-      expect.stringMatching(/SELECT tenant_id, role FROM tenant_memberships[\s\S]*status = 'active'[\s\S]*ORDER BY tenant_id/),
+      expect.stringMatching(/SELECT m\.tenant_id, m\.role[\s\S]*LEFT JOIN tenant_entitlements[\s\S]*status = 'active'[\s\S]*ORDER BY m\.tenant_id/),
       ['learner-a']
     )
+    const query = String(pool.query.mock.calls[0]?.[0])
+    expect(query).toContain('audio_transcription_sessions')
+    expect(query).toContain('audio_transcription_privacy_approved')
+    expect(query).toContain('monthly_audio_transcription_session_quota > audio_usage.used')
+  })
+
+  it('reports workspace visit features as disabled when no entitlement row exists', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({ rows: [
+        { tenant_id: 'tenant-a', role: 'learner', sessions_enabled: false, responses_enabled: false, audio_transcription_available: false }
+      ], rowCount: 1 })
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool)
+
+    await expect(store.getActiveMemberships('learner-a')).resolves.toEqual([
+      { tenantId: 'tenant-a', role: 'learner', sessionsEnabled: false, responsesEnabled: false, audioTranscriptionAvailable: false }
+    ])
   })
 
   it('persists one independent scenario variation seed when reserving a session', async () => {
@@ -96,7 +113,7 @@ describe('tenant membership roles', () => {
     const store = createPostgresSessionStore(pool)
 
     await expect(store.createSession(principal, {
-      promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna',
+      promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna',
       schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3'
     })).resolves.toMatchObject({ status: 'initializing' })
 
@@ -116,7 +133,7 @@ describe('strict patient scenario version', () => {
         if (sql.includes('FROM app_sessions')) return { rows: [{
           session_id: sessionId, patient_profile_id: null, scenario_seed: null,
           status: 'initializing', created_at: createdAt, setup_idempotency_key_hash: null,
-          prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+          prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
           schema_version: 3, policy_version: 'patient-scenario-policy-v3', sessions_enabled: true
         }], rowCount: 1 }
         return { rows: [], rowCount: 1 }
@@ -209,7 +226,7 @@ describe('scoped quota reservations', () => {
     const store = createPostgresSessionStore(pool)
 
     await expect(store.createSession(principal, {
-      promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna',
+      promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna',
       schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3'
     })).resolves.toBe('quota_exceeded')
 
@@ -280,6 +297,23 @@ describe('audio transcription policy reservations', () => {
       (result as { grantId: string }).grantId, 'sess_provider', 'call_provider'
     ])
     expect(pool.query.mock.calls[0]?.[0]).toContain("disconnect_after = now() + interval '15 minutes'")
+  })
+
+  it('deduplicates provider audio duration events before adding them to the grant total', async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [], rowCount: 1 })
+    const store = createPostgresSessionStore({ query } as unknown as Pool)
+
+    await store.recordAudioTranscriptionUsage('rtc_provider_call', 'event_provider_1', 2.75)
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/ON CONFLICT \(provider_call_id, provider_event_id\) DO NOTHING[\s\S]*RETURNING grant_id, audio_seconds[\s\S]*provider_audio_seconds = audio\.provider_audio_seconds \+ inserted\.audio_seconds/),
+      ['rtc_provider_call', 'event_provider_1', 2.75]
+    )
+    await expect(store.recordAudioTranscriptionUsage('rtc_provider_call', 'event_provider_2', Number.NaN))
+      .rejects.toThrow('Invalid provider audio duration')
+    await expect(store.recordAudioTranscriptionUsage('rtc_provider_call', 'event_provider_3', 901))
+      .rejects.toThrow('Invalid provider audio duration')
+    expect(query).toHaveBeenCalledOnce()
   })
 
   it('rejects a grant when the configured monthly per-user audio allowance is exhausted', async () => {
@@ -363,7 +397,7 @@ describe('session entitlement authorization', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: false,
-            prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
             schema_version: 7, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -430,7 +464,7 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
             schema_version: 7, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -509,7 +543,7 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
             schema_version: 7, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -550,7 +584,7 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
             schema_version: 7, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -607,7 +641,7 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'ready',
             created_at: createdAt, setup_idempotency_key_hash: idempotencyHash, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
             schema_version: 7, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -752,7 +786,7 @@ describe('serialized patient turns', () => {
       query: vi.fn(async (sql: string) => sql.includes('FROM session_identity_binding')
         ? { rows: [identityBindingRow], rowCount: 1 }
         : { rows: [{
-        status: 'ready', prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
         schema_version: 7, policy_version: 'patient-scenario-policy-v3'
         }], rowCount: 1 }),
       connect: vi.fn().mockResolvedValue(quotaClient)
@@ -866,7 +900,7 @@ describe('serialized patient turns', () => {
       query: vi.fn(async (sql: string) => sql.includes('FROM session_identity_binding')
         ? { rows: [identityBindingRow], rowCount: 1 }
         : { rows: [{
-        status: 'ready', prompt_version: 'patient-scenario-prompt-v10', model_version: 'gpt-6-luna',
+        status: 'ready', prompt_version: 'patient-scenario-prompt-v12', model_version: 'gpt-6-luna',
         schema_version: 7, policy_version: 'patient-scenario-policy-v3'
         }], rowCount: 1 }),
       connect: vi.fn().mockResolvedValue(quotaClient)
@@ -1025,7 +1059,7 @@ describe('current owned encounter recovery', () => {
       status: 'ready',
       created_at: createdAt,
       updated_at: createdAt,
-      prompt_version: 'patient-scenario-prompt-v10',
+      prompt_version: 'patient-scenario-prompt-v12',
       model_version: 'gpt-6-luna',
       schema_version: 7,
       policy_version: 'patient-scenario-policy-v3'
@@ -1060,7 +1094,7 @@ describe('current owned encounter recovery', () => {
       status: 'initializing',
       created_at: new Date('2026-10-02T00:00:00.000Z'),
       updated_at: new Date('2026-10-02T00:00:00.000Z'),
-      prompt_version: 'patient-scenario-prompt-v10',
+      prompt_version: 'patient-scenario-prompt-v12',
       model_version: 'gpt-6-luna',
       schema_version: 7,
       policy_version: 'patient-scenario-policy-v3'

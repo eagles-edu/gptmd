@@ -34,7 +34,22 @@ describe('modernization checklist inventory', () => {
 
     expect(diagramFiles.filter((file) => file !== 'plangpt-modernization-flow.d2')).toHaveLength(7)
     expect(diagramNodeIds).toHaveLength(286)
-    expect(checklist.match(/\*\*Inventory:\*\* (\d+) actionable nodes/)?.[1]).toBe('286')
+    const progress = checklist.match(/^\*\*Progress snapshot \([^)]+\):\*\* (\d+) of (\d+) detailed nodes are checked \(([\d.]+)%\); (\d+) remain open or deferred\.$/m)
+    const inventory = checklist.match(/^\*\*Checklist inventory:\*\* (\d+) of (\d+) detailed nodes represented;/m)
+    expect(progress, 'Progress snapshot must report checked, total, percent, and remaining counts').not.toBeNull()
+    expect(inventory, 'Checklist inventory must report represented nodes').not.toBeNull()
+    const [, checkedText = '', progressTotalText = '', percentText = '', remainingText = ''] = progress ?? []
+    const [, inventoryCountText = '', inventoryTotalText = ''] = inventory ?? []
+    const checked = Number(checkedText)
+    const progressTotal = Number(progressTotalText)
+    const remaining = Number(remainingText)
+    const inventoryCount = Number(inventoryCountText)
+    const inventoryTotal = Number(inventoryTotalText)
+    expect(progressTotal).toBe(286)
+    expect(inventoryCount).toBe(progressTotal)
+    expect(inventoryTotal).toBe(progressTotal)
+    expect(checked + remaining).toBe(progressTotal)
+    expect(Number(percentText)).toBe(Math.round((checked / progressTotal) * 1000) / 10)
     expect([...checklistNodes.keys()].sort()).toEqual([...diagramNodeIds].sort())
     expect([...checklistNodes.entries()].filter(([, lines]) => lines.length !== 1)).toEqual([])
   })

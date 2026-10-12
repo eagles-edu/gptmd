@@ -1,14 +1,13 @@
 import { createServiceClients } from './clients.js'
 import { createApiApp } from './app.js'
+import { createServer } from 'node:http'
 import { createSessionCommitMetrics } from './session-commit-metrics.ts'
 import { createProcessResourceSampler } from './process-resource-metrics.ts'
+import { resolveApiListenerHost } from './listener-config.ts'
+import { API_SHUTDOWN_DRAIN_TIMEOUT_MS, drainHttpServer, withHttpDrainGate } from './http-server-shutdown.ts'
 
-const host = process.env.HOST ?? '127.0.0.1'
+const host = resolveApiListenerHost(process.env)
 const port = Number(process.env.PORT ?? 4000)
-
-if (!['127.0.0.1', '::1', 'localhost'].includes(host)) {
-  throw new Error(`Refusing non-loopback HOST: ${host}`)
-}
 
 const sessionCommitMetrics = createSessionCommitMetrics()
 const clients = createServiceClients(process.env, sessionCommitMetrics.record)
@@ -37,18 +36,36 @@ const app = createApiApp({
   recordSessionCommitTiming: sessionCommitMetrics.record
 })
 
-const server = app.listen(port, host, () => {
+let shuttingDown = false
+let forcedShutdown = false
+const server = createServer(withHttpDrainGate(app, () => shuttingDown))
+server.listen(port, host, () => {
   console.log(`gptmd-api listening on http://${host}:${port}`)
 })
 
 const shutdown = (signal: string) => {
+  if (shuttingDown) {
+    forcedShutdown = true
+    server.closeAllConnections()
+    return
+  }
+  shuttingDown = true
   console.log(`${signal}: shutting down gptmd-api`)
   clearInterval(sessionCommitMetricsTimer)
   clearInterval(processResourceMetricsTimer)
-  server.close(() => {
-    void clients.close().finally(() => process.exit(0))
-  })
+  void drainHttpServer(server, API_SHUTDOWN_DRAIN_TIMEOUT_MS)
+    .then(async (result) => {
+      if (result === 'forced' || forcedShutdown) {
+        process.stderr.write('API shutdown drain timed out; remaining HTTP connections were closed.\n')
+      }
+      await clients.close()
+    })
+    .then(() => { process.exitCode = 0 })
+    .catch(() => {
+      process.stderr.write('API shutdown could not close its storage and provider clients cleanly.\n')
+      process.exitCode = 1
+    })
 }
 
-process.once('SIGINT', () => shutdown('SIGINT'))
-process.once('SIGTERM', () => shutdown('SIGTERM'))
+process.on('SIGINT', () => shutdown('SIGINT'))
+process.on('SIGTERM', () => shutdown('SIGTERM'))

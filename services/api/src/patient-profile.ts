@@ -319,7 +319,7 @@ const patientProfileCatalogJson = readFileSync(
 )
 
 // Bump the prompt or policy version when their corresponding behavior changes.
-export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v10'
+export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v12'
 export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v3'
 export const PATIENT_SCENARIO_SCHEMA_VERSION = 7 as const
 
@@ -333,9 +333,9 @@ export interface PatientScenarioVersionPins {
 const setupInstructions = [
   'Create one fictional OB-GYN training patient as a complete private scenario profile.',
   'Use the supplied structured schema and the complete canonical patient-profile parameter catalog in the developer context. Treat the catalog as the authoritative inventory of PP fields and setup parameters. Include only history fields relevant to this case; do not fill every available field.',
-  'For each included history entry, use known for a patient-reported or established detail, negative for an explicit negative, unknown when relevant but not known, and not_applicable only when the field does not apply. Unknown and not_applicable values must be null. Do not turn missing information into a negative.',
+  'For each included history entry, use known for a patient-reported or established detail, negative for an explicit negative, unknown when relevant but not known, and not_applicable only when the field does not apply. Unknown and not_applicable values must be null. For numeric obstetric counts, negative means a value of 0; use known for a positive count. Do not turn missing information into a negative.',
   'Represent pain only with painHistoryStatus and painEpisodes, never as flat history entries. Include no more than two distinct pain episodes across all causes. Give each a stable ID (pain-1 or pain-2), a short patient-voice description, current/intermittent/past status, and exactly one known/negative/unknown/not_applicable entry for each PQRST field. Keep each episode’s location, onset, quality, severity, pattern, duration, and provoking/relieving factors independent. Do not merge episodes or infer their cause. painHistoryStatus is present exactly when one or two episodes are supplied; otherwise it is absent.',
-  'When case-relevant associated symptoms or negatives are not already represented by a dedicated field, include miscellaneousDetailsNos as unknown so the patient can answer on demand. Do not seed blanket negatives or expose these details in reasonForVisit.',
+  'When case-relevant associated symptoms or negatives are not already represented by a dedicated field, include miscellaneousDetailsNos as unknown so the patient can answer on demand across separate questions. The first catchall answer does not close the field; preserve accepted detail strings and permit later asked details to be appended. Do not seed blanket negatives or expose these details in reasonForVisit.',
   'Use currentMenopausalStatus for the scenario’s present-state truth. Keep the separate menopauseStatus history entry for the applicable patient-reported/history detail; do not use it as a substitute for currentMenopausalStatus.',
   'Make the current reason, history, diagnosis if any, patient beliefs, examination findings, and test results internally consistent. Invent no unsupported test result.',
   'For obstetric counts, gravidity (G) is the total confirmed pregnancy count, including a current pregnancy: nulligravida is 0, primigravida is 1, and multigravida is 2 or more, regardless of outcome. In this PP, parity (P) is the patient-reported number of completed prior pregnancies reaching 20 weeks or later, regardless of outcome or fetal count; count a multiple pregnancy once and exclude a current pregnancy. Do not infer parity from live births, stillbirths, gravidity, or living-child counts. For example, if exactly two of three pregnancies reached 20 weeks, G3P2; if a fourth pregnancy is current, G4P2. numberPregnanciesWithLiveBirth counts pregnancies resulting in one or more live-born infants, while numberLiveBirths counts the infants; a multiple pregnancy counts once in the former and once per live-born infant in the latter. numberChildren is the current living-child count and must not be inferred from births. Include obstetricalHistory complications only when supported by the scenario and patient report.',
@@ -464,6 +464,43 @@ function parseHistoryCalendarDate(value: string): string | null | undefined {
   return date.toISOString().slice(0, 10)
 }
 
+/** Parse a yearless calendar date as its most recent occurrence at or before the encounter date. */
+function parseYearlessHistoryDate(value: string, asOf: Date): string | null | undefined {
+  const lastMonthDay = value.match(/^(?:the\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+of\s+last\s+month$/i)
+  if (lastMonthDay) {
+    const monthIndex = asOf.getUTCFullYear() * 12 + asOf.getUTCMonth() - 1
+    const year = Math.floor(monthIndex / 12)
+    const month = ((monthIndex % 12) + 12) % 12 + 1
+    const day = Number(lastMonthDay[1])
+    const parsed = new Date(Date.UTC(year, month - 1, day))
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+      return null
+    }
+    return parsed.toISOString().slice(0, 10)
+  }
+
+  const monthFirst = value.match(/^([A-Za-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?$/i)
+  const dayFirst = value.match(/^(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]+)$/i)
+  const match = monthFirst ?? dayFirst
+  if (!match) return undefined
+
+  const monthName = (monthFirst ? match[1] : match[2])!.toLowerCase()
+  const month = MONTH_NUMBERS[monthName]
+  const day = Number(monthFirst ? match[2] : match[1])
+  if (month === undefined) return undefined
+
+  const asOfDate = asOf.toISOString().slice(0, 10)
+  for (let year = asOf.getUTCFullYear(); year >= asOf.getUTCFullYear() - 400; year -= 1) {
+    const parsed = new Date(Date.UTC(year, month - 1, day))
+    if (parsed.getUTCFullYear() !== year || parsed.getUTCMonth() !== month - 1 || parsed.getUTCDate() !== day) {
+      continue
+    }
+    const normalizedDate = parsed.toISOString().slice(0, 10)
+    if (normalizedDate <= asOfDate) return normalizedDate
+  }
+  return null
+}
+
 const RELATIVE_DATE_NUMBERS: Record<string, number> = {
   a: 1, an: 1, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6,
   seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12
@@ -527,9 +564,12 @@ export function isHistoryDatePlausible(dateOfBirth: string, value: unknown, asOf
   if (!Number.isFinite(asOf.getTime())) return false
   const text = value.trim()
   const calendarDate = parseHistoryCalendarDate(text)
-  const normalizedDate = calendarDate === undefined
-    ? parseRelativeHistoryDate(text, asOf)
-    : calendarDate
+  const yearlessDate = calendarDate === undefined ? parseYearlessHistoryDate(text, asOf) : undefined
+  const normalizedDate = calendarDate !== undefined
+    ? calendarDate
+    : yearlessDate !== undefined
+      ? yearlessDate
+      : parseRelativeHistoryDate(text, asOf)
   if (normalizedDate === undefined) return true
   if (normalizedDate === null) return false
   const asOfDate = asOf.toISOString().slice(0, 10)
@@ -555,6 +595,7 @@ function hasValidHistory(profile: PatientScenarioProfile): boolean {
         entry.value < 0 ||
         entry.value > 99
       )) return false
+      if (entry.status === 'negative' && entry.value !== null && entry.value !== 0) return false
     } else if (
       entry.value !== null &&
       typeof entry.value !== 'string' &&

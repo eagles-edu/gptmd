@@ -8,6 +8,8 @@ import { generatePatientTurn } from './patient-turn.js'
 import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.js'
 import { createPostgresSessionStore } from './session-store.ts'
 import { createRedisPatientStateStore, type SessionCommitTimingRecorder } from './patient-state-store.ts'
+import { createRealtimeTranscriptionUsageObserver } from './realtime-transcription-usage-observer.ts'
+import { resolveTrustedProxyAddresses } from './listener-config.ts'
 import {
   createRedisRequestRateLimitStore,
   type RequestRateLimitLimits
@@ -18,7 +20,6 @@ export function realtimeTranscriptionSessionConfig() {
     type: 'transcription' as const,
     audio: {
       input: {
-        format: { type: 'audio/pcm' as const, rate: 24_000 as const },
         transcription: { model: 'gpt-live-transcribe', languages: ['en'] },
         turn_detection: null
       }
@@ -69,6 +70,7 @@ export function createServiceClients(
 ): ServiceClients {
   const setupQueueLimits = readSetupQueueLimits(env)
   const requestRateLimitLimits = readRequestRateLimitLimits(env)
+  const trustedProxyAddresses = resolveTrustedProxyAddresses(env)
   const redisClient = env.REDIS_URL
     ? createClient({
         url: env.REDIS_URL,
@@ -92,6 +94,34 @@ export function createServiceClients(
 
   const openaiClient = env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 15_000, maxRetries: 2 })
+    : null
+  const transcriptionUsageObservers = new Map<string, () => Promise<void>>()
+  const openTranscriptionUsageObserver = openaiClient
+    ? createRealtimeTranscriptionUsageObserver(env.OPENAI_API_KEY!)
+    : null
+  const observeTranscriptionUsage = openaiClient
+    ? async (
+        callId: string,
+        onUsage: (usage: { eventId: string; seconds: number }) => Promise<void>,
+        onDisconnect: () => Promise<void>
+      ) => {
+        let disconnected = false
+        const close = await openTranscriptionUsageObserver?.(callId, onUsage, async () => {
+          disconnected = true
+          transcriptionUsageObservers.delete(callId)
+          await onDisconnect()
+        })
+        if (!close) throw new Error('Realtime usage observer is not configured')
+        if (disconnected) {
+          await close()
+          throw new Error('Realtime usage observer disconnected before setup completed')
+        }
+        transcriptionUsageObservers.set(callId, close)
+        return async () => {
+          transcriptionUsageObservers.delete(callId)
+          await close()
+        }
+      }
     : null
 
   const redis: RedisProbe | null = redisClient
@@ -123,6 +153,13 @@ export function createServiceClients(
                  WHERE table_schema = 'public' AND table_name = 'app_audio_transcription_sessions'
                    AND column_name IN ('provider_call_id', 'disconnect_after', 'disconnect_claimed_at', 'disconnect_attempts', 'disconnect_next_attempt_at', 'disconnected_at')
                  GROUP BY table_name HAVING count(*) = 6
+               ) AND
+               to_regclass('public.app_audio_transcription_usage_events') IS NOT NULL AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'app_audio_transcription_sessions'
+                   AND column_name IN ('usage_observer_status', 'provider_audio_seconds')
+                 GROUP BY table_name HAVING count(*) = 2
                ) AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
@@ -254,7 +291,44 @@ export function createServiceClients(
               body: sdpOffer,
               signal: AbortSignal.timeout(15_000)
             })
-            if (!response.ok) throw new Error('OpenAI could not start live transcription for this browser')
+            if (!response.ok) {
+              const rawError = await response.text()
+              type ProviderCallErrorBody = { error?: string | { type?: string; code?: string; message?: string } }
+              let body: ProviderCallErrorBody | null
+              try {
+                body = JSON.parse(rawError) as ProviderCallErrorBody
+              } catch {
+                body = null
+              }
+              const providerErrorBody = typeof body?.error === 'object' ? body.error : null
+              const providerMessage = providerErrorBody?.message ??
+                (typeof body?.error === 'string' ? body.error : undefined)
+              const safeProviderMessage = providerMessage
+                ?.replace(/Bearer\s+\S+/gi, 'Bearer [redacted]')
+                .replace(/sk-[A-Za-z0-9_-]{10,}/g, '[redacted]')
+                .replace(/ek_[A-Za-z0-9_-]{10,}/g, '[redacted]')
+                .replace(/[\r\n\t]+/g, ' ')
+                .slice(0, 160)
+              const providerCode = providerErrorBody?.code ?? providerErrorBody?.type
+              const requestId = response.headers.get('x-request-id')
+              const responseDetails = safeProviderMessage ??
+                `non-JSON ${response.headers.get('content-type') ?? 'response'} (${rawError.length} bytes)`
+              const providerDetails = [
+                providerCode ? `code ${providerCode}` : null,
+                responseDetails ? `details ${responseDetails}` : null,
+                requestId ? `request ${requestId}` : null,
+                ...['server', 'via', 'cf-ray', 'x-cache', 'x-envoy-upstream-service-time']
+                  .map((name) => {
+                    const value = response.headers.get(name)?.replace(/[\r\n\t]+/g, ' ').slice(0, 80)
+                    return value ? `${name} ${value}` : null
+                  })
+              ].filter(Boolean).join(', ')
+              const providerError = new Error(
+                `OpenAI could not start live transcription for this browser (HTTP ${response.status}${providerDetails ? `, ${providerDetails}` : ''})`
+              ) as Error & { status?: number }
+              providerError.status = response.status
+              throw providerError
+            }
             const location = response.headers.get('location')
             const match = location?.match(/^\/v1\/realtime\/calls\/([A-Za-z0-9_-]+)$/)
             if (!match?.[1]) throw new Error('OpenAI did not return a valid Realtime call identifier')
@@ -265,6 +339,7 @@ export function createServiceClients(
             }
           }
         : null,
+      observeTranscriptionUsage,
       hangupTranscriptionCall: openaiClient
         ? async (providerCallId) => {
             try {
@@ -285,6 +360,7 @@ export function createServiceClients(
       },
       setupQueueLimits,
       requestRateLimitLimits,
+    trustedProxyAddresses,
       requestRateLimitStore: redisClient ? createRedisRequestRateLimitStore(redisClient) : null,
       sessionStore: postgresPool
         ? createPostgresSessionStore(
@@ -295,6 +371,8 @@ export function createServiceClients(
         : null
     },
     async close() {
+      await Promise.all([...transcriptionUsageObservers.values()].map((closeObserver) => closeObserver()))
+      transcriptionUsageObservers.clear()
       await Promise.all([
         redisClient?.isOpen ? redisClient.quit() : Promise.resolve(),
         postgresPool?.end() ?? Promise.resolve()

@@ -1,0 +1,40 @@
+ARG NODE_IMAGE=node:24-bookworm-slim@sha256:d6aa754f16b3197301076f047b5def2f02ea1dbbc2ca920407d46d7ec7f87b20
+
+FROM ${NODE_IMAGE} AS web-build
+WORKDIR /workspace
+COPY package.json package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY . .
+ENV NODE_ENV=production
+RUN npm run build
+
+FROM ${NODE_IMAGE} AS web
+ENV NODE_ENV=production NITRO_HOST=0.0.0.0 NITRO_PORT=3000 HOST=0.0.0.0 PORT=3000
+WORKDIR /workspace
+COPY --from=web-build --chown=node:node /workspace/.output ./.output
+USER node
+EXPOSE 3000
+CMD ["node", ".output/server/index.mjs"]
+
+FROM ${NODE_IMAGE} AS api-build
+WORKDIR /workspace/services/api
+COPY services/api/package.json services/api/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY services/api/ ./
+RUN npm run build
+
+FROM ${NODE_IMAGE} AS api-runtime-dependencies
+WORKDIR /workspace/services/api
+COPY services/api/package.json services/api/package-lock.json ./
+RUN npm ci --omit=dev --no-audit --no-fund
+
+FROM ${NODE_IMAGE} AS api
+ENV NODE_ENV=production
+WORKDIR /workspace/services/api
+COPY --from=api-runtime-dependencies --chown=node:node /workspace/services/api/node_modules ./node_modules
+COPY --from=api-build --chown=node:node /workspace/services/api/package.json ./package.json
+COPY --from=api-build --chown=node:node /workspace/services/api/dist ./dist
+COPY --from=api-build --chown=node:node /workspace/services/api/catalog ./catalog
+USER node
+EXPOSE 4000
+CMD ["node", "dist/server.js"]

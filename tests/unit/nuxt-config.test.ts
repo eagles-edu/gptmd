@@ -4,6 +4,13 @@ import nuxtConfig from '../../nuxt.config'
 const vuetifyConfig = nuxtConfig.vuetify === false ? undefined : nuxtConfig.vuetify
 
 describe('Nuxt diagnostic prevention config', () => {
+  it('disables the Nuxt DevTools Vite plugin that emits ignored-hook warnings', () => {
+    const devtoolsEnabled = typeof nuxtConfig.devtools === 'object'
+      ? nuxtConfig.devtools.enabled
+      : nuxtConfig.devtools
+    expect(devtoolsEnabled).toBe(false)
+  })
+
   it('disables noisy Rolldown timing labels while retaining build warning checks', () => {
     expect(nuxtConfig.vite?.build?.rolldownOptions?.checks).toEqual({
       pluginTimings: false

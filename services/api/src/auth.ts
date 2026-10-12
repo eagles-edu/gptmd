@@ -11,6 +11,9 @@ export type TenantRole = typeof TENANT_ROLES[number]
 export interface TenantMembership {
   tenantId: string
   role: TenantRole
+  sessionsEnabled: boolean
+  responsesEnabled: boolean
+  audioTranscriptionAvailable: boolean
 }
 
 export interface AuthenticatedIdentity {

@@ -16,7 +16,11 @@ export default defineConfig({
   globalSetup: './tests/e2e/preflight.global-setup.ts',
   testDir: './tests/e2e',
   testMatch: 'encounter-preflight.spec.ts',
-  fullyParallel: true,
+  // Keep the multi-step mocked voice flows isolated within each browser project.
+  fullyParallel: false,
+  // The four browser projects contend in the WebKit voice and assessment flows
+  // when run together; one worker keeps the full preflight gate deterministic.
+  workers: 1,
   reporter: 'list',
   use: {
     baseURL: 'https://localhost:3002',

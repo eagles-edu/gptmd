@@ -4,6 +4,8 @@ import { TEST_LEARNER_CHART_VITAL_SIGNS } from '../fixtures/patient-vital-signs.
 
 function makeAuthCookie(): string {
   const encode = (value: object): string => Buffer.from(JSON.stringify(value)).toString('base64url')
+  // Keep the auth token valid against the real server clock even while the
+  // browser clock is frozen to a deterministic scenario date.
   const now = Math.floor(Date.now() / 1000)
   const accessToken = [
     encode({ alg: 'HS256', typ: 'JWT' }),
@@ -37,7 +39,7 @@ async function mockEncounterSetup(page: Page, baseURL: string): Promise<void> {
   await page.route('**/api/account/tenants', (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner' }] })
+    body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
   }))
   await page.route('**/api/sessions', async (route) => {
     if (route.request().method() !== 'POST' || new URL(route.request().url()).pathname !== '/api/sessions') {
@@ -50,9 +52,9 @@ async function mockEncounterSetup(page: Page, baseURL: string): Promise<void> {
       body: JSON.stringify({
         sessionId,
         status: 'initializing',
-        createdAt: '2026-10-01T00:00:00.000Z',
-        updatedAt: '2026-10-01T00:00:00.000Z',
-        versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
+        createdAt: '2026-10-07T00:00:00.000Z',
+        updatedAt: '2026-10-07T00:00:00.000Z',
+        versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' }
       })
     })
   })
@@ -62,15 +64,15 @@ async function mockEncounterSetup(page: Page, baseURL: string): Promise<void> {
     body: JSON.stringify({
       sessionId,
       status: 'ready',
-      createdAt: '2026-10-01T00:01:00.000Z',
+      createdAt: '2026-10-07T00:01:00.000Z',
       patient: {
         fullName: 'Ari Nguyen',
-        dateOfBirth: '1990-01-01',
+        dateOfBirth: '2006-10-08',
         bodyType: 'average',
         reasonForVisit: 'Pelvic pain',
         vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS
       },
-      versions: { promptVersion: 'patient-scenario-prompt-v10', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
+      versions: { promptVersion: 'patient-scenario-prompt-v12', modelVersion: 'gpt-6-luna', schemaVersion: 7, policyVersion: 'patient-scenario-policy-v3' },
       readiness: { profile: true, redis: true, conversation: true }
     })
   }))
@@ -103,6 +105,8 @@ test('mobile preview viewport has no horizontal overflow and its navigation work
 })
 
 test('encounter chart and patient image fit the device viewport in both orientations', async ({ page }, testInfo) => {
+  const fakeNow = new Date('2026-10-10T12:00:00.000Z')
+  await page.clock.install({ time: fakeNow })
   const baseURL = testInfo.project.use.baseURL
   if (typeof baseURL !== 'string') throw new Error('Mobile browser project must define baseURL')
   await mockEncounterSetup(page, baseURL)
@@ -124,7 +128,7 @@ test('encounter chart and patient image fit the device viewport in both orientat
   await expect(chart).toContainText('Pelvic pain')
   await expect(chart).toContainText('Vital signs')
   const portrait = page.locator('.profile-image-wrap img')
-  await expect(portrait).toHaveAttribute('src', '/assets/images/3039-average/portrait-prototype.webp')
+  await expect(portrait).toHaveAttribute('src', '/assets/images/1019-average/portrait-prototype.webp')
   await expect.poll(() => portrait.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
 
   const assertNoHorizontalOverflow = async () => {

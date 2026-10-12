@@ -95,3 +95,28 @@ rule. Do not add speculative or transcript-only observations.
 **Date:** 2026-10-06
 
 **Lesson:** OpenAI Conversation deletion leaves its items behind. When setup generation fails or returns an invalid profile, delete and verify every Conversation item first, then delete the empty Conversation. If provider cleanup fails, persist only the Conversation ID for a retry worker; do not retain the profile or prompt in the cleanup queue. Keep the valid session Conversation only after setup items, including the answer key, have been cleared and verified.
+
+## Separate OneDash site projects from shared host telemetry
+
+**Date:** 2026-10-12
+
+**Lesson:** ## Separate OneDash site projects from shared host telemetry
+
+**Beginning — trigger and context:** The user considered deleting two OneDash setups and configuring sites manually, then asked to inspect /home. The initial repository-only search found no OneDash site configuration, so the scope shifted to host-level project and service state before recommending removal.
+
+**Middle — decisions and work:** Inspection identified two OneDash Projects entries for eaglesvn.club and obgyn.eaglesvn.club under the shared /home/onedash account, not two independent agents. The desktop icon was only a browser shortcut. The OneDash-managed Nginx routes had concrete problems: the eaglesvn.club OpenLiteSpeed vhost referenced a missing vhconf.conf while only a disabled copy existed, and obgyn.eaglesvn.club routed to unused port 8089. Both sites-enabled links targeted missing files, and the proposed manual webroots did not exist. Separately, the host had a running OneDash telemetry agent with Vector and vmagent; /opt/onedash-otel had no active service. The recommendation was to build and validate manual Nginx/OpenLiteSpeed site routes first, remove the two Project entries afterward, and decide separately whether to stop telemetry. Keep acme.sh independent and preserve /home/onedash data and credentials.
+
+**End — outcome and verification:** The thread ended with a concrete diagnosis and staged migration advice. No files or services were changed and neither OneDash Project was deleted. The on-disk findings establish broken or stale route configuration, but do not prove which configuration the already-running Nginx process had loaded.
+
+**Rationale:** This is a verified host-configuration investigation and recovery plan; it preserves the limits of disk evidence and records that no destructive action occurred.
+
+**Future utility:** For future host changes, identify project records, shared agents, and site data separately; validate replacement routes before removing management entries, and treat telemetry cleanup as a separate decision.
+
+**Project impact:** Observed: the user now has evidence separating site-management entries from the shared monitoring agent and knows which route and webroot prerequisites are broken. Expected: staging manual routes before deletion reduces the chance of losing site data or telemetry during migration.
+
+**Trigger / root cause:** For future host changes, identify project records, shared agents, and site data separately; validate replacement routes before removing management entries, and treat telemetry cleanup as a separate decision.
+
+**Preventative rule:** Observed: the user now has evidence separating site-management entries from the shared monitoring agent and knows which route and webroot prerequisites are broken. Expected: staging manual routes before deletion reduces the chance of losing site data or telemetry during migration.
+
+<!-- curatormd:record_id=42a62a53ac2ca01fd0e0964e790a80d0;content_sha256=ab84df24bf6fad2f296c39ec8f5593f34e3e686e2cc97f92e15bb662fc7d84d9 -->
+<!-- curatormd:fingerprint=6bff13caeb7ed814da349a029286bfefb3a78d2368d8460dd7a33aa6c89bb868 -->

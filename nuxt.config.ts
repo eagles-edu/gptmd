@@ -6,7 +6,7 @@ const { NODE_ENV: nodeEnvironment } = process.env
 
 export default defineNuxtConfig({
   compatibilityDate: '2026-09-29',
-  devtools: { enabled: true },
+  devtools: { enabled: false },
   debug: false,
   css: ['~/assets/css/fonts.css', '~/assets/scss/main.scss', '~/assets/css/main.css'],
   routeRules: {
@@ -37,6 +37,13 @@ export default defineNuxtConfig({
       merchantAddress: process.env.NUXT_PUBLIC_MERCHANT_ADDRESS ?? '',
       merchantPhone: process.env.NUXT_PUBLIC_MERCHANT_PHONE ?? '',
       moitVerificationUrl: process.env.NUXT_PUBLIC_MOIT_VERIFICATION_URL ?? ''
+    }
+  },
+  security: {
+    headers: {
+      permissionsPolicy: {
+        microphone: ['self']
+      }
     }
   },
   vuetify: {

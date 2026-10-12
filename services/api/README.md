@@ -81,6 +81,7 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/019_patient_s
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/020_session_identity_binding.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/021_assessment_drafts.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/022_session_local_utterances.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/023_realtime_transcription_usage.sql
 ```
 
 Provision a tenant row in `tenants`, its active `(tenant_id, subject_id)` in
@@ -111,7 +112,7 @@ after PostgreSQL commits the accepted profile, its five-value private setup
 projection, digest, version, and Conversation ID are mirrored into Redis. A
 matching retry repairs a missing Redis mirror from the immutable PostgreSQL
 scenario without creating a new provider Conversation. Apply all listed
-migrations through 022 before starting this API version; `/readyz` checks membership
+migrations through 023 before starting this API version; `/readyz` checks membership
 roles, scoped usage tables, session binding, durable-history tables, and audio
 consent/quota schema. If
 setup generation or validation fails before the scenario commits, the owning session transitions from
@@ -150,11 +151,7 @@ text. `monthly_audio_transcription_session_quota` must be set to a finite value
 before audio can be used; `NULL` leaves the audio grant gate closed, and zero
 disables use. Each grant records the consent version,
 timestamp, and provider session ID. Learners must accept the visit-level consent
-before a grant is issued. Raw microphone audio is not stored by GPTMD. Current
-voice sessions stop at 15 minutes in the browser; this client-side cutoff is a
-product safeguard, not a server-observed audio-duration meter. Realtime billing
-and provider-side retention remain subject to the configured OpenAI project
-terms and settings.
+before a grant is issued. Raw microphone audio and transcript text from the provider sideband are not stored by GPTMD. The API attaches an authenticated Realtime WebSocket to the provider call before returning the SDP answer. It stores only provider event IDs and duration seconds from completed transcription events, deduplicates retries, and marks sideband interruptions; if attachment or persistence fails, GPTMD hangs up the provider call. These are provider-reported durations for completed items, not an account-billed receipt or guaranteed complete session total. Current voice sessions also retain a 15-minute product cutoff. Provider billing and retention remain subject to the configured OpenAI project terms and settings.
 
 Accepted-turn events include a learner input modality (`typed` or
 `realtime_transcription`) and remain the durable source for the
@@ -203,9 +200,26 @@ An exceeded limit returns `429` with a generic JSON error and `Retry-After`
 seconds until the counter expires. If the shared limiter is missing or Redis
 cannot update a counter, `/api` returns `503` before authentication-dependent
 or route work. `/healthz` and `/readyz` are outside these request limits.
-Ingress rate limits remain a separate deployment control; forwarded client IP
-is trustworthy only when the configured proxy chain matches Express's
-one-hop `trust proxy` setting.
+Ingress rate limits remain a separate deployment control. Express trusts no
+forwarded address by default. If the API sits behind a reverse proxy, set
+`API_TRUSTED_PROXY_ADDRESSES` to the comma-separated IP addresses or CIDRs of
+the proxy peers only; wildcard and default-route CIDRs are rejected. Express
+uses `X-Forwarded-For` only when the connecting peer matches that list. The
+proxy must overwrite or sanitize forwarded-address headers, and its peer
+addresses must match the API's actual network path. Do not configure this list
+until the ingress topology is known.
+
+## Request and turn correlation
+
+The API generates a new UUID request ID before origin checks, parsing,
+authentication, or route handling and returns it in `X-Request-ID` on every
+response. Incoming `X-Request-ID` values are not trusted or reused. A patient
+turn with a validated `turnId` also returns that ID in `X-GPTMD-Turn-ID`,
+including when turn processing returns a bounded error. Cross-origin clients
+may read both headers. The API emits one structured log record per validated
+turn containing the request ID and SHA-256 turn ID hash; it does not log the
+turn ID, session ID, or learner text. Existing asynchronous turn failure logs
+use the same turn ID hash so operators can join them to the request record.
 
 Encounter mutation responses expose `redis_turn_state_event_commit`,
 `redis_phase_state_event_commit`, `redis_assessment_state_event_commit`, and
@@ -284,7 +298,9 @@ npm run verify:phase2
 
 The verifier uses a temporary PostgreSQL database, requires permission to
 create and drop that database, and refuses to run while the shared Redis event
-stream contains entries.
+stream contains entries. It uses the API's Redis-backed request limiter in
+that isolated Redis database and removes its hashed test IP/identity counters
+during cleanup.
 
 ## Patient turns
 

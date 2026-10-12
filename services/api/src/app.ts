@@ -1,3 +1,4 @@
+import { createHash, randomUUID } from 'node:crypto'
 import express, { type ErrorRequestHandler, type Express } from 'express'
 import {
   DEFAULT_REQUEST_RATE_LIMITS,
@@ -76,6 +77,11 @@ export interface ApiDependencies {
     providerCallId: string
     providerSessionId: string
   }>) | null
+  observeTranscriptionUsage: ((
+    providerCallId: string,
+    onUsage: (usage: { eventId: string; seconds: number }) => Promise<void>,
+    onDisconnect: () => Promise<void>
+  ) => Promise<() => Promise<void>>) | null
   hangupTranscriptionCall: ((providerCallId: string) => Promise<void>) | null
   model: string
   jwt: JwtConfiguration
@@ -84,6 +90,7 @@ export interface ApiDependencies {
   providerCapacityLimits?: ProviderCapacityLimits
   recordSessionCommitTiming?: SessionCommitTimingRecorder
   allowedOrigins?: string[]
+  trustedProxyAddresses?: string[]
   requestRateLimitStore: RequestRateLimitStore | null
   requestRateLimitLimits?: RequestRateLimitLimits
 }
@@ -99,7 +106,11 @@ export function createApiApp(dependencies: ApiDependencies): Express {
   )
   const requestRateLimits = dependencies.requestRateLimitLimits ?? DEFAULT_REQUEST_RATE_LIMITS
   app.disable('x-powered-by')
-  app.set('trust proxy', 1)
+  app.set('trust proxy', dependencies.trustedProxyAddresses ?? [])
+  app.use((_request, response, next) => {
+    response.setHeader('X-Request-ID', randomUUID())
+    next()
+  })
   app.use((request, response, next) => {
     const origin = request.header('origin')
     const allowed = origin && dependencies.allowedOrigins?.includes(origin)
@@ -112,7 +123,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.setHeader('Access-Control-Allow-Origin', origin)
       response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
       response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, X-GPTMD-Tenant-ID')
-      response.setHeader('Access-Control-Expose-Headers', 'Server-Timing')
+      response.setHeader('Access-Control-Expose-Headers', 'Server-Timing, X-Request-ID, X-GPTMD-Turn-ID')
       response.setHeader('Vary', 'Origin')
     }
     next()
@@ -248,7 +259,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.status(400).json({ error: 'A valid secure audio connection offer is required' })
       return
     }
-    if (!dependencies.createTranscriptionCall || !dependencies.hangupTranscriptionCall) {
+    if (!dependencies.createTranscriptionCall || !dependencies.observeTranscriptionUsage || !dependencies.hangupTranscriptionCall) {
       response.status(503).json({ error: 'Cross-browser speech transcription is not configured' })
       return
     }
@@ -263,11 +274,23 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         return
       }
       const call = await dependencies.createTranscriptionCall(sdpOffer)
+      let closeUsageObserver: (() => Promise<void>) | null = null
       try {
         await store.recordAudioProviderSession(
           grant.grantId, call.providerSessionId, call.providerCallId
         )
+        closeUsageObserver = await dependencies.observeTranscriptionUsage(
+          call.providerCallId,
+          (usage) => store.recordAudioTranscriptionUsage(call.providerCallId, usage.eventId, usage.seconds),
+          async () => {
+            await store.setAudioUsageObserverStatus(call.providerCallId, 'interrupted').catch(() => undefined)
+            await dependencies.hangupTranscriptionCall?.(call.providerCallId).catch(() => undefined)
+          }
+        )
+        await store.setAudioUsageObserverStatus(call.providerCallId, 'connected')
       } catch (error) {
+        await closeUsageObserver?.()
+        await store.setAudioUsageObserverStatus(call.providerCallId, 'interrupted').catch(() => undefined)
         await dependencies.hangupTranscriptionCall(call.providerCallId).catch(() => undefined)
         throw error
       }
@@ -491,6 +514,10 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.status(400).json({ error: 'text must be a non-empty string of at most 8000 characters' })
       return
     }
+    const requestId = response.getHeader('X-Request-ID')
+    const turnIdHash = createHash('sha256').update(turnId).digest('hex')
+    response.setHeader('X-GPTMD-Turn-ID', turnId)
+    console.info(JSON.stringify({ event: 'patient_turn_request', requestId, turnIdHash }))
     const parsedModality = rawModality === undefined
       ? { success: true as const, data: 'typed' as const }
       : LearnerInputModalitySchema.safeParse(rawModality)

@@ -1,12 +1,16 @@
 import { expect, test } from '@playwright/test'
 
 const mobileViewerUrl = 'https://mobileviewer.github.io/#viewerStage'
-const targetUrl = process.env.GPTMD_MOBILEVIEWER_TARGET_URL ?? 'https://httpbin.org/html'
-const expectedTargetText = process.env.GPTMD_MOBILEVIEWER_EXPECTED_TEXT ?? 'Herman Melville - Moby-Dick'
+const targetUrl = 'https://gptmd-mobileviewer-fixture.invalid/encounter-preview'
+const expectedTargetText = 'GPTMD mobile preview fixture'
 
 test('Mobile Viewer renders a target and applies phone and landscape presets', async ({ page }) => {
   const pageErrors: string[] = []
   page.on('pageerror', (error) => pageErrors.push(error.message))
+  await page.route(targetUrl, (route) => route.fulfill({
+    contentType: 'text/html; charset=utf-8',
+    body: '<!doctype html><html lang="en"><meta charset="utf-8"><title>GPTMD mobile preview fixture</title><body><h1>GPTMD mobile preview fixture</h1></body></html>'
+  }))
 
   await page.goto(mobileViewerUrl, { waitUntil: 'domcontentloaded' })
   await expect(page).toHaveTitle(/Mobile Viewer/)
