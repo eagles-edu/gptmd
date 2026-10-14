@@ -48,18 +48,16 @@ function nextVersion(commits) {
 
 export function promptForCommitMessage(suggestedMessage, input = stdin, output = stdout) {
   const prompt = createInterface({ input, output })
-  prompt.setPrompt('Edit commit message; Enter accepts, Ctrl+C cancels:\n> ')
+  output.write(`\nSuggested commit message: ${suggestedMessage}\n`)
 
   return new Promise((resolve, reject) => {
-    prompt.prompt()
-    prompt.write(suggestedMessage)
-    prompt.once('line', (answer) => {
-      prompt.close()
-      resolve(answer.trim() || suggestedMessage)
-    })
     prompt.once('SIGINT', () => {
       prompt.close()
       reject(new Error('Commit cancelled.'))
+    })
+    prompt.question('Commit message (Enter keeps it; type an edited message): ', (answer) => {
+      prompt.close()
+      resolve(answer.trim() || suggestedMessage)
     })
   })
 }
