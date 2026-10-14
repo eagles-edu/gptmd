@@ -14,6 +14,7 @@ import { createApiApp } from '../services/api/src/app.ts'
 import { createRedisPatientStateStore } from '../services/api/src/patient-state-store.ts'
 import { createRedisRequestRateLimitStore, hashRateLimitKey } from '../services/api/src/request-rate-limit.ts'
 import { createPostgresSessionStore } from '../services/api/src/session-store.ts'
+import { createPostgresOrganizationAiTimeBudgetStore } from '../services/api/src/organization-ai-time-budget.ts'
 import { createSessionEventWorker } from '../services/api/src/session-event-worker.ts'
 import { createSessionIdentityVerificationWorker } from '../services/api/src/session-identity-verification-worker.ts'
 import { PATIENT_TURN_SCHEMA_VERSION } from '../services/api/src/session-contracts.ts'
@@ -170,7 +171,11 @@ try {
     '021_assessment_drafts.sql',
     '022_session_local_utterances.sql',
     '023_realtime_transcription_usage.sql',
-    '024_session_archive_jobs.sql'
+    '024_session_archive_jobs.sql',
+    '025_tenant_entitlement_audit.sql',
+    '026_patient_variant_settings.sql',
+    '027_organization_ai_time_budgets.sql',
+    '028_patient_scenario_source_context.sql'
   ]) {
     const sql = await readFile(new URL(`../services/api/migrations/${file}`, import.meta.url), 'utf8')
     await testPool.query(sql)
@@ -1022,6 +1027,19 @@ try {
   if (browserUsage.rows.map((row) => row.operation).join(',') !== 'patient_turn,scenario_generation') {
     throw new Error('Browser-created setup and patient-turn provider usage did not persist through the worker')
   }
+  const aiTimeUsageStore = createPostgresOrganizationAiTimeBudgetStore(testPool)
+  const usagePeriodStart = new Date('2000-01-01T00:00:00.000Z')
+  const usagePeriodEnd = new Date('2100-01-01T00:00:00.000Z')
+  const actualAiTimeUsage = await aiTimeUsageStore.getUsageSummary(tenantId, usagePeriodStart, usagePeriodEnd)
+  const expectedAiTimeUsage = await testPool.query(
+    `SELECT COALESCE(sum(total_tokens), 0)::text AS total_tokens, count(*)::text AS response_count
+     FROM provider_usage WHERE tenant_id = $1 AND occurred_at >= $2 AND occurred_at < $3`,
+    [tenantId, usagePeriodStart, usagePeriodEnd]
+  )
+  if (actualAiTimeUsage.totalTokens !== expectedAiTimeUsage.rows[0]?.total_tokens ||
+      actualAiTimeUsage.responseCount !== Number(expectedAiTimeUsage.rows[0]?.response_count)) {
+    throw new Error('Organization AI-time usage summary did not match persisted tenant provider usage')
+  }
 
   const browserCancellationResponse = await fetch(`${apiBase}/api/sessions/${browserSessionId}/cancel`, {
     method: 'POST', headers: authHeaders
@@ -1067,6 +1085,7 @@ try {
     transcript: 'ordered learner/patient utterances and append-only voice repair projected with time, phase, modality, and stable IDs; same-ID retries are idempotent and conflicting retries are rejected',
     workerRetry: 'turn and disclosure persisted once; acknowledged and trimmed after commit',
     providerUsage: 'patient-turn and scenario-generation token counts, model/tier metadata, versioned public-rate estimates, and duration persisted through the worker',
+    aiTimeUsage: `tenant-scoped organization-period summary matched provider usage: ${actualAiTimeUsage.totalTokens} tokens across ${actualAiTimeUsage.responseCount} responses`,
     turnFailureAudit: 'identifier-only failure metadata persisted through Redis and the PostgreSQL worker',
     assessmentOutcome: 'confirmed phase, unscored submission, and terminal events persisted in order',
     archiveJob: 'one pending archive job was committed with the terminal outcome and remained unique on event replay',

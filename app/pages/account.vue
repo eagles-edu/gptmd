@@ -10,9 +10,10 @@
     </div>
     <NuxtLink v-else-if="isConfigured" class="sign-in-link" to="/login?redirect=/account">Sign in with Google</NuxtLink>
 
-    <section v-if="user && memberships.length" class="workspace-picker" aria-labelledby="workspace-title">
+    <section v-if="user && memberships.length > 1" class="workspace-picker" aria-labelledby="workspace-title">
       <label id="workspace-title" for="workspace-select">GPTpatient workspace</label>
       <select id="workspace-select" v-model="selectedTenantId">
+        <option :value="null" disabled>Choose a workspace</option>
         <option v-for="(membership, index) in memberships" :key="membership.tenantId" :value="membership.tenantId">
           Workspace {{ index + 1 }} ({{ roleLabel(membership.role) }})
         </option>
@@ -61,6 +62,7 @@
         </fieldset>
       </div>
     </section>
+    <AiTimeBudgetControls v-if="selectedRole === 'customer_admin' && selectedTenantId" :tenant-id="selectedTenantId" />
     <div v-if="user" class="membership-status" aria-live="polite">
       <span v-if="membershipState === 'loading'">Loading workspace access…</span>
       <span v-else-if="membershipState === 'ready' && memberships.length === 1">Workspace membership loaded.</span>
@@ -186,7 +188,6 @@ const quotaFields: Array<{ key: EntitlementLimitKey; label: string }> = [
 const entitlementPolicy = ref<EntitlementPolicy | null>(null)
 const entitlementState = ref<'idle' | 'loading' | 'saving' | 'error'>('idle')
 const entitlementMessage = ref('')
-
 watch(selectedTenantId, (tenantId) => {
   if (membershipState.value === 'ready' && tenantId && tenantIds.value.includes(tenantId)) {
     membershipMessage.value = ''

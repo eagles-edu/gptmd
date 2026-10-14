@@ -30,11 +30,13 @@
       </div>
       <p v-if="membershipMessage" class="membership-message" role="status" aria-live="polite">
         {{ membershipMessage }}
+        <NuxtLink v-if="selectedRole === 'instructor'" to="/instructor/patient-variants">Open patient variant settings</NuxtLink>
         <button v-if="membershipState === 'error'" class="retry-link" type="button" @click="loadMemberships">Retry</button>
         <NuxtLink v-if="tenantIds.length === 0 && membershipState === 'ready'" to="/contact">Contact support</NuxtLink>
       </p>
       <p v-else-if="selectedRole && selectedRole !== 'learner'" class="membership-message" role="status">
         This workspace is for {{ selectedRole === 'customer_admin' ? 'customer administration' : 'instructor tools' }}. Learner encounters are unavailable to this role.
+        <NuxtLink v-if="selectedRole === 'instructor'" to="/instructor/patient-variants">Open patient variant settings</NuxtLink>
       </p>
       <p v-else-if="selectedRole === 'learner' && !visitEntitled" class="membership-message" role="status">
         Visit setup is not enabled for this workspace. Contact your workspace administrator.

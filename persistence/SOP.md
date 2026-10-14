@@ -299,6 +299,35 @@ source.
 <!-- curatormd:record_id=14ac9226e487f64d679dfff15f464e93;content_sha256=05f0ddb79f1aaeaa4dc658ebf120ef79253684d075c763bb1c592324d7cd521c -->
 <!-- curatormd:fingerprint=5668612a4b101d35d4cd1c50a6966bb1bf5eadd7f36af502b32546d7957cd82f -->
 
+## Use the matching Chrome profile for live learner checks
+
+For a real-account check, use the existing Chrome profile that owns that
+account's app session. List only Chrome's profile catalog metadata to map a
+profile directory to its display name and Google account:
+
+```sh
+jq -r '.profile.info_cache | to_entries[] | [.key, .value.name, (.value.user_name // "")] | @tsv' "$HOME/.config/google-chrome/Local State"
+```
+
+Launch the app in the matching profile, for example:
+
+```sh
+google-chrome --profile-directory='Profile 1' --new-tab 'https://obgyn.eaglesvn.club/'
+```
+
+The Chrome profile label or Google account alone is not proof of an app login.
+Before testing, verify that the app itself displays the expected signed-in
+identity and confirm its role and access status in Account. A single active
+membership is auto-selected and has no dropdown. When multiple memberships are
+listed, the selector starts blank: do not guess a default role or tenant; select
+the intended workspace explicitly. Do not inspect cookies, tokens, or browser storage. Do not
+substitute TinyFish or an isolated Playwright context for this real-account
+check; those profiles do not share the user's authenticated Chrome session. If
+the matching app session is absent, report that exact state without restarting
+sign-in in another profile or asking the user to repeat a completed sign-in.
+Encounter authorization uses the selected tenant; the app auto-selects only
+when exactly one active membership exists.
+
 ## Treat unexpected public 403/5xx responses as release blockers
 
 An unexpected 403 or 5xx on a user-facing route, login handoff, or required
@@ -320,6 +349,13 @@ attribution as a fix.
 5. Keep the incident open if any affected user path still returns an
    unexplained 403/5xx. Record the live change, backup/recovery path, exact
    verification, and any separate edge classification requiring the provider.
+
+`npm run deploy:live` runs the live OAuth authorization check before invoking
+FreeFileSync. It probes local-origin Nginx and public ingress with the
+previously affected `curl/8.5.0` User-Agent and requires the exact Google
+callback redirect. A failure stops deployment before staging changes; diagnose
+origin versus edge from which probe failed, repair the generating layer, then
+rerun the verification and deployment.
 
 For origin changes under `/etc/nginx`, preserve a timestamped backup, run
 `sudo nginx -t` before reload, and verify `systemctl is-active nginx` plus the
@@ -512,3 +548,61 @@ Account, select the workspace labeled `Learner`; its selected role and access
 status should show learner visit access. To revoke test access, disable both
 text flags from the customer-admin workspace controls or revoke only the
 learner membership after inspecting outstanding session data; keep the audit.
+
+To remove a test user's admin workspace, update only that user's active
+`customer_admin` membership in the isolated control tenant to `status='revoked'`.
+Do not delete the membership row: `app_sessions` references it with cascading
+delete behavior. Before the update, resolve exactly one active Auth subject,
+confirm the live target is `gptmd_live` as `gptmd_live_app`, inspect active
+sessions, and confirm any separate learner membership. Revoke only when no
+active control-tenant session would be disrupted. In a transaction, require
+exactly one matching `(tenant_id, subject_id, role, status)` row to change;
+afterward verify the learner row is still active and the append-only audit
+history is unchanged. The revoked row remains for referential/history
+preservation and is excluded from active account memberships.
+
+If another test identity needs learner access, create a dedicated tenant rather
+than adding it to the scsstx tenant. For the onlineadmin test profile, the
+dedicated tenant is `gptmd-learner-test-onlineadmin`; provision an active
+`learner` membership, the same bounded policy as the scsstx learner seed (5
+monthly sessions, 50 monthly Responses, 12 per session, one active session),
+voice disabled with zero audio quota, and an initial before/after audit entry
+in one transaction. Resolve the Auth subject from Supabase Auth, refuse an
+existing membership/tenant, and verify the exact role, flags, quotas, and audit
+before commit. Never share a test learner tenant between identities.
+
+The onlineadmin test profile uses both a dedicated learner tenant and a
+separate customer-admin control tenant. After the exact Auth identity and live
+database target are verified, run `npm run provision:onlineadmin-admin`. The
+provisioner refuses to proceed unless the existing learner membership is
+active with the expected bounded text-only policy, refuses an existing admin
+tenant, and checks migrations 024/025. The single-statement seed creates
+`gptmd-entitlement-test-onlineadmin` with an active `customer_admin` membership,
+all capabilities disabled, finite baseline quotas, zero audio quota, and an
+append-only initial policy audit. Verify both active rows and the rendered
+Account selector; it must begin blank and require an explicit workspace choice.
+To revoke only admin access, set that tenant membership to `status='revoked'`
+without deleting its row or changing the learner tenant/session.
+
+## Make git:update wait for NVM and pause on the editable commit message
+
+**Added:** 2026-10-14
+
+## Make git:update wait for NVM and pause on the editable commit message
+
+**Beginning — trigger and context:** A task terminal reported that `git:update` committed a subject containing `nvm use` without the expected edit pause. The command ran under noninteractive `bash -c`, which skips `.bashrc`; the updater also placed the pause at the wrong prompt, so the intended Node initialization and editable message were not reliably reached.
+
+**Middle — decisions and work:** The helper was iteratively corrected to put the auto-incremented suggestion directly on the editable `Suggested commit message:` line. A shell launcher now loads NVM and waits for `nvm use` to finish before starting the helper, including under the same noninteractive `bash -c` path. Regression tests and pseudo-terminal checks verified the Node version appears first, the process remains at the message editor, and no Git staging or publish action occurs before acceptance. Earlier accidental subjects had already been pushed and were left unchanged.
+
+**End — outcome and verification:** The exact `bash -c 'npm run git:update'` path was verified to load Node 24.21.0 and remain waiting at the editable `gptMD-dev_0.0.0.18` message. Focused tests, lint, syntax checks, and the pseudo-terminal check passed. The corrected run remained unaccepted, unstaged, uncommitted, and unpushed.
+
+**Future utility:** Future maintainers can use the NVM-loading launcher and pseudo-terminal regression path to preserve the message pause when VS Code tasks start a noninteractive Bash shell.
+
+**Project impact:** Observed: the task command loaded the pinned Node version before opening the editable message and waited without staging, committing, or pushing. Expected: the guarded interactive flow prevents shell startup text from becoming an accidental commit subject.
+
+**Follow-up:** The earlier mistaken commit subjects remain in the published history; the repair did not rewrite or revert them.
+
+**Verification:** Observed: the task command loaded the pinned Node version before opening the editable message and waited without staging, committing, or pushing. Expected: the guarded interactive flow prevents shell startup text from becoming an accidental commit subject.
+
+<!-- curatormd:record_id=6adacdbb9c29cc365c2539878ef66602;content_sha256=560aa2711777d6a212fd1d0125af1b2a40869e7d47e7cdc4d87912474f68745a -->
+<!-- curatormd:fingerprint=7dccbaa2205e717a2d666cb085c36ee45b6132e4d49c529c86d64120b602e0f0 -->

@@ -47,19 +47,25 @@ function nextVersion(commits) {
 }
 
 export function promptForCommitMessage(suggestedMessage, input = stdin, output = stdout) {
-  const prompt = createInterface({ input, output })
-  output.write(`\nSuggested commit message: ${suggestedMessage}\n`)
+  const prompt = createInterface({ input, output, terminal: true })
+  prompt.setPrompt('Suggested commit message: ')
 
   return new Promise((resolve, reject) => {
     prompt.once('SIGINT', () => {
       prompt.close()
       reject(new Error('Commit cancelled.'))
     })
-    prompt.question('Commit message (Enter keeps it; type an edited message): ', (answer) => {
+    prompt.once('line', (answer) => {
       prompt.close()
       resolve(answer.trim() || suggestedMessage)
     })
+    prompt.prompt()
+    prompt.write(`${suggestedMessage} `)
   })
+}
+
+export function validCommitMessage(message) {
+  return /^gptMD-dev_\d+\.\d+\.\d+\.\d+(?:\s+.+)?$/i.test(message.trim())
 }
 
 async function main() {
@@ -77,7 +83,10 @@ async function main() {
   }
 
   const message = await promptForCommitMessage(suggestedMessage)
-  stdout.write(`\nUsing commit message: ${message}\n`)
+  if (!validCommitMessage(message)) {
+    throw new Error('Commit cancelled; message must start with gptMD-dev_<version>. No files were staged.')
+  }
+  stdout.write(`Using commit message: ${message}\n`)
 
   runGit(['add', '.'])
   runGit(['commit', '-m', message])

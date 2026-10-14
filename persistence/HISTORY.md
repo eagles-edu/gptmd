@@ -1,5 +1,130 @@
 # Architectural and operational decisions
 
+## 2026-10-14 — Define per-variant patient voice and variability settings
+
+**Beginning — trigger and context:** The user clarified that each of GPTMD's
+ten age/body portrait variants needs its own voice and variability settings,
+and supplied a curated OBGYN disorders catalog for educator input. The current
+app generates a new patient scenario for each visit, randomizes persona traits
+per scenario, and plays replies with the browser's default speech voice.
+
+**Middle — decisions and work:** Added a ten-key educator settings contract
+covering `1019` through `5059`, each with `average` and `heavy` variants. Each
+variant owns independent voice and persona-variability settings. The session
+variation seed selects within reviewed persona bounds; voice selection affects
+audio presentation only. Age and body labels must not imply personality or
+clinical facts. Linked the contract from educator input, the modernization
+design, and checklist node `i14`.
+
+**End — outcome and verification:** Documentation now names all ten variants
+and distinguishes the target contract from current behavior. Educator choices,
+runtime storage/selection, and playback using the selected voice remain open;
+the checklist stays unchecked. No portrait assets or application runtime were
+changed in this step.
+
+**Future utility:** Preserve per-variant ownership and prevent portrait
+demographics from becoming unsupported clinical or personality assumptions
+when educator settings and runtime support are implemented.
+
+## 2026-10-14 — Add tenant-scoped instructor controls for patient variant settings
+
+**Beginning — trigger and context:** The user clarified that each of the ten age/body portrait variants needs its own voice and variability settings. The existing template had empty voice and trait values, no educator controls, and no runtime mapping; no setting values had been supplied or approved.
+
+**Middle — decisions and work:** Added a strict ten-variant API contract, instructor-only tenant-scoped GET/PUT routes, revision conflict protection, transactional PostgreSQL persistence, and append-only before/after audit. Added a responsive instructor page for per-variant browser voice selection/preview, playback parameters, and independent allowed values for mood, maturity, verbosity, health literacy, and disclosure willingness. Approval requires all ten voice profiles and all fifty trait lists to be complete. Incomplete draft settings do not affect learners.
+
+**End — outcome and verification:** API unit coverage verifies role/tenant boundaries, complete variant count, approval validation, atomic audit persistence, unknown-tenant refusal, and stale-write rejection. Browser coverage exercises loading and saving all ten draft records. The new migration has not been applied to the live database; learner setup/playback does not yet consume approved settings, and educator values remain unfilled. Checklist node `i14` stays open.
+
+**Future utility:** Complete tenant migration and educator review, then wire the approved voice profile into browser playback and the allowed variability values into session-pinned persona generation before enabling this in a learner workflow.
+
+## 2026-10-14 — Reconcile OBGYN educator catalog counts and source attribution
+
+**Beginning — trigger and context:** The user identified catalog metadata that
+disagreed with the 130-condition array, requested the nine incomplete sections
+be backfilled where sources support it, and clarified that unattributed
+material was believed to originate from Mayo Clinic. All case content remains
+subject to educator review before approval.
+
+**Middle — decisions and work:** Recounted the 260 section records and source
+URLs. The supplied file had eight blank Diagnosis & treatment summaries and
+one additional record with a summary but no source URL; all nine incomplete
+records now have Mayo Clinic page attribution, with summaries backfilled where
+empty. Added explicit source attribution for the 148 formerly unattributed
+sections. Preserved seven existing
+non-Mayo URLs (six Pam Pearl Hospitals and one Hanoi French Hospital) and
+recorded the conflict with the user's Mayo provenance report for educator
+reconciliation. Updated current counts and retained the 17/45 external-source
+revision-log values as historical rather than additive to current totals.
+
+**End — outcome and verification:** The catalog now contains 130 uniquely
+labeled conditions, 260 section URLs and explicit attributions, no empty
+section summaries, and 86 conditions with 101 external-source records. All
+catalog material remains unapproved for runtime use. Automated coverage
+verifies these counts and the provenance review gate; full project checks are
+reported separately from educator and clinical approval.
+
+**Future utility:** Keep source URLs authoritative when user-reported
+provenance conflicts with the catalog, document uncertainty for educators,
+and never mark curated medical material approved based on structural checks.
+
+## 2026-10-14 — Give onlineadmin separate admin and learner spaces
+
+**Beginning — trigger and context:** The user clarified that onlineadmin must
+have both customer-admin and learner access, while scsstx remains learner-only.
+The roles need independent tenant policies so admin controls do not silently
+grant encounter access.
+
+**Middle — decisions and work:** Added a guarded provisioner and atomic SQL
+seed for a distinct onlineadmin customer-admin tenant. It checks the live
+database identity and migrations, refuses an existing admin tenant, and
+requires the existing learner membership to remain active with the expected
+bounded text-only policy. The new admin policy disables every capability, uses
+finite baseline quotas, sets audio quota to zero, and records an append-only
+initial audit. Added regression coverage and documented the procedure.
+
+**End — outcome and verification:** The live seed completed. A read-only query
+confirmed the requested active admin and learner memberships, disabled admin
+capabilities, learner text access, and one initial audit row per tenant. Chrome
+`Default` is signed into onlineadmin; its Account page shows two workspaces
+with no preselected tenant. The existing learner tenant was preserved.
+Focused provisioning tests passed; the full project gate passed before this
+provisioning-only change.
+
+**Future utility:** Keep the tenant boundary and all-off admin policy when
+provisioning dual-role test identities; verify the rendered multi-workspace
+selector in the account's real Chrome profile.
+
+## 2026-10-14 — Deploy single-workspace Account behavior and verify live learners
+
+**Beginning — trigger and context:** After the two live test identities were assigned separate learner workspaces, the Account page still showed a dropdown even for a single membership. The user asked whether customers need that control; role and policy are tenant-scoped, but a single active tenant is already auto-selected.
+
+**Middle — decisions and work:** Kept the selector for accounts with multiple active memberships and hid it for a single membership. Added a regression proving the customer-admin role and controls remain available without the dropdown; retained multi-membership coverage for explicit selection and role-bound behavior. Updated the Chrome-profile SOP to distinguish the two states. The full project gate passed before the live mirror sync.
+
+**End — outcome and verification:** Release `2026-10-14T083134786Z` activated successfully. The origin/public OAuth gate passed, all three services are active with zero restarts, all 9,193 release paths have the expected owner/group and no group/other write bits, and public `/`, `/privacy`, and `/contact` return 200. The existing Chrome Profile 1 and Default sessions show their expected signed-in learner identities, active learner role, visit access, voice unavailable, and no dropdown. This verifies Account presentation, not a new live visit or transcript/voice modality.
+
+**Rationale:** A selector is useful only when the user must choose among tenant-scoped roles and policies; hiding it for a single membership reduces friction without weakening authorization.
+
+**Future utility:** Keep multi-membership selection explicit and recheck both profile mapping and the app's displayed identity when verifying a real account. Do not infer a completed learner visit from Account-page state.
+
+**Project impact:** Observed: the changed UI is deployed and matches both real single-workspace accounts; local regression coverage and release gates pass. Expected: customers with one organization can proceed without an unnecessary workspace choice.
+
+**Follow-up:** Verify a new visit in the intended learner profile separately; preserve physical microphone, transcript modality, clinical, and release-acceptance gates until directly evidenced.
+
+## 2026-10-14 — Revoke test admin access and provision a second learner profile
+
+**Beginning — trigger and context:** The user asked to remove the admin workspace from one test identity and add learner access to the existing onlineadmin identity. The all-off control tenant and the already-active learner tenant are separate authorization scopes; revoking the former must not remove or interrupt the latter.
+
+**Middle — decisions and work:** Resolved both exact Auth identities and confirmed the live target was `gptmd_live` as `gptmd_live_app`. Updated only the scsstx control membership from active to revoked inside a guarded transaction, retaining the row to avoid cascading deletion and preserving the append-only audit count and active learner session. The onlineadmin identity had no GPTMD memberships, so created a separate `gptmd-learner-test-onlineadmin` tenant rather than sharing the scsstx learner workspace. Added an active learner membership with bounded text/Responses quotas, voice disabled, and an initial before/after policy audit in one transaction.
+
+**End — outcome and verification:** The scsstx control membership is revoked, its separate learner membership remains active, and audit history is unchanged. The onlineadmin learner membership is active in its own tenant with 5 monthly sessions, 50 monthly Responses, 12 Responses per session, one concurrent session, and voice disabled with zero quota; the initial audit entry is present. No code release or migration was needed because these authorization records are read from the live database. Account-page refresh/browser flow remains unverified.
+
+**Rationale:** Tenant membership status is the authorization boundary. Updating status preserves foreign-key references and historical rows, while separate test tenants keep identities and policy/audit ownership isolated.
+
+**Future utility:** Follow the entitlement SOP for narrow transactional revocation and provisioning; never delete membership rows or reuse another test identity's learner tenant.
+
+**Project impact:** Observed: the intended live memberships and policy boundaries now match the requested roles, and an existing learner session was preserved. Not observed: signed-in browser refresh for either identity.
+
+**Follow-up:** Refresh each account in its own Chrome profile to confirm active account membership presentation, then verify the intended learner route without claiming an authenticated browser flow from database evidence alone.
+
 ## 2026-09-23 — Codex-primary local curation boundary
 
 **Decision:** Use Hermes profile `gptmd-coding` with the Codex app-server runtime
@@ -406,3 +531,82 @@ callback or broaden the CRS exclusion for that separate gate.
 **Future utility:** The default ACL prevents the host's collaborative umask from recreating the checkout exposure for future files and directories; the audit distinguishes checkout permissions from the separately guarded immutable release tree.
 
 **Project impact:** Observed: LiteSpeed retains read/traverse access and loses write access to the GPTMD checkout; the web/API/worker release remains active. Expected: source and build inputs are protected from modification by the low-privilege web worker.
+
+## 2026-10-14 — Repair test-domain OAuth and deploy tenant entitlement controls
+
+**Decision:** ## Repair test-domain OAuth and deploy tenant entitlement controls
+
+**Beginning — trigger and context:** The live GPTMD test domain had separate OAuth failures: Google rejected the callback URI, and the origin returned 403 on the OAuth callback. The user also needed an isolated, least-privilege learner workspace with tenant-scoped entitlement controls.
+
+**Middle — decisions and work:** The active Supabase GoTrue callback was verified as https://obgyn.eaglesvn.club/auth/v1/callback and added to the Google OAuth client's authorized redirects. The callback's ModSecurity 403 was traced to OWASP CRS rule 930120 misclassifying the URI-like scope parameter; the exclusion was limited to ARGS:scope on that host's /auth/v1/callback path. Tenant-scoped GET/PUT entitlement endpoints and an append-only audit were implemented, with account controls and a guarded test-workspace seed path. The release was deployed after project checks passed; migrations 024 and 025 were applied and the seed helper was corrected to take the validated Auth subject UUID from the separate Supabase Auth database.
+
+**End — outcome and verification:** A fresh Chrome login returned to /account, and later live checks showed the release active, services healthy, OAuth start returning 302, and the unauthenticated entitlement endpoint returning 401. The scsstx@gmail.com Auth identity was still absent, so no tenant was seeded and live learner entitlement verification remained open. The origin rule was narrowed; the broader OneShield zone setting remained separate.
+
+**Rationale:** This records the verified OAuth recovery and the deployed tenant-control path while preserving the important boundary between successful authentication and not-yet-provisioned learner authorization.
+
+**Future utility:** For future test-domain OAuth failures, verify the exact GoTrue callback and distinguish Google redirect mismatch, origin CRS blocks, and OneShield behavior; scope any CRS exception to the endpoint and argument. For learner provisioning, resolve a real Auth subject before seeding membership.
+
+**Project impact:** Observed: the callback reached GoTrue after a narrow CRS exclusion, browser OAuth succeeded for the existing admin account, and tenant entitlement endpoints were deployed behind verified tenant membership. The current test learner still cannot be provisioned until its real Auth identity exists. Expected: the narrow exception limits the security change to the affected callback parameter and keeps access controlled by database membership and entitlements.
+
+**Follow-up:** After the scsstx@gmail.com identity is created by its first Google sign-in, run the guarded provisioning script and verify the learner account's selected workspace and visit in an authenticated browser.
+
+**Rationale:** For future test-domain OAuth failures, verify the exact GoTrue callback and distinguish Google redirect mismatch, origin CRS blocks, and OneShield behavior; scope any CRS exception to the endpoint and argument. For learner provisioning, resolve a real Auth subject before seeding membership.
+
+**Impact:** Observed: the callback reached GoTrue after a narrow CRS exclusion, browser OAuth succeeded for the existing admin account, and tenant entitlement endpoints were deployed behind verified tenant membership. The current test learner still cannot be provisioned until its real Auth identity exists. Expected: the narrow exception limits the security change to the affected callback parameter and keeps access controlled by database membership and entitlements.
+
+<!-- curatormd:record_id=3bb90bb51ffb57ec83b87f1598dcd609;content_sha256=155095c835f066a2421aec8f26e1177d7d22ef994fec62f7a3e82d9d6ede4c01 -->
+<!-- curatormd:fingerprint=d6304839c9134913daf2c0c6bc80521a8379b5fdaebdbea977dd214c478341be -->
+## 2026-10-14 — Establish organization AI-time pools and group budgets as the core entitlement
+
+**Beginning — trigger and context:** The user clarified that model, voice, reasoning, and personality are settings, not entitlements. Token/minute allowances are the crucial entitlements. The organization owns the AI-time pool and budgets it per user group (including `gptNURSING`, `gptRECEPTION`, `gptTECHNICIAN`, `gptVENDOR`, and `gptCASHIER`); departments such as OBGYN, PEDIATRICS, ONCOLOGY, UROLOGY, and ENDOCRINOLOGY are a separate dimension.
+
+**Middle — decisions and work:** Recorded the organization as pool owner and the user group as token/minute entitlement and budget key. Kept model, voice, reasoning, and personality outside entitlement accounting as separate settings. Token and minute allowances are distinct usage dimensions unless an explicit conversion is approved. Recorded departments as independent organizational classification/attribution, not default budget buckets. Distinguished this target from existing tenant visit/Responses/audio quotas and provider cost attribution. Documented unresolved provider meters, periods, rollover, overage, reconciliation, and multi-group rules.
+
+**End — outcome and verification:** Added `docs/organization-ai-time-entitlements.md` and linked the target to open modernization gates `a09` and `d02`. The contract distinguishes configurable AI settings from token/minute entitlements and budgets. `npm run check` passed: 285 unit tests, 42 standard browser tests, 44 preflight tests, 10 mobile-viewer tests, and one Mobile Viewer tool test; API build, schema/diagram checks, and warning-free production build also passed. No schema, API, runtime policy, database, or live tenant was changed.
+
+**Future utility:** Use this contract before designing migrations, transactional reservations, administrator controls, or usage reports for organization/group token and minute entitlements.
+
+## 2026-10-14 — Set group-only allocation and session reservation policy
+
+**Beginning — trigger and context:** Follow-up design questions narrowed how the organization token pool is allocated and how provider usage must be authorized. The existing customer-admin controls remain draft-only and do not charge or block calls.
+
+**Middle — decisions and work:** The user chose group allocations only: unallocated organization tokens are not a direct fallback. Each provider call must reserve a bounded amount before execution and reconcile that reservation to actual provider `total_tokens`; retries are separate calls. A session uses one budget group, pinned for its lifetime, and a member's reassignment affects only new sessions. Existing extra-token decisions remain: prepaid credits belong to the purchasing scope, carry forward, require confirmed payment, and require a per-session choice if both organization and individual credits can fund overage.
+
+**End — outcome and verification:** Updated the entitlement reference and modernization checklist to record these accepted rules and remove them from the unresolved decision list. No runtime reservation, group assignment, session pin, payment, database migration, or enforcement was implemented or verified in this update. Reservation bounds and recovery behavior for missing or revised provider usage remain open.
+
+**Future utility:** These choices constrain the upcoming member assignment, session creation, reservation ledger, retry, and reconciliation paths; they prevent silent use of unallocated pool balance or changing the budget group underneath an active session.
+
+**Project impact:** Observed: the product policy is now recorded consistently in the reference and checklist. Runtime correctness is unchanged until the corresponding API and database behavior is implemented and tested.
+## 2026-10-14 — Preserve OBGYN disorder catalog as educator review input
+
+**Beginning — trigger and context:** The user supplied a curated OBGYN disorder catalog to use for educator input on fictional training cases. The project does not yet implement instructor case authoring, and clinical content must remain distinct from model instructions and runtime answer-key truth.
+
+**Middle — decisions and work:** Initially copied the JSON byte-for-byte under `educator-input/` and documented its provenance, intended educator-review-only role, and SHA-256. Structural inspection found 130 unique condition labels, nine incomplete Diagnosis & treatment records (eight with blank summaries and one with a summary but no source URL), only 112/260 section records with explicit source attribution, and internal metadata contradictions about condition counts, enrichment, and external sources. Linked it to the future case-authoring plan without connecting it to the patient generator.
+
+**End — outcome and verification:** At initial import, source and repository copy compared byte-identically and shared SHA-256 `d7011fd64bf761b7824f0195683174e6c876bdc685d22964bede7a3642319334`. The JSON parser accepted the file. A later 2026-10-14 reconciliation converted the repository copy into an edited educator-review derivative; see the subsequent decision entry. No runtime, database, live tenant, or clinical behavior changed; educator authoring and clinical approval remain open.
+
+**Future utility:** Educators can use the catalog as a starting reference while preserving provenance and resolving its incomplete sections and inconsistent metadata before approving scenario content.
+
+**Project impact:** Observed: a versioned, reviewable input asset and its known quality gaps are now recorded without treating external prose as GPTMD instructions or validated clinical truth. Expected: the explicit review boundary reduces unsupported case facts entering learner scenarios.
+
+## 2026-10-14 — Resolve organization token entitlement policy
+
+**Beginning — trigger and context:** The user clarified the intended entitlement model while organization AI-time controls were being wired. Earlier notes treated token/minute metering, reset periods, rollover, overage ownership, and group selection as undecided; subsequent user decisions supersede those open questions.
+
+**Middle — decisions and work:** Actual provider token usage is the charge basis; the current Responses meter is `provider_usage.total_tokens`. Minute amounts are relative estimates, not a second independently consumed allowance. Each individual included allowance resets by calendar month, while each organization chooses its pool period. Every session uses one explicitly selected budget group for its lifetime. When included allowance is exhausted, extra tokens may be purchased in-app, are used for overage, and carry forward across months. Organization purchases are organization-owned; individual purchases are individual-owned. If both balances are available for session overage, ask the user to choose the funding scope and persist that choice rather than silently preferring or switching balances. Model, voice, reasoning, and personality remain settings, not token entitlements; departments remain distinct from user groups.
+
+**End — outcome and verification:** Updated the organization AI-time contract and modernization checklist with these decisions. Migration 027 is applied to the live mirror, but its budget controls remain draft/read-only: there is no runtime token reservation or debit, group assignment, purchased-credit ledger/payment confirmation, or per-session overage selection. Concurrent reservations, unallocated-pool fallback, missing/revised usage reconciliation, and group reassignment timing remain open pending explicit policy and implementation evidence. The live Responses meter name and aggregate source were verified in the repository schema; no live budget or credit balance was seeded or charged.
+
+**Future utility:** Keep actual token entitlements separate from capability quotas and AI configuration. Implement payment-confirmed credits, atomic usage accounting, and a pinned per-session funding choice only after remaining concurrency and fallback rules are settled.
+
+## 2026-10-14 — Scope department administration and transfer allotments
+
+**Beginning — trigger and context:** The user clarified that hospital IT staff administer department changes and that a transfer partway through a pay period should receive only the remaining share of the new department's token allotment. The existing group-budget controls had a department catalog but no member assignment, transfer proration, or roster workflow.
+
+**Middle — decisions and work:** Department assignment is controlled by a customer administrator authenticated within one organization; learners cannot self-assign. Admins can select a member and department from dropdowns or export/import that tenant's roster as CSV. Department monthly per-user token allotments prorate against the remaining UTC calendar month on a real department transfer. Reimporting an unchanged department preserves its assignment timestamp. New sessions snapshot their group and department; existing sessions remain pinned. The assignment audit records before/after departments.
+
+**End — outcome and verification:** Added migration 029, tenant-scoped assignment APIs and controls, CSV import/export, session snapshots, and regression coverage for proration and assignment APIs. Focused tests and the API TypeScript build passed after a session-create error type repair. Migration 029 is not live-applied or deployed. The allotment preview is not token enforcement: reservations, usage debit/reconciliation, department/group accounting, and payment-confirmed overage remain open. Full `npm run check` remains required.
+
+**Future utility:** Keep organization-admin authority explicit, preserve historical session attribution, and avoid renewing a learner's proration period when a roster import repeats the same department.
+
+**Project impact:** Observed: API tests verify tenant-role handling, assignment import, assignment persistence, and calendar-month proration; session creation snapshots department and group codes in code. Expected: tenant-scoped roster workflows make customer setup manageable. No live migration, deployment, or token balance enforcement was verified.

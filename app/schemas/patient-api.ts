@@ -12,6 +12,7 @@ export const CreateSessionResponseSchema = z.object({
   status: z.literal('initializing'),
   createdAt: z.iso.datetime({ offset: true }),
   updatedAt: z.iso.datetime({ offset: true }),
+  aiBudgetGroupCode: z.string().nullable().optional(),
   versions: SessionVersionPinsSchema
 }).strict()
 
@@ -41,11 +42,28 @@ export const PatientVitalSignsSchema = z.object({
   auralTemp: ChartTemperatureSchema
 }).strict()
 
+export const PatientVariantPresentationSettingsSchema = z.object({
+  variantKey: z.enum([
+    '1019-average', '1019-heavy', '2029-average', '2029-heavy', '3039-average',
+    '3039-heavy', '4049-average', '4049-heavy', '5059-average', '5059-heavy'
+  ]),
+  settingsRevision: z.number().int().positive(),
+  voiceProfileId: z.string().min(1),
+  provider: z.literal('browser-speech-synthesis'),
+  voiceId: z.string().min(1),
+  locale: z.string().min(1),
+  rate: z.number().min(0.5).max(2),
+  pitch: z.number().min(0).max(2),
+  volume: z.number().min(0).max(1),
+  fallbackVoiceId: z.string().min(1)
+}).strict()
+
 export const PatientProfileSchema = z.object({
   fullName: z.string().min(1),
   dateOfBirth: z.iso.date(),
   bodyType: z.enum(['average', 'heavy']),
   reasonForVisit: z.string().min(1),
+  presentationSettings: PatientVariantPresentationSettingsSchema.optional(),
   vitalSigns: PatientVitalSignsSchema
 }).strict()
 

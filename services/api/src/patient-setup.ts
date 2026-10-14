@@ -5,6 +5,10 @@ import {
   PatientVitalSignsSchema,
   type PatientScenarioProfile
 } from './patient-profile.js'
+import {
+  PatientVariantPresentationSettingsSchema,
+  type PatientVariantPresentationSettings
+} from './patient-variant-settings.ts'
 
 /** Private setup values derived from the accepted full scenario profile. */
 export const PatientSetupProjectionSchema = z.object({
@@ -14,7 +18,8 @@ export const PatientSetupProjectionSchema = z.object({
   reasonForVisit: z.string().trim().min(1).max(1_000),
   diagnosis: z.string().trim().min(1).max(1_000).nullable(),
   vitalSigns: PatientVitalSignsSchema,
-  physicalExamFindings: PatientPhysicalExamFindingsSchema
+  physicalExamFindings: PatientPhysicalExamFindingsSchema,
+  presentationSettings: PatientVariantPresentationSettingsSchema.optional()
 }).strict()
 
 export type PatientSetupProjection = z.infer<typeof PatientSetupProjectionSchema>
@@ -25,6 +30,7 @@ export const LearnerPatientProfileSchema = z.object({
   dateOfBirth: z.iso.date(),
   bodyType: z.enum(['average', 'heavy']),
   reasonForVisit: z.string().trim().min(1).max(1_000),
+  presentationSettings: PatientVariantPresentationSettingsSchema.optional(),
   vitalSigns: PatientVitalSignsBaseSchema.pick({
     currentPulse: true,
     bpSitting: true,
@@ -39,7 +45,10 @@ export const LearnerPatientProfileSchema = z.object({
 
 export type LearnerPatientProfile = z.infer<typeof LearnerPatientProfileSchema>
 
-export function derivePatientSetup(profile: PatientScenarioProfile): PatientSetupProjection {
+export function derivePatientSetup(
+  profile: PatientScenarioProfile,
+  presentationSettings?: PatientVariantPresentationSettings | null
+): PatientSetupProjection {
   return PatientSetupProjectionSchema.parse({
     fullName: profile.fullName,
     dateOfBirth: profile.dateOfBirth,
@@ -47,7 +56,8 @@ export function derivePatientSetup(profile: PatientScenarioProfile): PatientSetu
     reasonForVisit: profile.reasonForVisit,
     diagnosis: profile.diagnosis,
     vitalSigns: profile.vitalSigns,
-    physicalExamFindings: profile.physicalExamFindings
+    physicalExamFindings: profile.physicalExamFindings,
+    ...(presentationSettings ? { presentationSettings } : {})
   })
 }
 
@@ -59,6 +69,7 @@ export function toLearnerPatientProfile(
     dateOfBirth: setup.dateOfBirth,
     bodyType: setup.bodyType,
     reasonForVisit: setup.reasonForVisit,
+    ...(setup.presentationSettings ? { presentationSettings: setup.presentationSettings } : {}),
     vitalSigns: LearnerPatientProfileSchema.shape.vitalSigns.parse({
       currentPulse: setup.vitalSigns.currentPulse,
       bpSitting: setup.vitalSigns.bpSitting,

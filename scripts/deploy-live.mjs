@@ -1,9 +1,11 @@
 import { execFile } from 'node:child_process'
-import { access, chmod, lstat, mkdir, readFile, readlink, readdir, rename, symlink } from 'node:fs/promises'
+import { access, chmod, copyFile, lstat, mkdir, readFile, readlink, readdir, rename, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
 import { parse } from 'dotenv'
+import { verifyLiveOAuthAuthorize } from './verify-live-oauth.mjs'
+import { verifyLiveBrowserRoutes } from './verify-live-browser.mjs'
 
 const execFileAsync = promisify(execFile)
 const repoRoot = fileURLToPath(new URL('../', import.meta.url))
@@ -70,16 +72,24 @@ if (process.getuid() === 0) {
 }
 
 await access(liveEnvPath)
+await verifyLiveOAuthAuthorize()
+await verifyLiveBrowserRoutes()
 await mkdir(join(stageRoot, 'web'), { recursive: true })
 await mkdir(join(stageRoot, 'api'), { recursive: true })
 for (const job of batchJobs) await run(freeFileSync, [job])
 
 const apiStage = join(stageRoot, 'api')
+await mkdir(join(apiStage, 'catalog'), { recursive: true })
+await copyFile(
+  join(repoRoot, 'educator-input/obgyn-disorders.reference.json'),
+  join(apiStage, 'catalog/obgyn-disorders.reference.json')
+)
 const expected = [
   join(stageRoot, 'web/server/index.mjs'),
   join(apiStage, 'dist/server.js'),
   join(apiStage, 'dist/worker.js'),
   join(apiStage, 'catalog/patient-profile.json'),
+  join(apiStage, 'catalog/obgyn-disorders.reference.json'),
   join(apiStage, 'package.json'),
   join(apiStage, 'package-lock.json')
 ]

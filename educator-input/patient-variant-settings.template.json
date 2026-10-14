@@ -1,0 +1,316 @@
+{
+  "schemaVersion": 1,
+  "status": "educator-review",
+  "variants": [
+    {
+      "variantKey": "1019-average",
+      "voiceProfileId": "voice-1019-average",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-1019-average",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "1019-heavy",
+      "voiceProfileId": "voice-1019-heavy",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-1019-heavy",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "2029-average",
+      "voiceProfileId": "voice-2029-average",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-2029-average",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "2029-heavy",
+      "voiceProfileId": "voice-2029-heavy",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-2029-heavy",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "3039-average",
+      "voiceProfileId": "voice-3039-average",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-3039-average",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "3039-heavy",
+      "voiceProfileId": "voice-3039-heavy",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-3039-heavy",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "4049-average",
+      "voiceProfileId": "voice-4049-average",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-4049-average",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "4049-heavy",
+      "voiceProfileId": "voice-4049-heavy",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-4049-heavy",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "5059-average",
+      "voiceProfileId": "voice-5059-average",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-5059-average",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    },
+    {
+      "variantKey": "5059-heavy",
+      "voiceProfileId": "voice-5059-heavy",
+      "voice": {
+        "provider": null,
+        "voiceId": null,
+        "locale": null,
+        "rate": null,
+        "pitch": null,
+        "volume": null,
+        "fallbackVoiceId": null
+      },
+      "variabilityProfileId": "variability-5059-heavy",
+      "variability": {
+        "mood": {
+          "allowedValues": []
+        },
+        "maturity": {
+          "allowedValues": []
+        },
+        "verbosity": {
+          "allowedValues": []
+        },
+        "educationLevel": {
+          "allowedValues": []
+        },
+        "willingnessToDisclose": {
+          "allowedValues": []
+        }
+      }
+    }
+  ]
+}

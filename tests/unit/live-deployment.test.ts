@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { describe, expect, it } from 'vitest'
+import { assertGoogleOAuthRedirect, verifyLiveOAuthAuthorize } from '../../scripts/verify-live-oauth.mjs'
+import { assertLiveBrowserOAuthRedirect, assertLiveHomeResponse } from '../../scripts/verify-live-browser.mjs'
 
 describe('live deployment artifact whitelist', () => {
   it('requires release ownership by the service account and removes shared write access', async () => {
@@ -66,6 +68,7 @@ describe('live deployment artifact whitelist', () => {
     const sync = await readFile('ops/freefilesync/gptmd-live-api.ffs_batch', 'utf8')
 
     expect(dockerfile).toContain('COPY --from=api-build --chown=node:node /workspace/services/api/catalog ./catalog')
+    expect(dockerfile).toContain('COPY --chown=node:node educator-input/obgyn-disorders.reference.json ./catalog/obgyn-disorders.reference.json')
     expect(sync).toContain('<Item>\\catalog\\</Item>')
     expect(sync).toContain('<Item>\\dist\\</Item>')
     expect(sync).toContain('<Item>\\migrations\\</Item>')
@@ -74,5 +77,73 @@ describe('live deployment artifact whitelist', () => {
     expect(sync).not.toContain('<Item>*</Item>')
     expect(sync).toContain('<Item>\\src\\</Item>')
     expect(sync).toContain('<Item>\\node_modules\\</Item>')
+
+    const deployment = await readFile('scripts/deploy-live.mjs', 'utf8')
+    expect(deployment).toContain('educator-input/obgyn-disorders.reference.json')
+    expect(deployment).toContain("catalog/obgyn-disorders.reference.json")
+  })
+
+  it('checks origin and public OAuth before syncing a live release', async () => {
+    const deployment = await readFile('scripts/deploy-live.mjs', 'utf8')
+
+    expect(deployment.indexOf('await verifyLiveOAuthAuthorize()')).toBeGreaterThanOrEqual(0)
+    expect(deployment.indexOf('await verifyLiveOAuthAuthorize()'))
+      .toBeLessThan(deployment.indexOf('for (const job of batchJobs)'))
+    expect(deployment.indexOf('await verifyLiveBrowserRoutes()'))
+      .toBeLessThan(deployment.indexOf('for (const job of batchJobs)'))
+  })
+})
+
+describe('live OAuth preflight', () => {
+  it('accepts only a Google redirect with the exact registered callback', () => {
+    assertGoogleOAuthRedirect(
+      '302',
+      'https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fobgyn.eaglesvn.club%2Fauth%2Fv1%2Fcallback&state=must-not-be-logged'
+    )
+  })
+
+  it('rejects the former User-Agent 403 and wrong callback without exposing OAuth state', () => {
+    expect(() => assertGoogleOAuthRedirect('403', 'https://obgyn.eaglesvn.club/forbidden?state=secret'))
+      .toThrow('expected HTTP 302 to Google')
+    expect(() => assertGoogleOAuthRedirect(
+      '302',
+      'https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fobgyn.eaglesvn.club%2Fauth%2Fv1%2Fcallback2&state=secret'
+    )).toThrow('redirect_uri=https://obgyn.eaglesvn.club/auth/v1/callback')
+  })
+
+  it('probes local origin and public ingress with the affected curl User-Agent', async () => {
+    const calls: Array<{ command: string; args: string[] }> = []
+    const execute = async (command: string, args: string[]) => {
+      calls.push({ command, args })
+      return {
+        stdout: '302\nhttps://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fobgyn.eaglesvn.club%2Fauth%2Fv1%2Fcallback&state=secret'
+      }
+    }
+
+    await verifyLiveOAuthAuthorize(execute)
+
+    expect(calls).toHaveLength(2)
+    expect(calls[0]?.args).toContain('obgyn.eaglesvn.club:443:127.0.0.1')
+    for (const call of calls) {
+      expect(call.command).toBe('curl')
+      expect(call.args).toContain('curl/8.5.0')
+      expect(call.args.at(-1)).toBe('https://obgyn.eaglesvn.club/auth/v1/authorize?provider=google')
+    }
+  })
+
+  it('rejects browser 403s, blocked pages, console errors, and incorrect OAuth callbacks', () => {
+    expect(() => assertLiveHomeResponse(403, '403 | Forbidden', false, [])).toThrow('expected the GPTpatient home page')
+    expect(() => assertLiveHomeResponse(200, 'Home | GPTpatient', true, ['console'])).toThrow('console or page errors')
+    expect(() => assertLiveBrowserOAuthRedirect(
+      302,
+      'https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fobgyn.eaglesvn.club%2Fauth%2Fv1%2Fcallback2'
+    )).toThrow('redirect_uri=https://obgyn.eaglesvn.club/auth/v1/callback')
+    expect(() => assertLiveBrowserOAuthRedirect(403, 'https://obgyn.eaglesvn.club/forbidden'))
+      .toThrow('expected HTTP 302 to Google')
+    expect(() => assertLiveHomeResponse(200, 'Home | GPTpatient', true, [])).not.toThrow()
+    expect(() => assertLiveBrowserOAuthRedirect(
+      302,
+      'https://accounts.google.com/o/oauth2/v2/auth?redirect_uri=https%3A%2F%2Fobgyn.eaglesvn.club%2Fauth%2Fv1%2Fcallback'
+    )).not.toThrow()
   })
 })

@@ -167,6 +167,7 @@ describe('patient setup Conversation isolation', () => {
     const setupInput = request.input?.[0]
     const scenarioInput = request.input?.[1]
     const catalogBlock = setupInput?.role === 'developer' ? setupInput.content[1] : undefined
+    const educatorBlock = setupInput?.role === 'developer' ? setupInput.content[2] : undefined
     expect(request.instructions).toBeUndefined()
     expect(request.prompt_cache_options).toEqual({ mode: 'explicit', ttl: '30m' })
     expect(setupInput?.role).toBe('developer')
@@ -185,8 +186,12 @@ describe('patient setup Conversation isolation', () => {
     expect(catalogBlock?.text).toBe(`Complete canonical patient-profile parameter catalog (intact JSON):\n${canonicalCatalog}`)
     expect(parsedCatalog.patientProfileFields).toEqual(PATIENT_PROFILE_FIELDS)
     expect(catalogBlock?.prompt_cache_breakpoint).toEqual({ mode: 'explicit' })
+    expect(educatorBlock?.text).toContain('Approved OBGYN educator-input reference')
+    expect(educatorBlock?.text).toContain('Endometriosis')
+    expect(educatorBlock?.text).toContain('Mayo Clinic')
+    expect(educatorBlock?.prompt_cache_breakpoint).toEqual({ mode: 'explicit' })
     expect((setupInput?.role === 'developer' ? setupInput.content[0]?.text.length ?? 0 : 0) +
-      (catalogBlock?.text.length ?? 0)).toBeGreaterThan(4096)
+      (catalogBlock?.text.length ?? 0) + (educatorBlock?.text.length ?? 0)).toBeGreaterThan(4096)
     expect(scenarioInput?.role).toBe('user')
     expect(scenarioInput?.role === 'user' ? scenarioInput.content : '')
       .toContain(`Stable scenario variation seed: ${'s'.repeat(43)}`)
@@ -197,6 +202,14 @@ describe('patient setup Conversation isolation', () => {
       totalTokens: 50, durationMs: expect.any(Number),
       pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000017000000'
     })
+    expect(scenario.sourceContext).toEqual(expect.objectContaining({
+      catalogId: 'obgyn-disorders',
+      mode: 'primary_condition_reference_and_simulation_augmentation',
+      approvalStatus: 'approved_for_gptmd_educator_input',
+      sourceRevision: '2026-10-14',
+      conditionCount: 130,
+      sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
+    }))
     expect(timings).toEqual(['first_token', 'completed'])
     expect(deleted).toEqual(['setup-answer-key', 'setup-input'])
     expect(history).toEqual([])
@@ -276,5 +289,39 @@ describe('patient setup Conversation isolation', () => {
     expect(responseInputs[0]).toContain('a multiple pregnancy counts once in the former and once per live-born infant in the latter')
     expect(responseInputs[0]).toContain('In this PP, parity (P) is the patient-reported number of completed prior pregnancies reaching 20 weeks or later')
     expect(responseInputs[0]).toContain('numberChildren is the current living-child count and must not be inferred from births')
+  })
+
+  it('keeps initializing sessions on the prior prompt version free of the newer educator catalog context', async () => {
+    const profile = {
+      fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+      reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', painHistoryStatus: 'absent', painEpisodes: [], history: [],
+      vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
+      currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
+      patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
+      persona: {
+        mood: 'concerned', maturity: 'adult', verbosity: 'moderate',
+        educationLevel: 'college', willingnessToDisclose: 'gradual'
+      }
+    }
+    const { streamFactory } = createMockResponsesStream({
+      id: 'resp-old-prompt', status: 'completed', output_text: JSON.stringify(profile)
+    })
+    const client = {
+      conversations: {
+        create: vi.fn().mockResolvedValue({ id: 'conv-old-prompt' }),
+        items: { list: vi.fn(async function* () {}), delete: vi.fn() }
+      },
+      responses: { stream: streamFactory }
+    } as unknown as OpenAI
+
+    const scenario = await generatePatientScenario(client, 'gpt-6-luna', {
+      promptVersion: 'patient-scenario-prompt-v13',
+      scenarioSeed: 'o'.repeat(43), maxAttempts: 1
+    })
+
+    const request = streamFactory.mock.calls[0]?.[0] as { input: Array<{ role: string; content: unknown }> }
+    expect(JSON.stringify(request.input[0]?.content)).not.toContain('Approved OBGYN educator-input reference')
+    expect(scenario.sourceContext).toBeUndefined()
   })
 })

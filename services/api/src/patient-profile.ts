@@ -5,6 +5,11 @@ import { z } from 'zod'
 import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.ts'
 import { estimateOpenAiResponseCost } from './provider-cost.ts'
 import type { ProviderUsageSample } from './session-contracts.ts'
+import type { PatientVariantPresentationSettings } from './patient-variant-settings.ts'
+import {
+  EDUCATOR_CATALOG_PROMPT_JSON,
+  EDUCATOR_CATALOG_SCENARIO_SOURCE
+} from './educator-input-catalog.ts'
 
 export const PAIN_EPISODE_FIELDS = [
   'whatProvokesPalliatesPain',
@@ -330,7 +335,8 @@ const patientProfileCatalogJson = readFileSync(
 )
 
 // Bump the prompt or policy version when their corresponding behavior changes.
-export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v13'
+export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v14'
+export const PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v13'
 export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v3'
 export const PATIENT_SCENARIO_SCHEMA_VERSION = 8 as const
 
@@ -362,8 +368,10 @@ export interface GeneratedPatientScenario {
   conversationId: string
   responseId: string
   profile: PatientScenarioProfile
+  presentationSettings?: PatientVariantPresentationSettings
   usage: ProviderUsageSample | null
   abandonedConversationIds: string[]
+  sourceContext?: typeof EDUCATOR_CATALOG_SCENARIO_SOURCE
 }
 
 export class PatientScenarioValidationError extends Error {
@@ -700,9 +708,13 @@ export async function generatePatientScenario(
   const promptVersion = options.promptVersion ?? PATIENT_SCENARIO_PROMPT_VERSION
   const policyVersion = options.policyVersion ?? PATIENT_SCENARIO_POLICY_VERSION
   if (
-    promptVersion !== PATIENT_SCENARIO_PROMPT_VERSION ||
+    ![PATIENT_SCENARIO_PROMPT_VERSION, PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION].includes(promptVersion) ||
     policyVersion !== PATIENT_SCENARIO_POLICY_VERSION
   ) throw new Error('The pinned patient scenario prompt or policy version is unavailable.')
+  const usesEducatorCatalog = promptVersion === PATIENT_SCENARIO_PROMPT_VERSION
+  const scenarioInstructions = usesEducatorCatalog
+    ? `${setupInstructions} Use the approved OBGYN educator-input reference as the primary factual reference for catalog-covered conditions and as augmentation for the complete fictional simulation. Create an original patient with a newly varied history, identity, presentation, and persona on every session; do not copy catalog prose or treat a condition entry as a patient template. Do not sample catalog conditions uniformly or claim incidence-weighted selection: no incidence dataset is supplied yet. Choose a coherent condition naturally; use only source-supported catalog facts for its symptoms, causes, diagnostic approach, and treatment context, and do not invent test results or patient-specific treatment advice. The catalog is educator input, not a clinical guideline or answer key.`
+    : setupInstructions
 
   const asOf = options.asOf ?? new Date()
   if (!/^[A-Za-z0-9_-]{43}$/.test(options.scenarioSeed)) {
@@ -748,12 +760,17 @@ export async function generatePatientScenario(
           {
             role: 'developer',
             content: [
-              { type: 'input_text', text: setupInstructions },
+              { type: 'input_text', text: scenarioInstructions },
               {
                 type: 'input_text',
                 text: `Complete canonical patient-profile parameter catalog (intact JSON):\n${patientProfileCatalogJson}`,
                 prompt_cache_breakpoint: { mode: 'explicit' }
-              }
+              },
+              ...(usesEducatorCatalog ? [{
+                type: 'input_text' as const,
+                text: `Approved OBGYN educator-input reference (compact source-attributed JSON):\n${EDUCATOR_CATALOG_PROMPT_JSON}`,
+                prompt_cache_breakpoint: { mode: 'explicit' as const }
+              }] : [])
             ]
           },
           {
@@ -828,7 +845,8 @@ export async function generatePatientScenario(
         responseId: response.id,
         profile,
         usage,
-        abandonedConversationIds
+        abandonedConversationIds,
+        ...(usesEducatorCatalog ? { sourceContext: EDUCATOR_CATALOG_SCENARIO_SOURCE } : {})
       }
     }
 

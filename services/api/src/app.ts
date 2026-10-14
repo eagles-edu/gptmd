@@ -45,6 +45,19 @@ import type { ResponsesTimingRecorder } from './response-timing.ts'
 import type { SessionCommitTimingRecorder } from './patient-state-store.ts'
 import type { PatientTurnResult, ScenarioSetupResult, SessionStore, StoreResult } from './session-store.ts'
 import type { TenantEntitlementAdminStore, TenantEntitlementPolicy } from './tenant-entitlements.ts'
+import {
+  applyApprovedPatientVariantSettings,
+  PatientVariantSettingsSchema,
+  type PatientVariantSettings,
+  type PatientVariantSettingsStore
+} from './patient-variant-settings.ts'
+import {
+  getOrganizationAiTimePeriodBounds,
+  OrganizationAiMemberAssignmentInputSchema,
+  OrganizationAiMemberAssignmentImportSchema,
+  OrganizationAiTimeBudgetSettingsSchema,
+  type OrganizationAiTimeBudgetStore
+} from './organization-ai-time-budget.ts'
 
 export interface RedisProbe {
   readonly isOpen: boolean
@@ -88,6 +101,8 @@ export interface ApiDependencies {
   jwt: JwtConfiguration
   sessionStore: SessionStore | null
   tenantEntitlementAdminStore?: TenantEntitlementAdminStore | null
+  patientVariantSettingsStore?: PatientVariantSettingsStore | null
+  organizationAiTimeBudgetStore?: OrganizationAiTimeBudgetStore | null
   setupQueueLimits?: SetupQueueLimits
   providerCapacityLimits?: ProviderCapacityLimits
   recordSessionCommitTiming?: SessionCommitTimingRecorder
@@ -238,6 +253,11 @@ export function createApiApp(dependencies: ApiDependencies): Express {
           response.status(403).json({ error: 'Customer administrator role is required' })
           return
         }
+      } else if (request.path.startsWith('/instructor/')) {
+        if (principal.role !== 'instructor') {
+          response.status(403).json({ error: 'Instructor role is required' })
+          return
+        }
       } else if (principal.role !== 'learner') {
         response.status(403).json({ error: 'Learner role is required for encounter API routes' })
         return
@@ -308,6 +328,206 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       else response.json({ policy: updated })
     } catch {
       response.status(503).json({ error: 'Entitlement policy could not be saved' })
+    }
+  })
+
+  app.get('/api/admin/ai-time-budget', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'AI-time budget controls are unavailable' })
+      return
+    }
+    try {
+      const settings = await store.getSettings(principal.tenantId)
+      let usage = null
+      if (settings) {
+        const period = getOrganizationAiTimePeriodBounds(
+          settings.organizationPeriod.anchorDate,
+          settings.organizationPeriod.months
+        )
+        usage = await store.getUsageSummary(principal.tenantId, period.startAt, period.endAt)
+      }
+      response.json({ settings, usage })
+    } catch {
+      response.status(503).json({ error: 'AI-time budget settings could not be loaded' })
+    }
+  })
+
+  app.put('/api/admin/ai-time-budget', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'AI-time budget controls are unavailable' })
+      return
+    }
+    const parsed = OrganizationAiTimeBudgetSettingsSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({ error: 'Provide bounded pool and group budgets, a period, and unique group and department codes' })
+      return
+    }
+    try {
+      const settings = await store.saveSettings(principal.tenantId, principal.subjectId, parsed.data)
+      if (settings === 'conflict') response.status(409).json({ error: 'AI-time budget settings changed; reload before saving' })
+      else if (settings === 'assignments_exist') {
+        response.status(409).json({ error: 'Move member assignments before deleting an assigned group or department' })
+      }
+      else if (!settings) response.status(404).json({ error: 'Workspace not found' })
+      else {
+        const period = getOrganizationAiTimePeriodBounds(
+          settings.organizationPeriod.anchorDate,
+          settings.organizationPeriod.months
+        )
+        const usage = await store.getUsageSummary(principal.tenantId, period.startAt, period.endAt)
+        response.json({ settings, usage })
+      }
+    } catch {
+      response.status(503).json({ error: 'AI-time budget settings could not be saved' })
+    }
+  })
+
+  app.get('/api/admin/ai-time-budget/assignments', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'AI-time assignment controls are unavailable' })
+      return
+    }
+    try {
+      const settings = await store.getSettings(principal.tenantId)
+      const members = await store.listMemberAssignments(principal.tenantId)
+      response.json({
+        members,
+        groups: settings?.groups.map(({ code, name }) => ({ code, name })) ?? [],
+        departments: settings?.departments ?? []
+      })
+    } catch {
+      response.status(503).json({ error: 'AI-time member assignments could not be loaded' })
+    }
+  })
+
+  app.put('/api/admin/ai-time-budget/assignments', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'AI-time assignment controls are unavailable' })
+      return
+    }
+    const parsed = OrganizationAiMemberAssignmentInputSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({ error: 'Provide one active member, unique group codes, and a department code or null' })
+      return
+    }
+    try {
+      const assignment = await store.saveMemberAssignment(
+        principal.tenantId, principal.subjectId, parsed.data
+      )
+      if (assignment === 'conflict') {
+        response.status(409).json({ error: 'Save organization groups and departments before assigning members' })
+      } else if (assignment === 'invalid') {
+        response.status(400).json({ error: 'Assignments must reference groups and departments in this workspace' })
+      } else if (!assignment) {
+        response.status(404).json({ error: 'Active workspace member not found' })
+      } else response.json({ assignment })
+    } catch {
+      response.status(503).json({ error: 'AI-time member assignment could not be saved' })
+    }
+  })
+
+  app.post('/api/admin/ai-time-budget/assignments/import', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'AI-time assignment controls are unavailable' })
+      return
+    }
+    const parsed = OrganizationAiMemberAssignmentImportSchema.safeParse(request.body?.assignments)
+    if (!parsed.success) {
+      response.status(400).json({ error: 'Provide 1 to 500 valid spreadsheet rows' })
+      return
+    }
+    if (new Set(parsed.data.map(({ subjectId }) => subjectId)).size !== parsed.data.length) {
+      response.status(400).json({ error: 'Spreadsheet rows must not repeat a member' })
+      return
+    }
+    try {
+      const saved = []
+      const failures: Array<{ subjectId: string; error: string }> = []
+      for (const assignment of parsed.data) {
+        const result = await store.saveMemberAssignment(principal.tenantId, principal.subjectId, assignment)
+        if (result === 'invalid') failures.push({ subjectId: assignment.subjectId, error: 'Unknown group or department' })
+        else if (result === 'conflict') failures.push({ subjectId: assignment.subjectId, error: 'Save department and group catalogs first' })
+        else if (!result) failures.push({ subjectId: assignment.subjectId, error: 'Active workspace member not found' })
+        else saved.push(result)
+      }
+      response.json({ imported: saved.length, failures })
+    } catch {
+      response.status(503).json({ error: 'Spreadsheet assignments could not be imported' })
+    }
+  })
+
+  app.get('/api/instructor/patient-variant-settings', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.patientVariantSettingsStore
+    if (!principal || principal.role !== 'instructor') {
+      response.status(403).json({ error: 'Instructor role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Patient variant settings are unavailable' })
+      return
+    }
+    try {
+      const settings = await store.getSettings(principal.tenantId)
+      response.json({ settings })
+    } catch {
+      response.status(503).json({ error: 'Patient variant settings could not be loaded' })
+    }
+  })
+
+  app.put('/api/instructor/patient-variant-settings', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.patientVariantSettingsStore
+    if (!principal || principal.role !== 'instructor') {
+      response.status(403).json({ error: 'Instructor role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Patient variant settings are unavailable' })
+      return
+    }
+    const parsed = PatientVariantSettingsSchema.safeParse(request.body)
+    if (!parsed.success) {
+      response.status(400).json({ error: 'Provide settings for all ten variants; approved settings must be complete and bounded' })
+      return
+    }
+    try {
+      const settings = await store.saveSettings(principal.tenantId, principal.subjectId, parsed.data)
+      if (settings === 'conflict') response.status(409).json({ error: 'Patient variant settings changed; reload before saving' })
+      else if (!settings) response.status(404).json({ error: 'Workspace not found' })
+      else response.json({ settings })
+    } catch {
+      response.status(503).json({ error: 'Patient variant settings could not be saved' })
     }
   })
 
@@ -465,14 +685,37 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
+      const requestedGroupCode = request.body?.groupCode
+      if (requestedGroupCode !== undefined &&
+          (typeof requestedGroupCode !== 'string' || !/^[a-z][a-z0-9_-]{1,39}$/.test(requestedGroupCode))) {
+        response.status(400).json({ error: 'groupCode must name an assigned budget group' })
+        return
+      }
       const versions: PatientScenarioVersionPins = {
         promptVersion: PATIENT_SCENARIO_PROMPT_VERSION,
         modelVersion: dependencies.model,
         schemaVersion: PATIENT_SCENARIO_SCHEMA_VERSION,
         policyVersion: PATIENT_SCENARIO_POLICY_VERSION
       }
-      const result = await store.createSession(principal, versions)
+      const result = requestedGroupCode === undefined
+        ? await store.createSession(principal, versions)
+        : await store.createSession(principal, versions, requestedGroupCode)
+      if (typeof result === 'object' && result.status === 'group_selection_required') {
+        response.status(409).json({
+          error: 'Choose one assigned budget group for this session',
+          availableGroups: result.availableGroups
+        })
+        return
+      }
       if (typeof result === 'string') {
+        if (result === 'group_assignment_missing') {
+          response.status(403).json({ error: 'A budget group must be assigned before starting a session' })
+          return
+        }
+        if (result === 'group_assignment_denied') {
+          response.status(403).json({ error: 'The selected budget group is not assigned to this member' })
+          return
+        }
         quotaResponse(result, response)
         return
       }
@@ -524,15 +767,24 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         principal,
         sessionId,
         idempotencyKey,
-        (versions, asOf, scenarioSeed, recordProviderUsage) => providerCapacity.run('setup',
-          () => dependencies.generatePatientScenario!(
-            versions,
-            asOf,
-            scenarioSeed,
-            (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs),
-            recordProviderUsage
-          ),
-          (waitMs) => appendServerTiming(response, 'setup_provider_capacity_wait', waitMs))
+        async (versions, asOf, scenarioSeed, recordProviderUsage) => {
+          const settings: PatientVariantSettings | null | undefined =
+            await dependencies.patientVariantSettingsStore?.getSettings(principal.tenantId)
+          return providerCapacity.run('setup', async () => {
+            const generated = await dependencies.generatePatientScenario!(
+              versions,
+              asOf,
+              scenarioSeed,
+              (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs),
+              recordProviderUsage
+            )
+            if (settings?.status !== 'approved') return generated
+            return {
+              ...generated,
+              ...applyApprovedPatientVariantSettings(generated.profile, asOf, scenarioSeed, settings)
+            }
+          }, (waitMs) => appendServerTiming(response, 'setup_provider_capacity_wait', waitMs))
+        }
       ), (waitMs) => appendServerTiming(response, 'setup_queue_wait', waitMs))
       if (typeof result === 'string') {
         if (result === 'not_found') response.status(404).json({ error: 'Session not found' })

@@ -9,6 +9,8 @@ import type { GeneratedPatientScenario, PatientScenarioVersionPins } from '../..
 import type { ProviderUsageSample } from '../../services/api/src/session-contracts.ts'
 import type { PatientScenarioSetupResult, SessionRecord, SessionStore } from '../../services/api/src/session-store.ts'
 import type { TenantEntitlementAdminStore, TenantEntitlementPolicy } from '../../services/api/src/tenant-entitlements.ts'
+import { PATIENT_VARIANT_KEYS, type PatientVariantSettingsStore } from '../../services/api/src/patient-variant-settings.ts'
+import type { OrganizationAiTimeBudgetStore, OrganizationAiTimeBudgetSettings } from '../../services/api/src/organization-ai-time-budget.ts'
 import { createRedisRequestRateLimitStore, hashRateLimitKey } from '../../services/api/src/request-rate-limit.ts'
 import {
   TEST_LEARNER_CHART_VITAL_SIGNS,
@@ -40,7 +42,7 @@ function deferred<T>() {
   return { promise, resolve }
 }
 const sessionVersions: PatientScenarioVersionPins = {
-  promptVersion: 'patient-scenario-prompt-v13',
+  promptVersion: 'patient-scenario-prompt-v14',
   modelVersion: 'gpt-6-luna',
   schemaVersion: 8,
   policyVersion: 'patient-scenario-policy-v3'
@@ -196,6 +198,185 @@ describe('GPTMD API integrations', () => {
       })
       expect(invalid.status).toBe(400)
       expect(adminStore.updatePolicy).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('limits AI-time budget drafts to customer admins and the authenticated tenant', async () => {
+    const settings: OrganizationAiTimeBudgetSettings = {
+      schemaVersion: 1,
+      revision: 1,
+      status: 'draft',
+      organizationPeriod: { months: 3, anchorDate: '2026-01-01' },
+      organizationPool: { tokens: 100_000, estimatedMinutes: 600 },
+      groups: [{
+        code: 'gptnursing', name: 'GPT Nursing', tokenBudget: 70_000, estimatedMinuteBudget: 400,
+        monthlyTokensPerUser: 20_000, monthlyEstimatedMinutesPerUser: 120
+      }],
+      departments: [{ code: 'obgyn', name: 'OBGYN' }]
+    }
+    const budgetStore: OrganizationAiTimeBudgetStore = {
+      getSettings: vi.fn().mockResolvedValue(settings),
+      getUsageSummary: vi.fn().mockResolvedValue({ totalTokens: '3210', responseCount: 7 }),
+      saveSettings: vi.fn().mockResolvedValue(settings),
+      listMemberAssignments: vi.fn().mockResolvedValue([{
+        subjectId: 'learner-subject', role: 'learner', groupCodes: ['gptnursing'], departmentCode: 'obgyn'
+      }]),
+      saveMemberAssignment: vi.fn().mockResolvedValue({
+        subjectId: 'learner-subject', role: 'learner', groupCodes: ['gptnursing'], departmentCode: 'obgyn'
+      })
+    }
+    const sessionStore = createSessionStore({
+      getActiveMemberships: vi.fn().mockImplementation(async (subjectId) => [{
+        tenantId: 'tenant-a',
+        role: subjectId === 'admin-1' ? 'customer_admin' : 'learner',
+        sessionsEnabled: false,
+        responsesEnabled: false,
+        audioTranscriptionAvailable: false
+      }])
+    })
+    await withApi(createDependencies({ sessionStore, organizationAiTimeBudgetStore: budgetStore }), async (baseUrl) => {
+      const admin = makeToken({ sub: 'admin-1' })
+      const read = await fetch(`${baseUrl}/api/admin/ai-time-budget`, {
+        headers: { authorization: `Bearer ${admin}` }
+      })
+      expect(read.status).toBe(200)
+      expect(await read.json()).toEqual({
+        settings,
+        usage: { totalTokens: '3210', responseCount: 7 }
+      })
+      expect(budgetStore.getUsageSummary).toHaveBeenCalledWith(
+        'tenant-a', expect.any(Date), expect.any(Date)
+      )
+
+      const update = await fetch(`${baseUrl}/api/admin/ai-time-budget`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...settings, revision: 0 })
+      })
+      expect(update.status).toBe(200)
+      expect(budgetStore.getUsageSummary).toHaveBeenCalledTimes(2)
+      expect(budgetStore.saveSettings).toHaveBeenCalledWith('tenant-a', 'admin-1', { ...settings, revision: 0 })
+
+      const learner = makeToken({ sub: 'learner-1' })
+      const denied = await fetch(`${baseUrl}/api/admin/ai-time-budget`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${learner}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...settings, revision: 0 })
+      })
+      expect(denied.status).toBe(403)
+      expect(budgetStore.saveSettings).toHaveBeenCalledTimes(1)
+
+      const invalid = await fetch(`${baseUrl}/api/admin/ai-time-budget`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...settings, revision: 0, groups: [{ ...settings.groups[0]!, tokenBudget: 100_001 }] })
+      })
+      expect(invalid.status).toBe(400)
+      expect(budgetStore.saveSettings).toHaveBeenCalledTimes(1)
+
+      const assignments = await fetch(`${baseUrl}/api/admin/ai-time-budget/assignments`, {
+        headers: { authorization: `Bearer ${admin}` }
+      })
+      expect(assignments.status).toBe(200)
+      expect(await assignments.json()).toEqual({
+        members: [{ subjectId: 'learner-subject', role: 'learner', groupCodes: ['gptnursing'], departmentCode: 'obgyn' }],
+        groups: [{ code: 'gptnursing', name: 'GPT Nursing' }],
+        departments: settings.departments
+      })
+
+      const assignmentUpdate = await fetch(`${baseUrl}/api/admin/ai-time-budget/assignments`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ subjectId: 'learner-subject', groupCodes: ['gptnursing'], departmentCode: 'obgyn' })
+      })
+      expect(assignmentUpdate.status).toBe(200)
+      expect(budgetStore.saveMemberAssignment).toHaveBeenCalledWith('tenant-a', 'admin-1', {
+        subjectId: 'learner-subject', groupCodes: ['gptnursing'], departmentCode: 'obgyn'
+      })
+
+      const invalidAssignment = await fetch(`${baseUrl}/api/admin/ai-time-budget/assignments`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ subjectId: 'learner-subject', groupCodes: ['gptnursing', 'gptnursing'], departmentCode: 'obgyn' })
+      })
+      expect(invalidAssignment.status).toBe(400)
+
+      const imported = await fetch(`${baseUrl}/api/admin/ai-time-budget/assignments/import`, {
+        method: 'POST',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ assignments: [{
+          subjectId: 'learner-subject', groupCodes: ['gptnursing'], departmentCode: 'obgyn'
+        }] })
+      })
+      expect(imported.status).toBe(200)
+      expect(await imported.json()).toEqual({ imported: 1, failures: [] })
+      expect(budgetStore.saveMemberAssignment).toHaveBeenLastCalledWith('tenant-a', 'admin-1', {
+        subjectId: 'learner-subject', groupCodes: ['gptnursing'], departmentCode: 'obgyn'
+      })
+
+    })
+  })
+
+  it('scopes patient variant settings to the instructor role and selected tenant', async () => {
+    const settings = {
+      schemaVersion: 1 as const,
+      status: 'draft' as const,
+      revision: 1,
+      variants: PATIENT_VARIANT_KEYS.map((variantKey) => ({
+        variantKey,
+        voiceProfileId: `voice-${variantKey}`,
+        voice: { provider: null, voiceId: null, locale: null, rate: null, pitch: null, volume: null, fallbackVoiceId: null },
+        variabilityProfileId: `variability-${variantKey}`,
+        variability: {
+          mood: { allowedValues: [] }, maturity: { allowedValues: [] }, verbosity: { allowedValues: [] },
+          educationLevel: { allowedValues: [] }, willingnessToDisclose: { allowedValues: [] }
+        }
+      }))
+    }
+    const settingsStore: PatientVariantSettingsStore = {
+      getSettings: vi.fn().mockResolvedValue(settings),
+      saveSettings: vi.fn().mockResolvedValue(settings)
+    }
+    const sessionStore = createSessionStore({
+      getActiveMemberships: vi.fn().mockImplementation(async (subjectId) => [{
+        tenantId: 'tenant-a',
+        role: subjectId === 'instructor-1' ? 'instructor' : subjectId === 'admin-1' ? 'customer_admin' : 'learner',
+        sessionsEnabled: false,
+        responsesEnabled: false,
+        audioTranscriptionAvailable: false
+      }])
+    })
+
+    await withApi(createDependencies({ sessionStore, patientVariantSettingsStore: settingsStore }), async (baseUrl) => {
+      const instructor = makeToken({ sub: 'instructor-1' })
+      const read = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
+        headers: { authorization: `Bearer ${instructor}` }
+      })
+      expect(read.status).toBe(200)
+      expect(await read.json()).toEqual({ settings })
+
+      const update = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${instructor}`, 'content-type': 'application/json' },
+        body: JSON.stringify(settings)
+      })
+      expect(update.status).toBe(200)
+      expect(settingsStore.saveSettings).toHaveBeenCalledWith('tenant-a', 'instructor-1', settings)
+
+      const learner = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
+        headers: { authorization: `Bearer ${makeToken({ sub: 'learner-1' })}` }
+      })
+      expect(learner.status).toBe(403)
+      const administrator = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
+        headers: { authorization: `Bearer ${makeToken({ sub: 'admin-1' })}` }
+      })
+      expect(administrator.status).toBe(403)
+      const wrongTenant = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
+        headers: { authorization: `Bearer ${instructor}`, 'x-gptmd-tenant-id': 'tenant-b' }
+      })
+      expect(wrongTenant.status).toBe(403)
+      expect(settingsStore.getSettings).toHaveBeenCalledTimes(1)
+      expect(settingsStore.saveSettings).toHaveBeenCalledTimes(1)
     })
   })
 
@@ -924,6 +1105,43 @@ describe('GPTMD API integrations', () => {
     })
   })
 
+  it('returns assigned group choices and forwards an explicit per-session budget group', async () => {
+    const sessionStore = createSessionStore({
+      createSession: vi.fn()
+        .mockResolvedValueOnce({
+          status: 'group_selection_required',
+          availableGroups: [{ code: 'gptnursing', name: 'GPT Nursing' }, { code: 'gptreception', name: 'GPT Reception' }]
+        })
+        .mockResolvedValueOnce({
+          sessionId: randomBytes(32).toString('base64url'),
+          status: 'initializing',
+          createdAt: '2026-10-01T00:00:00.000Z',
+          updatedAt: '2026-10-01T00:00:00.000Z',
+          aiBudgetGroupCode: 'gptreception',
+          versions: sessionVersions
+        })
+    })
+    await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
+      const selection = await fetch(`${baseUrl}/api/sessions`, { method: 'POST', headers: authHeaders() })
+      expect(selection.status).toBe(409)
+      expect(await selection.json()).toEqual({
+        error: 'Choose one assigned budget group for this session',
+        availableGroups: [{ code: 'gptnursing', name: 'GPT Nursing' }, { code: 'gptreception', name: 'GPT Reception' }]
+      })
+
+      const created = await fetch(`${baseUrl}/api/sessions`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ groupCode: 'gptreception' })
+      })
+      expect(created.status).toBe(201)
+      expect((await created.json()).aiBudgetGroupCode).toBe('gptreception')
+      expect(sessionStore.createSession).toHaveBeenLastCalledWith(
+        { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' },
+        sessionVersions,
+        'gptreception'
+      )
+    })
+  })
+
   it('pins setup versions at session creation and returns one private-safe result for concurrent retries', async () => {
     const sessionId = randomBytes(32).toString('base64url')
     const generated: GeneratedPatientScenario = {
@@ -956,6 +1174,37 @@ describe('GPTMD API integrations', () => {
       usage: { inputTokens: 100, cachedInputTokens: 0, outputTokens: 50, totalTokens: 150, durationMs: 620 },
       abandonedConversationIds: []
     }
+    const approvedVariantSettings = {
+      schemaVersion: 1 as const,
+      status: 'approved' as const,
+      revision: 4,
+      variants: PATIENT_VARIANT_KEYS.map((variantKey) => ({
+        variantKey,
+        voiceProfileId: `voice-${variantKey}`,
+        voice: {
+          provider: 'browser-speech-synthesis' as const,
+          voiceId: `voice-${variantKey}`,
+          locale: 'en-US',
+          rate: 1.1,
+          pitch: 0.9,
+          volume: 0.75,
+          fallbackVoiceId: `fallback-${variantKey}`
+        },
+        variabilityProfileId: `variability-${variantKey}`,
+        variability: {
+          mood: { allowedValues: [`mood-${variantKey}`] },
+          maturity: { allowedValues: [`maturity-${variantKey}`] },
+          verbosity: { allowedValues: [`verbosity-${variantKey}`] },
+          educationLevel: { allowedValues: [`education-${variantKey}`] },
+          willingnessToDisclose: { allowedValues: [`disclosure-${variantKey}`] }
+        }
+      }))
+    }
+    const patientVariantSettingsStore: PatientVariantSettingsStore = {
+      getSettings: vi.fn().mockResolvedValue(approvedVariantSettings),
+      saveSettings: vi.fn()
+    }
+    let generatedWithSettings: GeneratedPatientScenario | null = null
     const setupResponse: PatientScenarioSetupResult = {
       sessionId,
       status: 'ready',
@@ -1003,13 +1252,19 @@ describe('GPTMD API integrations', () => {
       if (stored) return storedKey === key ? stored : 'idempotency_conflict' as const
       if (!pending) {
         pending = (async () => {
-          await generate(
+          generatedWithSettings = await generate(
             sessionVersions,
             new Date('2026-10-01T00:00:00.000Z'),
             'z'.repeat(43),
             async (usage) => { recordedProviderUsage.push(usage) }
           )
-          return setupResponse
+          return {
+            ...setupResponse,
+            patient: {
+              ...setupResponse.patient,
+              presentationSettings: generatedWithSettings.presentationSettings
+            }
+          }
         })()
       }
       stored = await pending
@@ -1026,7 +1281,7 @@ describe('GPTMD API integrations', () => {
         versions: sessionVersions
       })
     })
-    const dependencies = createDependencies({ sessionStore, generatePatientScenario })
+    const dependencies = createDependencies({ sessionStore, generatePatientScenario, patientVariantSettingsStore })
 
     await withApi(dependencies, async (baseUrl) => {
       const created = await fetch(`${baseUrl}/api/sessions`, { method: 'POST', headers: authHeaders() })
@@ -1053,6 +1308,17 @@ describe('GPTMD API integrations', () => {
       expect(firstBody.patient).not.toHaveProperty('diagnosis')
       expect(firstBody).not.toHaveProperty('scenarioId')
       expect(firstBody.readiness).toEqual({ profile: true, redis: true, conversation: true })
+      expect(firstBody.patient.presentationSettings).toMatchObject({
+        variantKey: '3039-average', settingsRevision: 4,
+        voiceProfileId: 'voice-3039-average', voiceId: 'voice-3039-average',
+        fallbackVoiceId: 'fallback-3039-average'
+      })
+      expect(generatedWithSettings?.profile.persona).toEqual({
+        mood: 'mood-3039-average', maturity: 'maturity-3039-average',
+        verbosity: 'verbosity-3039-average', educationLevel: 'education-3039-average',
+        willingnessToDisclose: 'disclosure-3039-average'
+      })
+      expect(patientVariantSettingsStore.getSettings).toHaveBeenCalledWith('tenant-a')
       expect(JSON.stringify(firstBody)).not.toContain('conv_internal_only')
       expect(JSON.stringify(firstBody)).not.toContain('resp_internal_only')
       expect(generatePatientScenario).toHaveBeenCalledOnce()

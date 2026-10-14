@@ -392,7 +392,7 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
       __mockTranscriptionChannel?: { onmessage?: (event: { data: string }) => void }
       __emitFinalTranscript?: (transcript: string) => void
       __synthesizedReplies?: string[]
-      __synthesizedSettings?: Array<{ volume: number; rate: number }>
+      __synthesizedSettings?: Array<{ volume: number; rate: number; pitch: number; voiceURI: string | null; lang: string }>
       __holdSpeech?: boolean
       __startSpeech?: () => void
       __finishSpeech?: () => void
@@ -475,17 +475,25 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
       lang = ''
       volume = 1
       rate = 1
+      pitch = 1
+      voice: { voiceURI: string } | null = null
       onstart: (() => void) | null = null
       onend: (() => void) | null = null
       onerror: (() => void) | null = null
       constructor(text: string) { this.text = text }
     } })
     Object.defineProperty(window, 'speechSynthesis', { configurable: true, value: {
-      speak: (utterance: { text: string; volume: number; rate: number; onstart: (() => void) | null; onend: (() => void) | null }) => {
+      getVoices: () => [{ voiceURI: 'preferred-voice' }, { voiceURI: 'fallback-voice' }],
+      addEventListener: () => undefined,
+      removeEventListener: () => undefined,
+      speak: (utterance: { text: string; volume: number; rate: number; pitch: number; voice: { voiceURI: string } | null; lang: string; onstart: (() => void) | null; onend: (() => void) | null }) => {
         pageWindow.__synthesizedReplies ??= []
         pageWindow.__synthesizedReplies.push(utterance.text)
         pageWindow.__synthesizedSettings ??= []
-        pageWindow.__synthesizedSettings.push({ volume: utterance.volume, rate: utterance.rate })
+        pageWindow.__synthesizedSettings.push({
+          volume: utterance.volume, rate: utterance.rate, pitch: utterance.pitch,
+          voiceURI: utterance.voice?.voiceURI ?? null, lang: utterance.lang
+        })
         pageWindow.__startSpeech = () => utterance.onstart?.()
         pageWindow.__finishSpeech = () => utterance.onend?.()
         if (!pageWindow.__holdSpeech) {
@@ -510,7 +518,15 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
       sessionId,
       status: 'ready',
       createdAt: '2026-10-01T00:01:00.000Z',
-      patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS },
+      patient: {
+        fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain',
+        presentationSettings: {
+          variantKey: '3039-average', settingsRevision: 7, voiceProfileId: 'voice-3039-average',
+          provider: 'browser-speech-synthesis', voiceId: 'preferred-voice', locale: 'en-US',
+          rate: 0.8, pitch: 1.2, volume: 0.6, fallbackVoiceId: 'fallback-voice'
+        },
+        vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS
+      },
       versions: sessionResponse.versions,
       readiness: { profile: true, redis: true, conversation: true }
     })
@@ -613,6 +629,9 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
   expect(transcriptTimes).toHaveLength(2)
   expect(transcriptTimes.every((time) => Number.isFinite(time.capturedAt) && time.displayedAt >= time.capturedAt)).toBe(true)
   await expect.poll(() => page.evaluate(() => (window as Window & { __synthesizedReplies?: string[] }).__synthesizedReplies)).toEqual(['Since yesterday.'])
+  await expect.poll(() => page.evaluate(() => (window as Window & { __synthesizedSettings?: Array<{ volume: number; rate: number; pitch: number; voiceURI: string | null; lang: string }> }).__synthesizedSettings)).toEqual([
+    { volume: 0.6, rate: 0.8, pitch: 1.2, voiceURI: 'preferred-voice', lang: 'en-US' }
+  ])
   const encounter = page.locator('.encounter-page')
   await expect(encounter).toHaveAttribute('data-tts-requested-at', /^\d+(\.\d+)?$/)
   await expect(encounter).not.toHaveAttribute('data-tts-started-at', /.+/)

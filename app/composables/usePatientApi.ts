@@ -31,14 +31,34 @@ function getApiBase(): string {
   return String(config.public.apiBase).replace(/\/$/, '')
 }
 
+export class BudgetGroupSelectionRequiredError extends Error {
+  constructor(readonly groups: Array<{ code: string; name: string }>) {
+    super('Choose one budget group for this session.')
+  }
+}
+
 export function usePatientApi() {
   const auth = useGptmdAuth()
 
-  async function createSession(): Promise<CreateSessionResult> {
-    const result = await $fetch<unknown>(`${getApiBase()}/api/sessions`, {
-      method: 'POST',
-      headers: await auth.accessHeaders()
-    })
+  async function createSession(groupCode?: string): Promise<CreateSessionResult> {
+    let result: unknown
+    try {
+      result = await $fetch<unknown>(`${getApiBase()}/api/sessions`, {
+        method: 'POST',
+        headers: await auth.accessHeaders(),
+        ...(groupCode ? { body: { groupCode } } : {})
+      })
+    } catch (error) {
+      const data = (error as { data?: { availableGroups?: unknown } }).data
+      if (Array.isArray(data?.availableGroups) && data.availableGroups.every((group) =>
+        group && typeof group === 'object' &&
+        typeof (group as { code?: unknown }).code === 'string' &&
+        typeof (group as { name?: unknown }).name === 'string'
+      )) {
+        throw new BudgetGroupSelectionRequiredError(data.availableGroups as Array<{ code: string; name: string }>)
+      }
+      throw error
+    }
     const parsed = CreateSessionResponseSchema.safeParse(result)
 
     if (!parsed.success) {

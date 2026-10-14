@@ -37,7 +37,13 @@ const generated: GeneratedPatientScenario = {
     outputTokens: 50, totalTokens: 150, durationMs: 620,
     pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000034920000'
   },
-  abandonedConversationIds: []
+  abandonedConversationIds: [],
+  sourceContext: {
+    catalogId: 'obgyn-disorders', mode: 'primary_condition_reference_and_simulation_augmentation',
+    approvalStatus: 'approved_for_gptmd_educator_input', approvedOn: '2026-10-14',
+    approvalScope: 'gptmd_educator_input', sourceRevision: '2026-10-14', sectionCount: 260, conditionCount: 130,
+    sha256: 'a'.repeat(64)
+  }
 }
 const scenarioFingerprint = createHash('sha256').update(canonicalJsonStringify(generated.profile)).digest('hex')
 const identityBindingRow = {
@@ -101,6 +107,7 @@ describe('tenant membership roles', () => {
         if (sql.includes('FROM tenant_entitlements')) return { rows: [{
           enabled: true, monthly_quota: null, monthly_user_quota: null, max_active_sessions: null
         }], rowCount: 1 }
+        if (sql.includes('tenant_ai_time_budget_settings')) return { rows: [], rowCount: 0 }
         if (sql.includes('INSERT INTO app_sessions')) {
           insert.push({ sql, values })
           return { rows: [{ created_at: createdAt, updated_at: createdAt }], rowCount: 1 }
@@ -121,6 +128,58 @@ describe('tenant membership roles', () => {
     expect(insert[0]?.sql).toContain('scenario_seed')
     expect(insert[0]?.values?.[2]).toMatch(/^[A-Za-z0-9_-]{43}$/)
     expect(client.release).toHaveBeenCalledOnce()
+  })
+
+  it('requires a group choice for multiple assignments and pins the selected group and department', async () => {
+    const insert: { sql: string; values: unknown[] | undefined }[] = []
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 }
+        if (sql.includes('FROM tenant_entitlements')) return { rows: [{
+          enabled: true, monthly_quota: null, monthly_user_quota: null, max_active_sessions: null
+        }], rowCount: 1 }
+        if (sql.includes('tenant_ai_time_budget_settings')) return { rows: [{ settings: {
+          schemaVersion: 1, revision: 1, status: 'draft',
+          organizationPeriod: { months: 1, anchorDate: '2026-10-01' },
+          organizationPool: { tokens: 100_000, estimatedMinutes: 0 },
+          groups: [
+            { code: 'gptnursing', name: 'Nursing', tokenBudget: 50_000, estimatedMinuteBudget: 0, monthlyTokensPerUser: 10_000, monthlyEstimatedMinutesPerUser: null },
+            { code: 'gptreception', name: 'Reception', tokenBudget: 50_000, estimatedMinuteBudget: 0, monthlyTokensPerUser: 10_000, monthlyEstimatedMinutesPerUser: null }
+          ], departments: [{ code: 'obgyn', name: 'OBGYN' }]
+        } }], rowCount: 1 }
+        if (sql.includes('tenant_member_ai_group_assignments')) return { rows: [
+          { group_code: 'gptnursing' }, { group_code: 'gptreception' }
+        ], rowCount: 2 }
+        if (sql.includes('tenant_member_ai_department_assignments')) return { rows: [{ department_code: 'obgyn' }], rowCount: 1 }
+        if (sql.includes('INSERT INTO app_sessions')) {
+          insert.push({ sql, values })
+          return { rows: [{ created_at: createdAt, updated_at: createdAt }], rowCount: 1 }
+        }
+        return { rows: [{ used: 1 }], rowCount: 1 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool
+    const store = createPostgresSessionStore(pool)
+    const versions = {
+      promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna',
+      schemaVersion: 8 as const, policyVersion: 'patient-scenario-policy-v3'
+    }
+
+    await expect(store.createSession(principal, versions)).resolves.toEqual({
+      status: 'group_selection_required',
+      availableGroups: [
+        { code: 'gptnursing', name: 'Nursing' },
+        { code: 'gptreception', name: 'Reception' }
+      ]
+    })
+    expect(insert).toHaveLength(0)
+
+    const created = await store.createSession(principal, versions, 'gptreception')
+    expect(created).toMatchObject({ status: 'initializing', aiBudgetGroupCode: 'gptreception' })
+    expect(insert).toHaveLength(1)
+    expect(insert[0]?.sql).toContain('ai_budget_group_code, ai_budget_department_code')
+    expect(insert[0]?.values?.slice(-2)).toEqual(['gptreception', 'obgyn'])
   })
 })
 
@@ -217,6 +276,7 @@ describe('scoped quota reservations', () => {
         if (sql.includes('FROM tenant_entitlements')) {
           return { rows: [{ enabled: true, monthly_quota: null, monthly_user_quota: 0, max_active_sessions: null }], rowCount: 1 }
         }
+        if (sql.includes('tenant_ai_time_budget_settings')) return { rows: [], rowCount: 0 }
         if (sql.includes('tenant_user_monthly_usage')) return { rows: [], rowCount: 0 }
         return { rows: [{ used: 1 }], rowCount: 1 }
       }),
@@ -436,6 +496,20 @@ describe('patient setup persistence coordination', () => {
     const order: string[] = []
     const savedState: ReadyPatientState[] = []
     const usageEvents: unknown[] = []
+    const presentationSettings = {
+      variantKey: '3039-average' as const,
+      settingsRevision: 3,
+      voiceProfileId: 'voice-3039-average',
+      provider: 'browser-speech-synthesis' as const,
+      voiceId: 'preferred-voice',
+      locale: 'en-US',
+      rate: 1.05,
+      pitch: 0.95,
+      volume: 0.8,
+      fallbackVoiceId: 'fallback-voice'
+    }
+    const generatedWithPresentation = { ...generated, presentationSettings }
+    const scenarioInserts: unknown[][] = []
     const patientStateStore: PatientStateStore = {
       rememberOwnedSession: vi.fn(async () => undefined),
       findOwnedSession: vi.fn(async () => null),
@@ -458,17 +532,18 @@ describe('patient setup persistence coordination', () => {
       restore: vi.fn(async () => 'restored' as const)
     }
     const client = {
-      query: vi.fn(async (sql: string) => {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
         if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 }
         if (sql.includes('FROM app_sessions')) return {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v14', model_version: 'gpt-6-luna',
             schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
         if (sql.includes('FROM patient_scenarios')) return { rows: [], rowCount: 0 }
+        if (sql.includes('INSERT INTO patient_scenarios')) scenarioInserts.push(values ?? [])
         return { rows: [], rowCount: 1 }
       }),
       release: vi.fn()
@@ -489,7 +564,7 @@ describe('patient setup persistence coordination', () => {
     ) => {
       order.push('generate')
       await recordProviderUsage(rejectedAttemptUsage)
-      return generated
+      return generatedWithPresentation
     })
 
     const result = await store.setupScenario(principal, sessionId, 'setup-key', generate)
@@ -526,12 +601,19 @@ describe('patient setup persistence coordination', () => {
       readiness: { profile: true, redis: true, conversation: true }
     })
     expect(result).not.toHaveProperty('scenarioId')
+    expect(result).toMatchObject({ patient: { presentationSettings } })
     expect(savedState).toHaveLength(1)
     expect(savedState[0]).toMatchObject({
       sessionId, patientProfileId, conversationId: 'conv_private',
-      setupProjection: { diagnosis: 'Endometriosis' },
+      setupProjection: { diagnosis: 'Endometriosis', presentationSettings },
       profile: { diagnosis: 'Endometriosis' }, schemaVersion: 8
     })
+    expect(scenarioInserts).toHaveLength(1)
+    expect(scenarioInserts[0]?.[6]).toEqual(presentationSettings)
+    expect(scenarioInserts[0]?.[7]).toBe(
+      createHash('sha256').update(canonicalJsonStringify(presentationSettings)).digest('hex')
+    )
+    expect(scenarioInserts[0]?.[12]).toEqual(generated.sourceContext)
     expect(client.release).toHaveBeenCalledOnce()
   })
 
@@ -618,6 +700,20 @@ describe('patient setup persistence coordination', () => {
 
   it('repairs Redis from the same saved scenario and Conversation on an idempotent retry', async () => {
     const profileDigest = createHash('sha256').update(canonicalJsonStringify(generated.profile)).digest('hex')
+    const presentationSettings = {
+      variantKey: '3039-average' as const,
+      settingsRevision: 7,
+      voiceProfileId: 'voice-3039-average',
+      provider: 'browser-speech-synthesis' as const,
+      voiceId: 'preferred-voice',
+      locale: 'en-US',
+      rate: 1.05,
+      pitch: 0.95,
+      volume: 0.8,
+      fallbackVoiceId: 'fallback-voice'
+    }
+    const presentationSettingsDigest = createHash('sha256')
+      .update(canonicalJsonStringify(presentationSettings)).digest('hex')
     const idempotencyHash = createHash('sha256').update('setup-key').digest('hex')
     const savedState: ReadyPatientState[] = []
     const stateStore: PatientStateStore = {
@@ -648,7 +744,9 @@ describe('patient setup persistence coordination', () => {
         if (sql.includes('FROM patient_scenarios')) return {
           rows: [{
             scenario_id: patientProfileId, created_at: createdAt, profile_digest: profileDigest,
-            profile_json: generated.profile, provider_conversation_id: generated.conversationId
+            profile_json: generated.profile, presentation_settings_json: presentationSettings,
+            presentation_settings_digest: presentationSettingsDigest,
+            provider_conversation_id: generated.conversationId
           }], rowCount: 1
         }
         return { rows: [], rowCount: 1 }
@@ -666,8 +764,10 @@ describe('patient setup persistence coordination', () => {
     expect(stateStore.initialize).toHaveBeenCalledWith(sessionId, patientProfileId)
     expect(savedState[0]).toMatchObject({
       sessionId, patientProfileId, conversationId: 'conv_private', profileDigest,
-      profile: { diagnosis: 'Endometriosis' }
+      profile: { diagnosis: 'Endometriosis' },
+      setupProjection: { presentationSettings }
     })
+    expect(result).toMatchObject({ patient: { presentationSettings } })
     expect(result).not.toHaveProperty('scenarioId')
   })
 })
@@ -1080,6 +1180,65 @@ describe('serialized session cancellation', () => {
 })
 
 describe('current owned encounter recovery', () => {
+  it('restores the immutable presentation snapshot from PostgreSQL after Redis loss', async () => {
+    const presentationSettings = {
+      variantKey: '3039-average' as const,
+      settingsRevision: 5,
+      voiceProfileId: 'voice-3039-average',
+      provider: 'browser-speech-synthesis' as const,
+      voiceId: 'preferred-voice',
+      locale: 'en-US',
+      rate: 0.9,
+      pitch: 1.1,
+      volume: 0.7,
+      fallbackVoiceId: 'fallback-voice'
+    }
+    const presentationSettingsDigest = createHash('sha256')
+      .update(canonicalJsonStringify(presentationSettings)).digest('hex')
+    let restored: LivePatientState | null = null
+    const stateStore = {
+      read: vi.fn(async () => restored),
+      restore: vi.fn(async (state: LivePatientState) => {
+        restored = state
+        return 'restored' as const
+      })
+    } as unknown as PatientStateStore
+    const sessionRow = {
+      session_id: sessionId,
+      patient_profile_id: patientProfileId,
+      status: 'ready',
+      created_at: createdAt,
+      updated_at: createdAt,
+      schema_version: 8,
+      profile_digest: scenarioFingerprint,
+      profile_json: generated.profile,
+      presentation_settings_json: presentationSettings,
+      presentation_settings_digest: presentationSettingsDigest,
+      provider_conversation_id: generated.conversationId
+    }
+    const pool = {
+      query: vi.fn(async (sql: string) => {
+        if (sql.includes('FROM app_sessions s') && sql.includes('presentation_settings_json')) {
+          return { rows: [sessionRow], rowCount: 1 }
+        }
+        if (sql.includes('FROM session_events')) return { rows: [], rowCount: 0 }
+        if (sql.includes('FROM session_identity_binding')) return { rows: [identityBindingRow], rowCount: 1 }
+        return { rows: [], rowCount: 1 }
+      })
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+
+    await store.ensureLiveState?.(principal, sessionId)
+
+    expect(stateStore.restore).toHaveBeenCalledOnce()
+    expect(restored).toMatchObject({
+      sessionId,
+      setupProjection: { presentationSettings },
+      profile: { diagnosis: 'Endometriosis' }
+    })
+    expect(stateStore.read).toHaveBeenCalledTimes(2)
+  })
+
   it('returns Redis live status and transcript ahead of the PostgreSQL event worker', async () => {
     const acceptedAt = new Date('2026-10-01T00:05:00.000Z').toISOString()
     const live = {

@@ -120,3 +120,53 @@ rule. Do not add speculative or transcript-only observations.
 
 <!-- curatormd:record_id=42a62a53ac2ca01fd0e0964e790a80d0;content_sha256=ab84df24bf6fad2f296c39ec8f5593f34e3e686e2cc97f92e15bb662fc7d84d9 -->
 <!-- curatormd:fingerprint=6bff13caeb7ed814da349a029286bfefb3a78d2368d8460dd7a33aa6c89bb868 -->
+
+## Bound CuratorMD transcript reads to prevent Codex host OOM
+
+**Date:** 2026-10-14
+
+**Lesson:** ## Bound CuratorMD transcript reads to prevent Codex host OOM
+
+**Beginning — trigger and context:** The user reported that a shared resource failure blanked the Codex panel and then crashed VS Code. Kernel logs showed repeated OOM kills of Python near 4.8 to 5 GiB, and the pending CuratorMD source transcript was about 1.25 GB.
+
+**Middle — decisions and work:** Inspection found sde_cues_read loaded and decoded the entire transcript before slicing each requested page. The CuratorMD reader was changed to stream bounded UTF-8 pages using a sparse index, and a regression test was added for large-file paging and Unicode boundaries. The fix was installed into the active plugin cache. The actual 1.246 GB transcript page was read with about 30 MiB maximum RSS. The Codex session and 15 non-pending CuratorMD transcripts were compressed, hash verified, and their active copies pruned; a verified archive of the still-pending large CuratorMD source was also created.
+
+**End — outcome and verification:** The reader fix and regression passed the CuratorMD test and static-check suite, and the real large-file paging probe succeeded without swap. Archives were verified before pruning. The large source copy remained available because its cue had not yet been fully reviewed. In the follow-up investigation, Hermes was found configured to launch an older installation from the GPTMD workspace; Codex config was updated to the current Hermes checkout with an explicit working directory, and direct MCP initialization succeeded with all six tools.
+
+**Rationale:** This preserves the verified memory failure mechanism, the remediation and large-file proof, plus the recoverable cleanup path so future CuratorMD reviews do not recreate the host OOM.
+
+**Future utility:** Preserve the reproducible OOM diagnosis, bounded-reader fix, and archive-verification procedure for later incidents.
+
+**Project impact:** Observed: the old full-file read path correlated with Python OOM kills; bounded paging of the 1.246 GB source used about 30 MiB RSS. The archive cleanup reclaimed about 1.04 GB. The Hermes corrected launch initialized successfully in a direct stdio probe. Expected: bounded transcript paging lowers memory pressure, while an explicit Hermes executable and cwd avoid the observed package-shadowing failure.
+
+**Follow-up:** The active VS Code Codex process needs its MCP configuration reloaded before it uses the corrected Hermes launch. Reauthorize Supabase separately; its OAuth refresh failure was not the editor OOM cause.
+
+**Trigger / root cause:** Preserve the reproducible OOM diagnosis, bounded-reader fix, and archive-verification procedure for later incidents.
+
+**Preventative rule:** Observed: the old full-file read path correlated with Python OOM kills; bounded paging of the 1.246 GB source used about 30 MiB RSS. The archive cleanup reclaimed about 1.04 GB. The Hermes corrected launch initialized successfully in a direct stdio probe. Expected: bounded transcript paging lowers memory pressure, while an explicit Hermes executable and cwd avoid the observed package-shadowing failure.
+
+<!-- curatormd:record_id=164859fc61481d0cea4674761efb9072;content_sha256=2429b8c54ed270ba92f0b9d0dca367417f03d7cca8d7e47cf967de52027d1ce9 -->
+<!-- curatormd:fingerprint=ccddd59961e98b4eb71bab68508a080f5aa8adc3fcb1ff2fea81de07fa374e73 -->
+
+## Prevent VS Code OOM from CuratorMD transcript reads
+
+**Date:** 2026-10-14
+
+**Lesson:** ## Prevent VS Code OOM from CuratorMD transcript reads
+
+**Beginning — trigger and context:** The user reported a shared-resource failure that greyed the Codex panel and crashed VS Code. Kernel logs showed Python MCP workers OOM-killed near 4.8 to 5 GiB while a pending CuratorMD transcript was about 1.25 GB; Supabase OAuth refresh and Hermes startup warnings also appeared and needed separate diagnosis.
+
+**Middle — decisions and work:** The CuratorMD reader had been loading the whole transcript before returning each page. It was changed to stream bounded UTF-8 pages through a sparse character-to-byte index, with regression coverage rejecting whole-file reads and checking Unicode page boundaries. A 40,000-character page from the 1.246-billion-character source then used about 30 MiB RSS without swap. Hermes was a separate startup issue: Codex launched v0.21.4 from the GPTMD workspace, where its tools directory shadowed Hermes' package. The launch configuration was corrected to use the newer Hermes checkout and its own working directory; a direct launch initialized and listed all six tools. The large raw source was compressed and hash-verified before the live copy was pruned.
+
+**End — outcome and verification:** The OOM cause and bounded-reader repair were verified against the large transcript, the full CuratorMD suite and Python static checks passed, and the crash-related cues were closed. The already-running VS Code Codex process still needed an MCP restart or window reload to consume the Hermes launch change. Supabase reauthorization remained open; its OAuth error and the CuratorMD resources/list warning were not the crash cause.
+
+**Future utility:** Future crash investigations can distinguish kernel OOM evidence from unrelated MCP startup warnings, and CuratorMD can page large UTF-8 transcripts without loading them whole.
+
+**Project impact:** Observed: Linux had OOM-killed Python workers near 5 GiB; after repair, a page from the 1.246-billion-character transcript used about 30 MiB RSS with no swap, and Hermes initialized all six tools. Expected: streaming reads and scoped Hermes launch settings reduce repeat OOM and import-collision failures.
+
+**Trigger / root cause:** Future crash investigations can distinguish kernel OOM evidence from unrelated MCP startup warnings, and CuratorMD can page large UTF-8 transcripts without loading them whole.
+
+**Preventative rule:** Observed: Linux had OOM-killed Python workers near 5 GiB; after repair, a page from the 1.246-billion-character transcript used about 30 MiB RSS with no swap, and Hermes initialized all six tools. Expected: streaming reads and scoped Hermes launch settings reduce repeat OOM and import-collision failures.
+
+<!-- curatormd:record_id=57f0c765f837ac4f54017cbe9e419251;content_sha256=a7312a64405c98a048880f4bc6eb2d5a195594e6211ca1ce44b556335e27da2c -->
+<!-- curatormd:fingerprint=5db31d652014555fc3221b737a33e2ee9244c22583cfeec24b1faf1073a6c954 -->

@@ -1,0 +1,129 @@
+- generic [ref=f1e4]:
+  - generic [ref=f1e7]:
+    - generic [ref=f1e10]:
+      - img "Google" [ref=f1e12]
+      - generic [ref=f1e13]: Sign in with Google
+    - generic [ref=f1e14]:
+      - generic [ref=f1e16]:
+        - heading "Sign in" [level=1] [ref=f1e17]
+        - paragraph [ref=f1e18]:
+          - text: to continue to
+          - button "eaglesvn.club" [ref=f1e19] [cursor=pointer]
+      - generic [ref=f1e22]:
+        - generic [ref=f1e25]:
+          - generic [ref=f1e30]:
+            - textbox "Email or phone" [active] [ref=f1e31]
+            - generic: Email or phone
+          - paragraph [ref=f1e32]:
+            - link "Forgot email?" [ref=f1e33] [cursor=pointer]:
+              - /url: /signin/v2/usernamerecovery?app_domain=https://obgyn.eaglesvn.club&client_id=176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com&continue=https://accounts.google.com/signin/oauth/legacy/consent?authuser%3Dunknown%26part%3DAJi8hAOzCUG8qD8A1RqQkClPbZCDHuCC5Oox_LB8lTOwJ1-IVVkrLPwHh_fvoElzBkD8-Dn7xpuLcBxpJt81HqNsd0AWwBn1JBTCgXJKa-rBPLBkzZHZ3iniTxDgpfVLMY_oy9xzcy8Jqld6R6OO-uoTzyFUmdSwZOntusc19Y8l_LIQSCTaPjzv8Pb86_gpeUlcjdQvx8Kvlk1dT4psWHiEMaKaxx5I4hgicNB58JS3Z5m2wlG68BiZnKXOb6q2BqmGMRWC987DG1IDTltUPuk1IeUkTcYA-ysc23Q60r-LP3Cu5kL3KEKINnv3OaR8oxjA1Yh5YB1LNE_k7HX2cuXO7xZ-q7bJmqKoiTDPxejASxFJc4wnilqt_DPDYrFJDFJfdh2RPl30zJxjTaWXhUcFzAxpwA5MGPN-lyf7SlUa7tNhjv2Y0aa7R5kThDLXmRXRBnpU-edb9PHv0a6Md5nPM8cp-mb0RFCnDf3dQvyKscKSpfooE45k_XEz7zR_sWLu3CMUiGXaRCIhwNE2rcoRD8ko0VAxBBhUJjVm1nTVXH3y0-oXDN2Axwkk4jfS8EEw5EnsAGlqF1Wb4k1ncJRsBT1npADjIShLFv9geeRi-wkzSClMd7G6nDdLkrtHL1O-aYLTTP9jWykMsONfIhi18AmsE-BZ4g%26flowName%3DGeneralOAuthFlow%26as%3DS337222173%253A1791974812969723%26client_id%3D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%23&dsh=S337222173:1791974812969723&flowName=GeneralOAuthLite&o2v=2&opparams=%253F&rart=ANgoxcd5wmr1Wy0uCCXEPOrhflnxO7n-oZZffPYDU5sjEnSh6_nf21lM4XG4SvBq6YaWvWlVFetm2vFRdWVNUeSryomGxJa2ELmzOyHnW-iidZ-HBKJTVI0&redirect_uri=https://obgyn.eaglesvn.club/auth/v1/callback&response_type=code&scope=email+profile&service=lso&state=f8f31116-e05d-4669-8878-b9fd4fcad958
+        - paragraph [ref=f1e36]:
+          - text: Before using this app, you can review eaglesvn.club’s
+          - link "Privacy Policy" [ref=f1e37] [cursor=pointer]:
+            - /url: https://obgyn.gptpatient.com/privacy-policy.html
+          - text: and
+          - link "Terms of Service" [ref=f1e38] [cursor=pointer]:
+            - /url: https://obgyn.gptpatient.com/terms.html
+          - text: .
+        - generic [ref=f1e40]:
+          - button "Next" [ref=f1e42]
+          - link "Create account" [ref=f1e44] [cursor=pointer]:
+            - /url: /lifecycle/flows/signup?app_domain=https://obgyn.eaglesvn.club&client_id=176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com&continue=https://accounts.google.com/signin/oauth/legacy/consent?authuser%3Dunknown%26part%3DAJi8hAOzCUG8qD8A1RqQkClPbZCDHuCC5Oox_LB8lTOwJ1-IVVkrLPwHh_fvoElzBkD8-Dn7xpuLcBxpJt81HqNsd0AWwBn1JBTCgXJKa-rBPLBkzZHZ3iniTxDgpfVLMY_oy9xzcy8Jqld6R6OO-uoTzyFUmdSwZOntusc19Y8l_LIQSCTaPjzv8Pb86_gpeUlcjdQvx8Kvlk1dT4psWHiEMaKaxx5I4hgicNB58JS3Z5m2wlG68BiZnKXOb6q2BqmGMRWC987DG1IDTltUPuk1IeUkTcYA-ysc23Q60r-LP3Cu5kL3KEKINnv3OaR8oxjA1Yh5YB1LNE_k7HX2cuXO7xZ-q7bJmqKoiTDPxejASxFJc4wnilqt_DPDYrFJDFJfdh2RPl30zJxjTaWXhUcFzAxpwA5MGPN-lyf7SlUa7tNhjv2Y0aa7R5kThDLXmRXRBnpU-edb9PHv0a6Md5nPM8cp-mb0RFCnDf3dQvyKscKSpfooE45k_XEz7zR_sWLu3CMUiGXaRCIhwNE2rcoRD8ko0VAxBBhUJjVm1nTVXH3y0-oXDN2Axwkk4jfS8EEw5EnsAGlqF1Wb4k1ncJRsBT1npADjIShLFv9geeRi-wkzSClMd7G6nDdLkrtHL1O-aYLTTP9jWykMsONfIhi18AmsE-BZ4g%26flowName%3DGeneralOAuthFlow%26as%3DS337222173%253A1791974812969723%26client_id%3D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%23&dsh=S337222173:1791974812969723&flowEntry=SignUp&flowName=GlifWebSignIn&o2v=2&opparams=%253F&rart=ANgoxcd5wmr1Wy0uCCXEPOrhflnxO7n-oZZffPYDU5sjEnSh6_nf21lM4XG4SvBq6YaWvWlVFetm2vFRdWVNUeSryomGxJa2ELmzOyHnW-iidZ-HBKJTVI0&redirect_uri=https://obgyn.eaglesvn.club/auth/v1/callback&response_type=code&scope=email+profile&service=lso&signInUrl=https://accounts.google.com/signin/oauth?app_domain%3Dhttps://obgyn.eaglesvn.club%26client_id%3D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%26continue%3Dhttps://accounts.google.com/signin/oauth/legacy/consent?authuser%253Dunknown%2526part%253DAJi8hAOzCUG8qD8A1RqQkClPbZCDHuCC5Oox_LB8lTOwJ1-IVVkrLPwHh_fvoElzBkD8-Dn7xpuLcBxpJt81HqNsd0AWwBn1JBTCgXJKa-rBPLBkzZHZ3iniTxDgpfVLMY_oy9xzcy8Jqld6R6OO-uoTzyFUmdSwZOntusc19Y8l_LIQSCTaPjzv8Pb86_gpeUlcjdQvx8Kvlk1dT4psWHiEMaKaxx5I4hgicNB58JS3Z5m2wlG68BiZnKXOb6q2BqmGMRWC987DG1IDTltUPuk1IeUkTcYA-ysc23Q60r-LP3Cu5kL3KEKINnv3OaR8oxjA1Yh5YB1LNE_k7HX2cuXO7xZ-q7bJmqKoiTDPxejASxFJc4wnilqt_DPDYrFJDFJfdh2RPl30zJxjTaWXhUcFzAxpwA5MGPN-lyf7SlUa7tNhjv2Y0aa7R5kThDLXmRXRBnpU-edb9PHv0a6Md5nPM8cp-mb0RFCnDf3dQvyKscKSpfooE45k_XEz7zR_sWLu3CMUiGXaRCIhwNE2rcoRD8ko0VAxBBhUJjVm1nTVXH3y0-oXDN2Axwkk4jfS8EEw5EnsAGlqF1Wb4k1ncJRsBT1npADjIShLFv9geeRi-wkzSClMd7G6nDdLkrtHL1O-aYLTTP9jWykMsONfIhi18AmsE-BZ4g%2526flowName%253DGeneralOAuthFlow%2526as%253DS337222173%25253A1791974812969723%2526client_id%253D176198625512-luek507m755qkj7j0511trdpskrntvgd.apps.googleusercontent.com%2523%26dsh%3DS337222173:1791974812969723%26flowName%3DGeneralOAuthLite%26o2v%3D2%26opparams%3D%25253F%26rart%3DANgoxcd5wmr1Wy0uCCXEPOrhflnxO7n-oZZffPYDU5sjEnSh6_nf21lM4XG4SvBq6YaWvWlVFetm2vFRdWVNUeSryomGxJa2ELmzOyHnW-iidZ-HBKJTVI0%26redirect_uri%3Dhttps://obgyn.eaglesvn.club/auth/v1/callback%26response_type%3Dcode%26scope%3Demail%2Bprofile%26service%3Dlso%26state%3Df8f31116-e05d-4669-8878-b9fd4fcad958&state=f8f31116-e05d-4669-8878-b9fd4fcad958
+  - contentinfo [ref=f1e45]:
+    - combobox [ref=f1e48] [cursor=pointer]:
+      - option "Afrikaans"
+      - option "azərbaycan"
+      - option "bosanski"
+      - option "català"
+      - option "Čeština"
+      - option "Cymraeg"
+      - option "Dansk"
+      - option "Deutsch"
+      - option "eesti"
+      - option "English (United Kingdom)"
+      - option "English (United States)" [selected]
+      - option "Español (España)"
+      - option "Español (Latinoamérica)"
+      - option "euskara"
+      - option "Filipino"
+      - option "Français (Canada)"
+      - option "Français (France)"
+      - option "Gaeilge"
+      - option "galego"
+      - option "Hrvatski"
+      - option "Indonesia"
+      - option "isiZulu"
+      - option "íslenska"
+      - option "Italiano"
+      - option "Kiswahili"
+      - option "latviešu"
+      - option "lietuvių"
+      - option "magyar"
+      - option "Melayu"
+      - option "Nederlands"
+      - option "norsk"
+      - option "o‘zbek"
+      - option "polski"
+      - option "Português (Brasil)"
+      - option "Português (Portugal)"
+      - option "română"
+      - option "shqip"
+      - option "Slovenčina"
+      - option "slovenščina"
+      - option "srpski (latinica)"
+      - option "Suomi"
+      - option "Svenska"
+      - option "Tiếng Việt"
+      - option "Türkçe"
+      - option "Ελληνικά"
+      - option "беларуская"
+      - option "български"
+      - option "кыргызча"
+      - option "қазақ тілі"
+      - option "македонски"
+      - option "монгол"
+      - option "Русский"
+      - option "српски (ћирилица)"
+      - option "Українська"
+      - option "ქართული"
+      - option "հայերեն"
+      - option "‫עברית‬‎"
+      - option "‫اردو‬‎"
+      - option "‫العربية‬‎"
+      - option "‫فارسی‬‎"
+      - option "አማርኛ"
+      - option "नेपाली"
+      - option "मराठी"
+      - option "हिन्दी"
+      - option "অসমীয়া"
+      - option "বাংলা"
+      - option "ਪੰਜਾਬੀ"
+      - option "ગુજરાતી"
+      - option "ଓଡ଼ିଆ"
+      - option "தமிழ்"
+      - option "తెలుగు"
+      - option "ಕನ್ನಡ"
+      - option "മലയാളം"
+      - option "සිංහල"
+      - option "ไทย"
+      - option "ລາວ"
+      - option "မြန်မာ"
+      - option "ខ្មែរ"
+      - option "한국어"
+      - option "中文（香港）"
+      - option "日本語"
+      - option "简体中文"
+      - option "繁體中文"
+    - list [ref=f1e49]:
+      - listitem [ref=f1e50]:
+        - link "Open Google Account Help Center (external, opens in a new window)" [ref=f1e51] [cursor=pointer]:
+          - /url: https://support.google.com/accounts?hl=en-US&p=account_iph
+          - text: Help
+      - listitem [ref=f1e52]:
+        - link "Privacy Policy (external, opens in a new window)" [ref=f1e53] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=VN&hl=en-US&privacy=true
+          - text: Privacy
+      - listitem [ref=f1e54]:
+        - link "Google Terms of Service (external, opens in a new window)" [ref=f1e55] [cursor=pointer]:
+          - /url: https://accounts.google.com/TOS?loc=VN&hl=en-US
+          - text: Terms

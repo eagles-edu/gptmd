@@ -25,6 +25,7 @@ import {
 import {
   PATIENT_SCENARIO_POLICY_VERSION,
   PATIENT_SCENARIO_PROMPT_VERSION,
+  PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION,
   PATIENT_SCENARIO_SCHEMA_VERSION,
   PatientScenarioProfileSchema,
   isPatientScenarioConsistent,
@@ -37,7 +38,12 @@ import {
   type LearnerPatientProfile
 } from './patient-setup.ts'
 import { canonicalJsonStringify } from './canonical-json.ts'
+import { OrganizationAiTimeBudgetSettingsSchema } from './organization-ai-time-budget.ts'
 import type { LivePatientState, PatientStateStore, SessionCommitTimingRecorder } from './patient-state-store.ts'
+import {
+  PatientVariantPresentationSettingsSchema,
+  type PatientVariantPresentationSettings
+} from './patient-variant-settings.ts'
 import {
   createSessionIdentityBinding,
   fingerprintScenario,
@@ -62,6 +68,7 @@ export type SessionRecord = {
   createdAt: string
   updatedAt: string
   versions: PatientScenarioVersionPins
+  aiBudgetGroupCode?: string | null
 }
 export type CurrentEncounterRecord = {
   sessionId: string
@@ -107,6 +114,11 @@ export type ScenarioSetupResult =
   | 'entitlement_denied'
 
 export type StoreResult = 'allowed' | 'membership_missing' | 'entitlement_denied' | 'quota_exceeded'
+export type CreateSessionError = StoreResult | 'group_assignment_missing' | 'group_assignment_denied'
+export type CreateSessionResult = SessionRecord | CreateSessionError | {
+  status: 'group_selection_required'
+  availableGroups: Array<{ code: string; name: string }>
+}
 export type PatientTurnResult =
   | { status: 'accepted' | 'duplicate'; turnId: string; sequence: number; patientResponse: string }
   | 'not_found'
@@ -164,8 +176,9 @@ export interface SessionStore {
   setAudioUsageObserverStatus(providerCallId: string, status: 'connected' | 'interrupted'): Promise<void>
   createSession(
     principal: AuthenticatedPrincipal,
-    versions: PatientScenarioVersionPins
-  ): Promise<SessionRecord | StoreResult>
+    versions: PatientScenarioVersionPins,
+    requestedGroupCode?: string
+  ): Promise<CreateSessionResult>
   setupScenario(
     principal: AuthenticatedPrincipal,
     sessionId: string,
@@ -250,7 +263,27 @@ type ScenarioRow = {
   created_at: Date
   profile_digest: string
   profile_json: unknown
+  presentation_settings_json: unknown | null
+  presentation_settings_digest: string | null
   provider_conversation_id: string
+}
+
+function parsePresentationSettings(
+  value: unknown | null,
+  digest: string | null
+): PatientVariantPresentationSettings | null {
+  if (value === null && digest === null) return null
+  if (value === null || digest === null) throw new Error('Stored patient presentation settings are incomplete')
+  const settings = PatientVariantPresentationSettingsSchema.parse(value)
+  const calculatedDigest = createHash('sha256').update(canonicalJsonStringify(settings)).digest('hex')
+  if (calculatedDigest !== digest) throw new Error('Stored patient presentation settings digest does not match')
+  return settings
+}
+
+function digestPresentationSettings(settings: PatientVariantPresentationSettings | null): string | null {
+  return settings
+    ? createHash('sha256').update(canonicalJsonStringify(settings)).digest('hex')
+    : null
 }
 
 const toVersionPins = (row: Pick<SetupSessionRow,
@@ -265,13 +298,14 @@ const toVersionPins = (row: Pick<SetupSessionRow,
 function toSetupResponse(
   sessionId: string,
   scenario: ReturnType<typeof ImmutablePatientScenarioSchema.parse>,
-  versions: PatientScenarioVersionPins
+  versions: PatientScenarioVersionPins,
+  presentationSettings: PatientVariantPresentationSettings | null
 ): PatientScenarioSetupResult {
   return {
     sessionId,
     status: 'ready',
     createdAt: scenario.createdAt,
-    patient: toLearnerPatientProfile(derivePatientSetup(scenario.profile)),
+    patient: toLearnerPatientProfile(derivePatientSetup(scenario.profile, presentationSettings)),
     versions,
     readiness: { profile: true, redis: true, conversation: true }
   }
@@ -578,7 +612,7 @@ export function createPostgresSessionStore(
       )
     },
 
-    async createSession(principal, versions) {
+    async createSession(principal, versions, requestedGroupCode) {
       const client = await pool.connect()
       try {
         await client.query('BEGIN')
@@ -589,7 +623,7 @@ export function createPostgresSessionStore(
            FROM tenant_entitlements e
            JOIN tenant_memberships m USING (tenant_id)
            WHERE e.tenant_id = $1 AND m.subject_id = $2 AND m.status = 'active'
-           FOR UPDATE OF e`,
+           FOR UPDATE OF e, m`,
           [principal.tenantId, principal.subjectId]
         )
         const row = entitlement.rows[0]
@@ -600,6 +634,51 @@ export function createPostgresSessionStore(
         if (!row.enabled) {
           await client.query('ROLLBACK')
           return 'entitlement_denied'
+        }
+        const budgetSettings = await client.query<{ settings: unknown }>(
+          `SELECT settings FROM tenant_ai_time_budget_settings
+           WHERE tenant_id = $1 FOR SHARE`,
+          [principal.tenantId]
+        )
+        let budgetGroupCode: string | null = null
+        let budgetDepartmentCode: string | null = null
+        if (budgetSettings.rows[0]) {
+          const settings = OrganizationAiTimeBudgetSettingsSchema.parse(budgetSettings.rows[0].settings)
+          if (settings.groups.length > 0) {
+            const assigned = await client.query<{ group_code: string }>(
+              `SELECT group_code FROM tenant_member_ai_group_assignments
+               WHERE tenant_id = $1 AND subject_id = $2 ORDER BY group_code`,
+              [principal.tenantId, principal.subjectId]
+            )
+            const assignedCodes = assigned.rows.map((assignment) => assignment.group_code)
+            const eligibleGroups = settings.groups.filter((group) => assignedCodes.includes(group.code))
+            if (eligibleGroups.length === 0) {
+              await client.query('ROLLBACK')
+              return 'group_assignment_missing'
+            }
+            if (requestedGroupCode) {
+              const selected = eligibleGroups.find((group) => group.code === requestedGroupCode)
+              if (!selected) {
+                await client.query('ROLLBACK')
+                return 'group_assignment_denied'
+              }
+              budgetGroupCode = selected.code
+            } else if (eligibleGroups.length === 1) {
+              budgetGroupCode = eligibleGroups[0]!.code
+            } else {
+              await client.query('ROLLBACK')
+              return {
+                status: 'group_selection_required',
+                availableGroups: eligibleGroups.map(({ code, name }) => ({ code, name }))
+              }
+            }
+          }
+          const department = await client.query<{ department_code: string }>(
+            `SELECT department_code FROM tenant_member_ai_department_assignments
+             WHERE tenant_id = $1 AND subject_id = $2`,
+            [principal.tenantId, principal.subjectId]
+          )
+          budgetDepartmentCode = department.rows[0]?.department_code ?? null
         }
         if (row.max_active_sessions !== null && row.max_active_sessions !== undefined) {
           const active = await client.query<{ count: string }>(
@@ -630,9 +709,10 @@ export function createPostgresSessionStore(
         const inserted = await client.query<{ created_at: Date; updated_at: Date }>(
           `INSERT INTO app_sessions (
              session_id, patient_profile_id, scenario_seed, tenant_id, subject_id, status,
-             prompt_version, model_version, schema_version, policy_version
+             prompt_version, model_version, schema_version, policy_version,
+             ai_budget_group_code, ai_budget_department_code
            )
-           VALUES ($1, $2, $3, $4, $5, 'initializing', $6, $7, $8, $9)
+           VALUES ($1, $2, $3, $4, $5, 'initializing', $6, $7, $8, $9, $10, $11)
            RETURNING created_at, updated_at`,
           [
             sessionId,
@@ -643,7 +723,9 @@ export function createPostgresSessionStore(
             versions.promptVersion,
             versions.modelVersion,
             versions.schemaVersion,
-            versions.policyVersion
+            versions.policyVersion,
+            budgetGroupCode,
+            budgetDepartmentCode
           ]
         )
         await client.query('COMMIT')
@@ -654,7 +736,8 @@ export function createPostgresSessionStore(
           status: 'initializing',
           createdAt: created.created_at.toISOString(),
           updatedAt: created.updated_at.toISOString(),
-          versions
+          versions,
+          aiBudgetGroupCode: budgetGroupCode
         }
       } catch (error) {
         await rollback(client)
@@ -711,7 +794,7 @@ export function createPostgresSessionStore(
 
         const versions = toVersionPins(session)
         if (
-          versions.promptVersion !== PATIENT_SCENARIO_PROMPT_VERSION ||
+          ![PATIENT_SCENARIO_PROMPT_VERSION, PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION].includes(versions.promptVersion) ||
           versions.policyVersion !== PATIENT_SCENARIO_POLICY_VERSION
         ) {
           await client.query('ROLLBACK')
@@ -723,7 +806,8 @@ export function createPostgresSessionStore(
         }
 
         const saved = await client.query<ScenarioRow>(
-          `SELECT scenario_id, created_at, profile_digest, profile_json, provider_conversation_id
+          `SELECT scenario_id, created_at, profile_digest, profile_json,
+                  presentation_settings_json, presentation_settings_digest, provider_conversation_id
            FROM patient_scenarios WHERE session_id = $1`,
           [sessionId]
         )
@@ -746,6 +830,10 @@ export function createPostgresSessionStore(
             await client.query('ROLLBACK')
             throw new Error('Stored patient scenario digest does not match its profile')
           }
+          const presentationSettings = parsePresentationSettings(
+            savedRow.presentation_settings_json,
+            savedRow.presentation_settings_digest
+          )
           await persistSessionIdentityBinding(client, createSessionIdentityBinding({
             sessionId,
             tenantId: principal.tenantId,
@@ -767,12 +855,12 @@ export function createPostgresSessionStore(
             patientProfileId: scenario.scenarioId,
             openedAt: session.created_at.toISOString(),
             profile: scenario.profile,
-            setupProjection: derivePatientSetup(scenario.profile),
+            setupProjection: derivePatientSetup(scenario.profile, presentationSettings),
             conversationId: savedRow.provider_conversation_id,
             profileDigest: scenario.profileDigest,
             schemaVersion: scenario.schemaVersion
           })
-          return toSetupResponse(sessionId, scenario, versions)
+          return toSetupResponse(sessionId, scenario, versions, presentationSettings)
         }
 
         if (session.status !== 'initializing') {
@@ -805,6 +893,9 @@ export function createPostgresSessionStore(
           await recordProviderUsage(generated.usage)
         }
         const profile = PatientScenarioProfileSchema.parse(generated.profile)
+        const presentationSettings = generated.presentationSettings
+          ? PatientVariantPresentationSettingsSchema.parse(generated.presentationSettings)
+          : null
         if (!isPatientScenarioConsistent(profile, session.created_at)) {
           throw new Error('Generated patient profile failed session-time consistency validation')
         }
@@ -818,12 +909,14 @@ export function createPostgresSessionStore(
           profileDigest: createHash('sha256').update(canonicalJsonStringify(profile)).digest('hex'),
           profile
         })
-        derivePatientSetup(scenario.profile)
+        derivePatientSetup(scenario.profile, presentationSettings)
         await client.query(
           `INSERT INTO patient_scenarios (
              scenario_id, session_id, schema_version, created_at, profile_digest,
-             profile_json, provider_conversation_id, prompt_version, model_version, policy_version
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+             profile_json, presentation_settings_json, presentation_settings_digest,
+             provider_conversation_id, prompt_version, model_version, policy_version,
+             source_context_json
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
           [
             scenario.scenarioId,
             sessionId,
@@ -831,10 +924,13 @@ export function createPostgresSessionStore(
             scenario.createdAt,
             scenario.profileDigest,
             scenario.profile,
+            presentationSettings,
+            digestPresentationSettings(presentationSettings),
             generated.conversationId,
             versions.promptVersion,
             versions.modelVersion,
-            versions.policyVersion
+            versions.policyVersion,
+            generated.sourceContext ?? {}
           ]
         )
         await persistSessionIdentityBinding(client, createSessionIdentityBinding({
@@ -858,12 +954,12 @@ export function createPostgresSessionStore(
           patientProfileId,
           openedAt: session.created_at.toISOString(),
           profile: scenario.profile,
-          setupProjection: derivePatientSetup(scenario.profile),
+          setupProjection: derivePatientSetup(scenario.profile, presentationSettings),
           conversationId: generated.conversationId,
           profileDigest: scenario.profileDigest,
           schemaVersion: scenario.schemaVersion
         })
-        return toSetupResponse(sessionId, scenario, versions)
+        return toSetupResponse(sessionId, scenario, versions, presentationSettings)
       } catch (error) {
         await rollback(client)
         try {
@@ -1606,10 +1702,13 @@ export function createPostgresSessionStore(
         schema_version: number
         profile_digest: string | null
         profile_json: unknown | null
+        presentation_settings_json: unknown | null
+        presentation_settings_digest: string | null
         provider_conversation_id: string | null
       }>(
         `SELECT s.session_id, s.patient_profile_id, s.status, s.created_at, s.updated_at,
-                s.schema_version, p.profile_digest, p.profile_json, p.provider_conversation_id
+                s.schema_version, p.profile_digest, p.profile_json,
+                p.presentation_settings_json, p.presentation_settings_digest, p.provider_conversation_id
          FROM app_sessions s
          JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
          LEFT JOIN patient_scenarios p ON p.session_id = s.session_id
@@ -1628,6 +1727,10 @@ export function createPostgresSessionStore(
       if (profileDigest !== session.profile_digest) {
         throw new Error('Stored patient scenario digest does not match its profile during Redis recovery')
       }
+      const presentationSettings = parsePresentationSettings(
+        session.presentation_settings_json,
+        session.presentation_settings_digest
+      )
       const eventRows = await pool.query<{
         event_id: string
         sequence: string | number
@@ -1673,7 +1776,7 @@ export function createPostgresSessionStore(
         patientProfileId: session.patient_profile_id,
         openedAt: session.created_at.toISOString(),
         profile,
-        setupProjection: derivePatientSetup(profile),
+        setupProjection: derivePatientSetup(profile, presentationSettings),
         conversationId: session.provider_conversation_id,
         profileDigest,
         schemaVersion: session.schema_version,

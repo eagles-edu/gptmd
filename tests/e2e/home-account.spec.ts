@@ -143,6 +143,15 @@ test('signed-in account workspace context carries through the home into Begin Vi
       monthlyAudioTranscriptionSessionQuota: null
     } })
   }))
+  await page.route('**/api/admin/ai-time-budget', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ settings: null, usage: null })
+  }))
+  await page.route('**/api/admin/ai-time-budget/assignments', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ members: [], groups: [], departments: [] })
+  }))
   await page.route('**/api/encounters/current', async (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -201,8 +210,11 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await expect(page.getByText('Signed in as learner@example.test')).toBeVisible()
   const accountWorkspace = page.getByRole('combobox', { name: 'GPTpatient workspace' })
   await expect(accountWorkspace).toBeVisible()
-  await expect(accountWorkspace.locator('option')).toHaveText([
-    'Workspace 1 (Learner)', 'Workspace 2 (Customer administrator)',
+  await expect(accountWorkspace.locator('option')).toHaveCount(5)
+  expect(await accountWorkspace.locator('option').evaluateAll((options) =>
+    options.map((option) => option.textContent?.trim())
+  )).toEqual([
+    'Choose a workspace', 'Workspace 1 (Learner)', 'Workspace 2 (Customer administrator)',
     'Workspace 3 (Learner)', 'Workspace 4 (Learner)'
   ])
   await accountWorkspace.selectOption('tenant-two')
@@ -262,6 +274,61 @@ test('signed-in account workspace context carries through the home into Begin Vi
   expect(consoleErrors).toEqual([])
 })
 
+test('a single customer-admin workspace is auto-selected without a workspace dropdown', async ({ page }) => {
+  await page.route('**/auth/v1/user', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      id: 'single-admin-subject', aud: 'authenticated', role: 'authenticated',
+      email: 'single-admin@example.test', app_metadata: { provider: 'google', providers: ['google'] },
+      user_metadata: { full_name: 'Single Workspace Admin' }, created_at: '2026-01-01T00:00:00.000Z'
+    })
+  }))
+  await page.route('**/api/account/tenants', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ memberships: [{
+      tenantId: 'single-admin-tenant', role: 'customer_admin',
+      sessionsEnabled: false, responsesEnabled: false, audioTranscriptionAvailable: false
+    }] })
+  }))
+  await page.route('**/api/admin/entitlements', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ policy: {
+      sessionsEnabled: false, responsesEnabled: false,
+      monthlySessionQuota: 5, monthlySessionQuotaPerUser: 5,
+      monthlyResponseQuota: 50, monthlyResponseQuotaPerUser: 50,
+      responseQuotaPerSession: 12, maxActiveSessions: 1,
+      audioTranscriptionEnabled: false, audioTranscriptionPrivacyApproved: false,
+      monthlyAudioTranscriptionSessionQuota: 0
+    } })
+  }))
+  await page.route('**/api/admin/ai-time-budget', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ settings: null, usage: null })
+  }))
+  await page.route('**/api/admin/ai-time-budget/assignments', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ members: [], groups: [], departments: [] })
+  }))
+  await page.context().addCookies([{
+    name: 'sb-localhost-auth-token',
+    value: makeAuthCookie('single-admin-subject', 'single-admin@example.test'),
+    url: 'https://localhost:3001',
+    sameSite: 'Lax'
+  }])
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'single-admin@example.test' })).toBeVisible()
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Account' }).click()
+
+  await expect(page.getByRole('combobox', { name: 'GPTpatient workspace' })).toHaveCount(0)
+  await expect(page.getByText('Your role in this workspace: Customer administrator. Visit setup is available to learners only.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entitlements and limits' })).toBeVisible()
+})
+
 test('customer administrator can change workspace entitlements with bounded controls', async ({ page }) => {
   const controlTenantId = 'gptmd-entitlement-test-scsstx'
   const learnerTenantId = 'gptmd-learner-test-scsstx'
@@ -309,6 +376,30 @@ test('customer administrator can change workspace entitlements with bounded cont
       await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ policy: currentPolicy }) })
     }
   })
+  await page.route('**/api/admin/ai-time-budget', async (route) => {
+    if (route.request().method() === 'PUT') {
+      const settings = route.request().postDataJSON() as Record<string, unknown>
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          settings: { ...settings, revision: Number(settings.revision) + 1 },
+          usage: { totalTokens: '3210', responseCount: 7 }
+        })
+      })
+    } else {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({ settings: null, usage: null })
+      })
+    }
+  })
+  await page.route('**/api/admin/ai-time-budget/assignments', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ members: [], groups: [], departments: [] })
+  }))
   await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie('test-admin-subject', 'scsstx@gmail.com'), url: 'https://localhost:3001', sameSite: 'Lax' }])
 
   await page.goto('/')
@@ -316,11 +407,34 @@ test('customer administrator can change workspace entitlements with bounded cont
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Account' }).click()
 
   const accountWorkspace = page.getByRole('combobox', { name: 'GPTpatient workspace' })
-  await expect(accountWorkspace.locator('option')).toHaveText([
+  await expect(accountWorkspace.locator('option')).toHaveCount(3)
+  expect(await accountWorkspace.locator('option').evaluateAll((options) =>
+    options.map((option) => option.textContent?.trim())
+  )).toEqual([
+    'Choose a workspace',
     'Workspace 1 (Customer administrator)', 'Workspace 2 (Learner)'
   ])
+  await expect(accountWorkspace.locator('option').first()).toBeDisabled()
+  expect(await accountWorkspace.locator('option').first().evaluate((option) =>
+    (option as HTMLOptionElement).selected
+  )).toBe(true)
+  await expect(page.getByText('Choose the workspace you want to use before starting an encounter.')).toBeVisible()
+  await accountWorkspace.selectOption(learnerTenantId)
+  await expect(page.getByRole('status').filter({ hasText: 'Your role in this workspace: Learner' })).toBeVisible()
+  await expect(page.getByText('Visit setup is included in this workspace. Remaining quota is checked when you begin.')).toBeVisible()
   await accountWorkspace.selectOption(controlTenantId)
   await expect(page.getByRole('heading', { name: 'Entitlements and limits' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'AI time pool' })).toBeVisible()
+  await expect(page.getByText(/Minute values are estimates/)).toBeVisible()
+  await page.getByRole('button', { name: 'Add group' }).click()
+  await page.getByLabel('Group code').fill('gptnursing')
+  await page.getByLabel('Group name').fill('GPT Nursing')
+  await page.getByLabel('Token pool').fill('100000')
+  await page.getByRole('spinbutton', { name: 'Estimated minutes', exact: true }).fill('600')
+  await page.getByLabel('First period start date').fill('2026-10-01')
+  await page.getByRole('button', { name: 'Save draft' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Draft saved. AI usage remains unenforced.' })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /tokens across 7 responses/ })).toBeVisible()
   const allowVisits = page.getByLabel('Allow visit setup')
   await allowVisits.check()
   await page.getByRole('button', { name: 'Save changes' }).click()

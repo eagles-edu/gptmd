@@ -367,3 +367,84 @@ whether those turns used typed transcript or Realtime transcription, and this
 browser remains signed out; do not describe the database check as proof of the
 Account selector UI or of a particular interaction mode. No transcript or
 patient text was read.
+
+**2026-10-14 OAuth User-Agent regression gate:** The deployment previously
+checked loopback web/API readiness but did not guard the live OAuth route
+against recurrence of the origin's command-line User-Agent 403. The
+`scripts/verify-live-oauth.mjs` preflight now probes both local-origin Nginx
+(loopback TLS with the correct hostname/SNI) and public ingress using
+`curl/8.5.0`. Each response must be HTTP 302 to `accounts.google.com` and carry
+the exact `https://obgyn.eaglesvn.club/auth/v1/callback` redirect URI; OAuth
+state is never printed. `npm run deploy:live` runs this check before
+FreeFileSync, so a bad origin or public response stops the release before
+staging is modified. The standalone `npm run verify:live-oauth` repeats the
+curl probes. The additional `npm run verify:live-browser` preflight loads the
+public home page in headless Chromium, rejects 403/non-app responses and
+browser errors, and checks the browser OAuth redirect against the exact
+callback. Deployment runs both read-only preflights before syncing. These verify
+route availability and OAuth launch only, not Google callback completion or a
+learner session; local Chromium cannot establish the reputation result for
+every remote browser client. Recovery: compare direct-origin, public curl, and
+browser results, repair the layer returning the failure, then rerun both
+standalone checks before deploying.
+
+The gate passed before the 2026-10-14 full mirror sync, and release
+`2026-10-14T073930379Z` activated successfully. The post-deploy gate passed
+again. All three systemd services are active with zero restarts; the active
+release has 9,193 paths with no owner/group mismatch or group/other-writable
+path. Public `/`, `/privacy`, and `/contact` returned HTTP 200. This updates the
+earlier `2026-10-13T194537478Z` release reference above; that release was active
+before this sync.
+
+**2026-10-14 account selector deployment and live profile verification:** The
+Account page now omits the workspace selector when exactly one active
+membership exists; multiple memberships still require explicit selection. The
+full `npm run check` passed before deploying release
+`2026-10-14T083134786Z`. `npm run verify:live-oauth` passed for origin and public
+ingress afterward. Web/API/worker are active with zero restarts; all 9,193
+release paths are owned by `eaglesvn:eaglesvn` with no group/other-writable
+paths; `/`, `/privacy`, and `/contact` return HTTP 200. Existing Chrome Profile
+1 shows the expected signed-in learner identity, learner role, bounded visit
+access, voice unavailable, and no selector. Chrome Default shows the separate
+learner identity with the same role/policy and no selector. These are real
+Account-page checks, not proof of a new visit or whether a prior turn used
+typed transcript or Realtime transcription.
+
+**2026-10-14 onlineadmin admin-and-learner access:** After the user clarified
+that onlineadmin needs both admin and learner spaces, a guarded live provisioner
+created `gptmd-entitlement-test-onlineadmin` as a separate all-off
+`customer_admin` tenant. It first verified the existing onlineadmin learner
+membership and bounded text-only policy, then wrote one append-only initial
+policy audit. A read-only database query confirms two active rows for the
+onlineadmin subject: customer administrator in the control tenant and learner
+in `gptmd-learner-test-onlineadmin`; voice, privacy approval, and audio quota
+are disabled in both. The real Chrome `Default` Account page shows two
+available workspaces and a blank explicit-choice selector. The learner tenant
+was preserved. No deployment or migration was required.
+
+**2026-10-14 patient-variant settings deployment:** The first deployment
+attempt stopped transactionally because migration 026 revoked privileges from
+optional Supabase roles (`anon` and `authenticated`) that are absent in the
+standalone `gptmd_live` database. The active release and services remained
+unchanged, and migration 026 was not marked applied. The migration now always
+revokes from `PUBLIC` and conditionally revokes from optional roles found in
+`pg_roles`; a regression test covers the absent-role case. The phase-two
+verifier had also stopped at session reads because its disposable database
+fixture omitted migrations 025 and 026 after the session projection began
+selecting the new presentation snapshot columns. Its fixture now applies both
+migrations, and `npm run verify:phase2` passed.
+
+After that repair, `npm run check` passed with 300 unit tests, all configured
+cross-browser and mobile suites, API compilation, schema/diagram validation,
+and a warning-free production build. `npm run deploy:live` applied
+`026_patient_variant_settings.sql` and activated release
+`2026-10-14T112030013Z`. Direct post-deployment checks found all three GPTMD
+services active, API `/readyz` reporting Redis/PostgreSQL/OpenAI/auth ready,
+and the public home, privacy, and contact routes plus OAuth/browser preflights
+passing. The current release tree was audited for ownership and write
+permissions. A read-only database check found the new patient presentation
+snapshot column and RLS-enabled settings table; the settings and audit tables
+both contain zero rows. No educator values were seeded or approved, and no
+live instructor-account workflow was exercised. The deployment enables the
+controls in the live schema; it does not establish educator approval or learner
+use of configured settings.

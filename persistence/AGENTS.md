@@ -326,3 +326,19 @@
 
 <!-- curatormd:record_id=e8e4e64dab3a19c4f217b0d90d5cb439;content_sha256=768fd07b7ee0c65f8ed59b6f1f94425068b37986d040ad793d766e852903cfb7 -->
 <!-- curatormd:fingerprint=1b4a760da05062cfa663a7963db4ecc81b29af4fc1fecc2c15ac357ee913ebbb -->
+
+- ## Enforce zero-pulse consistency and refresh live modernization evidence
+
+**Beginning — trigger and context:** The user asked to resume the GPTMD modernization checklist from a heavily modified worktree, preserve existing work, and verify claims before advancing gates. The clinical profile contract needed to allow a zero pulse only when both radial and carotid pulses were explicitly absent, while live OAuth and deployment findings also needed accurate checklist treatment.
+
+**Middle — decisions and work:** The schema-v8 contract and regression coverage were aligned so zero pulse is valid only with the absent-radial-and-carotid finding and private exam detail stays out of the learner chart. The full `npm run check` passed: 260 unit tests, 36 standard browser tests, 40 preflight tests, 10 mobile checks, Mobile Viewer, schema and diagram checks, API compilation, and warning-free build. The change was committed as `ef66180`; a documentation-only follow-up for the OAuth trace attribution was committed as `b444cf3`. Live checks distinguished the origin Nginx User-Agent 403 from OAuth launch behavior, corrected the stale active-release reference, and verified the current release, service health, file ownership and permissions, homepage 200, and Google OAuth launch redirect. The user-reported transcript-mode success remained labeled as reported because the available browser was signed out and the database did not record interaction mode. The durable-records audit found `download_engagement` had no writer or archive-download route, so `b07` stayed open; `q01` was closed with runtime and transaction evidence.
+
+**End — outcome and verification:** The schema contract passed the full project gate and the live checklist was corrected with current release evidence. The OAuth browser flow and learner-mode verification remained open; the checklist retained the missing download-writer gap instead of claiming completion.
+
+**Future utility:** Future modernization work can reuse the schema-v8 zero-pulse rule and the evidence boundaries for OAuth, learner activity, release health, and durable-download gates.
+
+**Project impact:** Observed: the full application check passed and the current release, services, homepage, permissions, and OAuth launch were verified; `q01` closed while `b07` and signed-in browser checks remained open. Expected: explicit pulse consistency and evidence-linked checklist updates reduce contradictory patient state and premature deployment sign-off.
+  - **Why:** Future modernization work can reuse the schema-v8 zero-pulse rule and the evidence boundaries for OAuth, learner activity, release health, and durable-download gates.
+
+<!-- curatormd:record_id=9f8a40b3c52aefba80cce78d29e0fe43;content_sha256=52b662bbda820dc0bb3e1549549a7664fd3d844a7c066eb82b013d51d7caaa64 -->
+<!-- curatormd:fingerprint=daafd7a305bff97d7d5a1d354eb24c112b75f81e72ac2018e1fa8ee15cd441ef -->

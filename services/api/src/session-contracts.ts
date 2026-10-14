@@ -121,6 +121,7 @@ export const SessionCreatedResponseSchema = z.object({
   status: z.literal('initializing'),
   createdAt: UtcTimestampSchema,
   updatedAt: UtcTimestampSchema,
+  aiBudgetGroupCode: z.string().nullable().optional(),
   versions: SessionVersionPinsSchema
 }).strict()
 

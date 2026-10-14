@@ -271,6 +271,25 @@
 
         <v-alert v-if="errorMessage && !roomEntered" class="api-error" type="warning" variant="tonal" role="status">
           {{ errorMessage }}
+          <v-select
+            v-if="budgetGroups.length > 1"
+            v-model="selectedBudgetGroupCode"
+            class="budget-group-select"
+            :items="budgetGroups"
+            item-title="name"
+            item-value="code"
+            label="Session budget group"
+            density="compact"
+            hide-details
+          />
+          <v-btn
+            v-if="budgetGroups.length > 1"
+            class="budget-group-continue"
+            color="primary"
+            :disabled="!selectedBudgetGroupCode || pending"
+            :loading="pending"
+            @click="startNewPatientSession(selectedBudgetGroupCode)"
+          >Continue with selected group</v-btn>
         </v-alert>
         </section>
       </v-card>
@@ -315,7 +334,7 @@
             @click="openCancelVisitConfirmation"
           >Cancel visit</v-btn>
 
-          <v-btn v-if="!profile" color="primary" :loading="pending" :disabled="status !== 'error'" block @click="retryReadiness">
+          <v-btn v-if="!profile && budgetGroups.length <= 1" color="primary" :loading="pending" :disabled="status !== 'error'" block @click="retryReadiness">
             {{ status === 'error' ? 'Retry patient setup' : 'Preparing patient' }}
           </v-btn>
           <v-btn v-else-if="!roomEntered" color="primary" :disabled="status !== 'error' && !canEnterRoom" block @click="status === 'error' ? retryReadiness() : enterRoom()">
@@ -329,9 +348,10 @@
 
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
-import { usePatientApi, type CurrentEncounterResult, type PatientProfile } from '../composables/usePatientApi'
+import { BudgetGroupSelectionRequiredError, usePatientApi, type CurrentEncounterResult, type PatientProfile } from '../composables/usePatientApi'
 import type { AssessmentFields } from '../schemas/patient-api'
 import { derivePatientPortraitPath } from '../utils/patient-portrait'
+import { resolvePatientVoice, waitForSpeechSynthesisVoices } from '../utils/patient-variant-voice'
 import { classifyVoiceRepair, isAssessmentTransitionCue, MicrophoneSilenceCommitter, shouldSpeakPatientReply, VoiceTurnBuffer } from '../utils/voice-turn'
 import { useGptmdAuth } from '../composables/useGptmdAuth'
 
@@ -380,6 +400,8 @@ const savingLocalUtterances = ref(false)
 const retryableTurn = ref<RetryableTurn | null>(null)
 const status = ref<EncounterStatus>('idle')
 const errorMessage = ref('')
+const budgetGroups = ref<Array<{ code: string; name: string }>>([])
+const selectedBudgetGroupCode = ref<string | null>(null)
 const preflightOpen = ref(false)
 const interactionMode = ref<InteractionMode>('audio')
 const fictionalDetailsConfirmed = ref(false)
@@ -903,7 +925,7 @@ function stopVoiceConversation(flushFinalizedUtterance = true): void {
   }
 }
 
-function speakPatientReply(text: string, onPlaybackComplete?: () => void | Promise<void>): void {
+async function speakPatientReply(text: string, onPlaybackComplete?: () => void | Promise<void>): Promise<void> {
   if (!shouldSpeakPatientReply(interactionMode.value, voiceConversationActive.value)) return
   if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
     speechMessage.value = 'The reply is in the transcript. Spoken replies are unavailable in this browser.'
@@ -915,16 +937,32 @@ function speakPatientReply(text: string, onPlaybackComplete?: () => void | Promi
   restartVoiceTimer = undefined
   stopRecognition()
   window.speechSynthesis.cancel()
+  const playbackSequence = voiceAttemptSequence
+  const presentation = profile.value?.presentationSettings
+  const voices = presentation
+    ? await waitForSpeechSynthesisVoices(window.speechSynthesis)
+    : []
+  if (presentation && (playbackSequence !== voiceAttemptSequence || !voiceConversationActive.value)) return
+  const resolvedVoice = presentation ? resolvePatientVoice(presentation, voices) : null
+  if (presentation && !resolvedVoice?.voice) {
+    speechMessage.value = 'The selected and fallback voices are unavailable. The reply remains in the transcript.'
+    status.value = 'active'
+    scheduleVoiceRecognition()
+    return
+  }
   const utterance = new SpeechSynthesisUtterance(text)
-  utterance.lang = 'en-US'
-  utterance.volume = speechVolume.value
-  utterance.rate = speechRate.value
+  if (resolvedVoice?.voice) utterance.voice = resolvedVoice.voice
+  utterance.lang = presentation?.locale ?? 'en-US'
+  utterance.volume = presentation?.volume ?? speechVolume.value
+  utterance.rate = presentation?.rate ?? speechRate.value
+  if (presentation) utterance.pitch = presentation.pitch
   ttsRequestedAt.value = performance.now()
   ttsStartedAt.value = null
   ttsEndedAt.value = null
   patientSpeaking.value = true
   utterance.onstart = () => {
     ttsStartedAt.value = performance.now()
+    if (resolvedVoice?.usedFallback) speechMessage.value = 'The selected voice is unavailable. Using the configured fallback voice.'
   }
   utterance.onend = () => {
     ttsEndedAt.value = performance.now()
@@ -1050,7 +1088,7 @@ function repeatLastReply(statusText = 'Repeating the last reply.'): void {
   }
   speechMessage.value = statusText
   const repeatedReply = lastPatientReply.value
-  speakPatientReply(repeatedReply, async () => {
+  void speakPatientReply(repeatedReply, async () => {
     await saveLocalUtterance('patient_repeat', 'patient', repeatedReply, new Date().toISOString())
   })
 }
@@ -1102,18 +1140,24 @@ async function startNewVisit(): Promise<void> {
   if (status.value === 'error' && recoverableEncounter.value) restorePromptOpen.value = true
 }
 
-async function startNewPatientSession(): Promise<void> {
+async function startNewPatientSession(groupCode?: string | null): Promise<void> {
   resetEncounterForNewVisit()
   status.value = 'creating'
   errorMessage.value = ''
   try {
-    const session = await api.createSession()
+    const session = await api.createSession(groupCode ?? undefined)
+    budgetGroups.value = []
+    selectedBudgetGroupCode.value = null
     sessionId.value = session.sessionId
     sessionCreatedAt.value = session.createdAt
     await preparePatientSession(sessionId.value)
     recoverableEncounter.value = null
   } catch (error) {
     status.value = 'error'
+    if (error instanceof BudgetGroupSelectionRequiredError) {
+      budgetGroups.value = error.groups
+      selectedBudgetGroupCode.value = error.groups[0]?.code ?? null
+    }
     errorMessage.value = readableError(error)
   }
 }
@@ -1386,7 +1430,7 @@ async function submitQuestion(
       } else {
         speechMessage.value = 'The patient wrote a note. Continue in Transcript mode.'
       }
-    } else if (voiceReply && voiceConversationActive.value) speakPatientReply(result.text)
+    } else if (voiceReply && voiceConversationActive.value) void speakPatientReply(result.text)
     else if (voiceReply) {
       status.value = 'active'
       speechMessage.value = interactionMode.value === 'audio'

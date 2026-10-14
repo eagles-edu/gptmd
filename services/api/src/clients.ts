@@ -8,6 +8,8 @@ import { generatePatientTurn } from './patient-turn.js'
 import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.js'
 import { createPostgresSessionStore } from './session-store.ts'
 import { createPostgresTenantEntitlementAdminStore } from './tenant-entitlements.ts'
+import { createPostgresPatientVariantSettingsStore } from './patient-variant-settings.ts'
+import { createPostgresOrganizationAiTimeBudgetStore } from './organization-ai-time-budget.ts'
 import { createRedisPatientStateStore, type SessionCommitTimingRecorder } from './patient-state-store.ts'
 import { createRealtimeTranscriptionUsageObserver } from './realtime-transcription-usage-observer.ts'
 import { resolveTrustedProxyAddresses } from './listener-config.ts'
@@ -185,6 +187,17 @@ export function createServiceClients(
                to_regclass('public.session_local_utterances') IS NOT NULL AND
                to_regclass('public.session_transcript') IS NOT NULL AND
                to_regclass('public.session_turn_audits') IS NOT NULL AND
+               to_regclass('public.tenant_ai_time_budget_settings') IS NOT NULL AND
+               to_regclass('public.tenant_ai_time_budget_audit') IS NOT NULL AND
+               to_regclass('public.tenant_member_ai_group_assignments') IS NOT NULL AND
+               to_regclass('public.tenant_member_ai_department_assignments') IS NOT NULL AND
+               to_regclass('public.tenant_member_ai_assignment_audit') IS NOT NULL AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'app_sessions'
+                   AND column_name IN ('ai_budget_group_code', 'ai_budget_department_code')
+                 GROUP BY table_name HAVING count(*) = 2
+               ) AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'session_events'
@@ -374,6 +387,12 @@ export function createServiceClients(
         : null,
       tenantEntitlementAdminStore: postgresPool
         ? createPostgresTenantEntitlementAdminStore(postgresPool)
+        : null,
+      patientVariantSettingsStore: postgresPool
+        ? createPostgresPatientVariantSettingsStore(postgresPool)
+        : null,
+      organizationAiTimeBudgetStore: postgresPool
+        ? createPostgresOrganizationAiTimeBudgetStore(postgresPool)
         : null
     },
     async close() {

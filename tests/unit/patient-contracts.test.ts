@@ -153,7 +153,7 @@ describe('shared patient API schemas', () => {
     })
     expect(Object.keys(LearnerPatientProfileSchema.shape)).toEqual(Object.keys(PatientProfileSchema.shape))
     expect(Object.keys(PatientSetupProjectionSchema.shape)).toEqual([
-      ...document.setupProfileFields, 'vitalSigns', 'physicalExamFindings'
+      ...document.setupProfileFields, 'vitalSigns', 'physicalExamFindings', 'presentationSettings'
     ])
     expect(document.templateNote).toContain('Template only')
   })
