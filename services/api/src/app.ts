@@ -44,6 +44,7 @@ import type { PatientTurnGenerationContext } from './patient-turn.ts'
 import type { ResponsesTimingRecorder } from './response-timing.ts'
 import type { SessionCommitTimingRecorder } from './patient-state-store.ts'
 import type { PatientTurnResult, ScenarioSetupResult, SessionStore, StoreResult } from './session-store.ts'
+import type { TenantEntitlementAdminStore, TenantEntitlementPolicy } from './tenant-entitlements.ts'
 
 export interface RedisProbe {
   readonly isOpen: boolean
@@ -86,6 +87,7 @@ export interface ApiDependencies {
   model: string
   jwt: JwtConfiguration
   sessionStore: SessionStore | null
+  tenantEntitlementAdminStore?: TenantEntitlementAdminStore | null
   setupQueueLimits?: SetupQueueLimits
   providerCapacityLimits?: ProviderCapacityLimits
   recordSessionCommitTiming?: SessionCommitTimingRecorder
@@ -97,6 +99,27 @@ export interface ApiDependencies {
 
 const validInput = (value: unknown): value is string =>
   typeof value === 'string' && value.trim().length > 0 && value.length <= 12_000
+
+const entitlementLimitKeys = [
+  'monthlySessionQuota', 'monthlySessionQuotaPerUser', 'monthlyResponseQuota',
+  'monthlyResponseQuotaPerUser', 'responseQuotaPerSession', 'maxActiveSessions',
+  'monthlyAudioTranscriptionSessionQuota'
+] as const
+
+function parseTenantEntitlementPolicy(value: unknown): TenantEntitlementPolicy | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null
+  const record = value as Record<string, unknown>
+  const booleanKeys = [
+    'sessionsEnabled', 'responsesEnabled', 'audioTranscriptionEnabled',
+    'audioTranscriptionPrivacyApproved'
+  ] as const
+  if (booleanKeys.some((key) => typeof record[key] !== 'boolean')) return null
+  if (entitlementLimitKeys.some((key) => record[key] !== null &&
+    (!Number.isInteger(record[key]) || (record[key] as number) < 0 || (record[key] as number) > 2_147_483_647))) return null
+  const allowedKeys = new Set<string>([...booleanKeys, ...entitlementLimitKeys])
+  if (Object.keys(record).some((key) => !allowedKeys.has(key)) || Object.keys(record).length !== allowedKeys.size) return null
+  return Object.fromEntries([...booleanKeys, ...entitlementLimitKeys].map((key) => [key, record[key]])) as unknown as TenantEntitlementPolicy
+}
 
 export function createApiApp(dependencies: ApiDependencies): Express {
   const app = express()
@@ -210,7 +233,12 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         tenantId: selectedMembership.tenantId,
         role: selectedMembership.role
       }
-      if (principal.role !== 'learner') {
+      if (request.path.startsWith('/admin/')) {
+        if (principal.role !== 'customer_admin') {
+          response.status(403).json({ error: 'Customer administrator role is required' })
+          return
+        }
+      } else if (principal.role !== 'learner') {
         response.status(403).json({ error: 'Learner role is required for encounter API routes' })
         return
       }
@@ -235,6 +263,51 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.json({ memberships: await dependencies.sessionStore.getActiveMemberships(identity.subjectId) })
     } catch {
       response.status(503).json({ error: 'Account service is unavailable' })
+    }
+  })
+
+  app.get('/api/admin/entitlements', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.tenantEntitlementAdminStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Entitlement administration is unavailable' })
+      return
+    }
+    try {
+      const policy = await store.getPolicy(principal.tenantId)
+      if (!policy) response.status(404).json({ error: 'Workspace not found' })
+      else response.json({ policy })
+    } catch {
+      response.status(503).json({ error: 'Entitlement policy could not be loaded' })
+    }
+  })
+
+  app.put('/api/admin/entitlements', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.tenantEntitlementAdminStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Entitlement administration is unavailable' })
+      return
+    }
+    const policy = parseTenantEntitlementPolicy(request.body)
+    if (!policy) {
+      response.status(400).json({ error: 'Provide all entitlement flags and non-negative integer limits; use null for unlimited limits' })
+      return
+    }
+    try {
+      const updated = await store.updatePolicy(principal.tenantId, principal.subjectId, policy)
+      if (!updated) response.status(404).json({ error: 'Workspace not found' })
+      else response.json({ policy: updated })
+    } catch {
+      response.status(503).json({ error: 'Entitlement policy could not be saved' })
     }
   })
 
@@ -739,6 +812,42 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       }
     } catch {
       response.status(503).json({ error: 'Assessment could not be saved' })
+    }
+  })
+
+  app.post('/api/sessions/:sessionId/cancel', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    try {
+      const result = await store.cancelSession(
+        principal,
+        sessionId,
+        (operation, elapsedMs) => reportSessionCommitTiming(response, dependencies, operation, elapsedMs)
+      )
+      if (typeof result === 'object') {
+        response.json(result)
+      } else if (result === 'not_found') {
+        response.status(404).json({ error: 'Session not found' })
+      } else if (result === 'not_ready') {
+        response.status(409).json({ error: 'Only a ready or active visit can be cancelled' })
+      } else if (result === 'turn_in_progress') {
+        response.status(409).json({ error: 'Another action is being processed for this session' })
+      } else if (result === 'phase_conflict') {
+        response.status(409).json({ error: 'A completed visit cannot be cancelled' })
+      } else {
+        response.status(503).json({ error: 'Visit cancellation could not be saved' })
+      }
+    } catch {
+      response.status(503).json({ error: 'Visit cancellation could not be saved' })
     }
   })
 

@@ -82,6 +82,9 @@
 
     <p class="privacy-note">
       Use fictional details only. Do not enter real patient identifiers or private health information.
+      GPTpatient uses your Google account email and account ID to sign you in and check workspace access;
+      it does not access Gmail or Drive.
+      <NuxtLink to="/privacy">Read the GPTpatient privacy policy</NuxtLink>
     </p>
   </section>
 </template>
@@ -126,6 +129,12 @@ async function loadMemberships(): Promise<void> {
     membershipState.value = 'error'
   }
 }
+
+watch(selectedTenantId, (tenantId) => {
+  if (membershipState.value === 'ready' && tenantId && tenantIds.value.includes(tenantId)) {
+    membershipMessage.value = ''
+  }
+})
 
 onMounted(loadMemberships)
 </script>

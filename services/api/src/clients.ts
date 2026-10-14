@@ -7,6 +7,7 @@ import { generatePatientScenario } from './patient-profile.js'
 import { generatePatientTurn } from './patient-turn.js'
 import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.js'
 import { createPostgresSessionStore } from './session-store.ts'
+import { createPostgresTenantEntitlementAdminStore } from './tenant-entitlements.ts'
 import { createRedisPatientStateStore, type SessionCommitTimingRecorder } from './patient-state-store.ts'
 import { createRealtimeTranscriptionUsageObserver } from './realtime-transcription-usage-observer.ts'
 import { resolveTrustedProxyAddresses } from './listener-config.ts'
@@ -140,6 +141,7 @@ export function createServiceClients(
             `SELECT
                to_regclass('public.tenants') IS NOT NULL AND
                to_regclass('public.tenant_memberships') IS NOT NULL AND
+               to_regclass('public.tenant_entitlement_audit') IS NOT NULL AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'tenant_memberships'
@@ -206,6 +208,7 @@ export function createServiceClients(
                ) AND
                to_regclass('public.download_engagement') IS NOT NULL AND
                to_regclass('public.session_outcomes') IS NOT NULL AND
+               to_regclass('public.session_archive_jobs') IS NOT NULL AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'app_sessions'
@@ -368,6 +371,9 @@ export function createServiceClients(
             redisClient ? createRedisPatientStateStore(redisClient) : null,
             { recordHandoffTiming: recordSessionCommitTiming }
           )
+        : null,
+      tenantEntitlementAdminStore: postgresPool
+        ? createPostgresTenantEntitlementAdminStore(postgresPool)
         : null
     },
     async close() {

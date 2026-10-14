@@ -939,6 +939,53 @@ test('assessment phase is confirmed and keeps the draft editable after field val
   expect(assessmentAttempts).toBe(2)
 })
 
+test('cancels a prepared visit only after learner confirmation', async ({ page }) => {
+  const sessionId = 'c'.repeat(43)
+  const sessionResponse = {
+    sessionId,
+    status: 'initializing',
+    createdAt: '2026-10-01T00:00:00.000Z',
+    updatedAt: '2026-10-01T00:00:00.000Z',
+    versions: { promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna', schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3' }
+  }
+  let cancellationRequests = 0
+  await page.route('**/api/account/tenants', (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ memberships: [{ tenantId: 'tenant-test', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }] })
+  }))
+  await page.route('**/api/sessions', (route) => route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify(sessionResponse) }))
+  await page.route(`**/api/sessions/${sessionId}/setup`, (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({
+      sessionId, status: 'ready', createdAt: '2026-10-01T00:01:00.000Z',
+      patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS },
+      versions: sessionResponse.versions, readiness: { profile: true, redis: true, conversation: true }
+    })
+  }))
+  await page.route(`**/api/sessions/${sessionId}/cancel`, async (route) => {
+    cancellationRequests += 1
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessionId, status: 'cancelled' }) })
+  })
+  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax' }])
+
+  await page.goto('/encounter')
+  const preflight = page.getByRole('dialog', { name: 'Before you begin' })
+  await preflight.getByRole('radio', { name: /Transcript/ }).check()
+  await preflight.getByRole('checkbox', { name: /use fictional details only/i }).check()
+  await preflight.getByRole('button', { name: 'Continue with transcript' }).click()
+
+  await page.getByRole('button', { name: 'Cancel visit' }).click()
+  const confirmation = page.getByRole('dialog', { name: 'Cancel this visit?' })
+  await expect(confirmation).toContainText('will be marked cancelled and cannot be continued')
+  await confirmation.getByRole('button', { name: 'Keep visit' }).click()
+  await expect(confirmation).toBeHidden()
+  expect(cancellationRequests).toBe(0)
+
+  await page.getByRole('button', { name: 'Cancel visit' }).click()
+  await page.getByRole('dialog', { name: 'Cancel this visit?' }).getByRole('button', { name: 'Cancel visit' }).click()
+  await expect(page).toHaveURL('/')
+  await expect(page.getByRole('heading', { name: 'Your practice space' })).toBeVisible()
+  expect(cancellationRequests).toBe(1)
+})
+
 test('restores and autosaves an unsubmitted assessment draft through the owner session', async ({ page }) => {
   const sessionId = 'd'.repeat(43)
   const draftFields = {

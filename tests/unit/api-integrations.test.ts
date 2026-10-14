@@ -8,6 +8,7 @@ import type { AuthenticatedPrincipal } from '../../services/api/src/auth.ts'
 import type { GeneratedPatientScenario, PatientScenarioVersionPins } from '../../services/api/src/patient-profile.ts'
 import type { ProviderUsageSample } from '../../services/api/src/session-contracts.ts'
 import type { PatientScenarioSetupResult, SessionRecord, SessionStore } from '../../services/api/src/session-store.ts'
+import type { TenantEntitlementAdminStore, TenantEntitlementPolicy } from '../../services/api/src/tenant-entitlements.ts'
 import { createRedisRequestRateLimitStore, hashRateLimitKey } from '../../services/api/src/request-rate-limit.ts'
 import {
   TEST_LEARNER_CHART_VITAL_SIGNS,
@@ -68,6 +69,7 @@ function createSessionStore(overrides: Partial<SessionStore> = {}): SessionStore
     submitPatientTurn: vi.fn().mockResolvedValue('not_found'),
     beginAssessment: vi.fn().mockResolvedValue('not_ready'),
     submitAssessment: vi.fn().mockResolvedValue('not_ready'),
+    cancelSession: vi.fn().mockResolvedValue('not_ready'),
     getOwnedSession: vi.fn().mockImplementation(async (principal: AuthenticatedPrincipal, id: string) =>
       principal.tenantId === 'tenant-a' && principal.subjectId === 'learner-1' && id === sessionId
         ? record
@@ -128,6 +130,75 @@ async function withApi(
 afterEach(() => vi.restoreAllMocks())
 
 describe('GPTMD API integrations', () => {
+  it('limits entitlement controls to customer admins and persists only validated tenant policy', async () => {
+    const policy: TenantEntitlementPolicy = {
+      sessionsEnabled: false,
+      responsesEnabled: false,
+      monthlySessionQuota: null,
+      monthlySessionQuotaPerUser: null,
+      monthlyResponseQuota: null,
+      monthlyResponseQuotaPerUser: null,
+      responseQuotaPerSession: null,
+      maxActiveSessions: null,
+      audioTranscriptionEnabled: false,
+      audioTranscriptionPrivacyApproved: false,
+      monthlyAudioTranscriptionSessionQuota: null
+    }
+    const adminStore: TenantEntitlementAdminStore = {
+      getPolicy: vi.fn().mockResolvedValue(policy),
+      updatePolicy: vi.fn().mockImplementation(async (_tenantId, _changedBy, next) => next)
+    }
+    const sessionStore = createSessionStore({
+      getActiveMemberships: vi.fn().mockImplementation(async (subjectId) => [{
+        tenantId: 'tenant-a',
+        role: subjectId === 'admin-1' ? 'customer_admin' : 'learner',
+        sessionsEnabled: false,
+        responsesEnabled: false,
+        audioTranscriptionAvailable: false
+      }])
+    })
+    await withApi(createDependencies({ sessionStore, tenantEntitlementAdminStore: adminStore }), async (baseUrl) => {
+      const admin = makeToken({ sub: 'admin-1' })
+      const read = await fetch(`${baseUrl}/api/admin/entitlements`, {
+        headers: { authorization: `Bearer ${admin}` }
+      })
+      expect(read.status).toBe(200)
+      expect(await read.json()).toEqual({ policy })
+
+      const updatedPolicy = { ...policy, sessionsEnabled: true, responsesEnabled: true, monthlySessionQuota: 20 }
+      const update = await fetch(`${baseUrl}/api/admin/entitlements`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify(updatedPolicy)
+      })
+      expect(update.status).toBe(200)
+      expect(await update.json()).toEqual({ policy: updatedPolicy })
+      expect(adminStore.updatePolicy).toHaveBeenCalledWith('tenant-a', 'admin-1', updatedPolicy)
+
+      const learner = makeToken({ sub: 'learner-1' })
+      const denied = await fetch(`${baseUrl}/api/admin/entitlements`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${learner}`, 'content-type': 'application/json' },
+        body: JSON.stringify(updatedPolicy)
+      })
+      expect(denied.status).toBe(403)
+      expect(adminStore.updatePolicy).toHaveBeenCalledTimes(1)
+
+      const wrongTenant = await fetch(`${baseUrl}/api/admin/entitlements`, {
+        headers: { authorization: `Bearer ${admin}`, 'x-gptmd-tenant-id': 'tenant-b' }
+      })
+      expect(wrongTenant.status).toBe(403)
+
+      const invalid = await fetch(`${baseUrl}/api/admin/entitlements`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ ...updatedPolicy, monthlySessionQuota: -1 })
+      })
+      expect(invalid.status).toBe(400)
+      expect(adminStore.updatePolicy).toHaveBeenCalledTimes(1)
+    })
+  })
+
   it('uses the current Realtime transcription language configuration', () => {
     expect(realtimeTranscriptionSessionConfig()).toEqual({
       type: 'transcription',
@@ -1159,6 +1230,25 @@ describe('GPTMD API integrations', () => {
       expect(submitAssessment).toHaveBeenCalledWith(
         { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' }, sessionId,
         'assessment-1', { summary: 'Pelvic pain', differential: 'Possible cyst', rationale: 'Acute onset', plan: 'Follow up' },
+        expect.any(Function)
+      )
+    })
+  })
+
+  it('cancels a visit through the authenticated owner-scoped session boundary', async () => {
+    const sessionId = randomBytes(32).toString('base64url')
+    const cancelSession = vi.fn().mockResolvedValue({ sessionId, status: 'cancelled' as const })
+    const sessionStore = createSessionStore({ cancelSession })
+
+    await withApi(createDependencies({ sessionStore }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/cancel`, {
+        method: 'POST', headers: authHeaders()
+      })
+      expect(response.status).toBe(200)
+      expect(await response.json()).toEqual({ sessionId, status: 'cancelled' })
+      expect(cancelSession).toHaveBeenCalledWith(
+        { subjectId: 'learner-1', tenantId: 'tenant-a', role: 'learner' },
+        sessionId,
         expect.any(Function)
       )
     })

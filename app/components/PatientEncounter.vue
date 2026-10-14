@@ -103,6 +103,23 @@
       </v-card>
     </v-dialog>
 
+    <v-dialog v-model="cancelVisitConfirmationOpen" max-width="36rem" aria-labelledby="cancel-visit-title">
+      <v-card rounded="xl">
+        <v-card-text>
+          <p class="eyebrow">End encounter</p>
+          <h2 id="cancel-visit-title">Cancel this visit?</h2>
+          <p>The visit will be marked cancelled and cannot be continued. Any unsent assessment draft will be discarded.</p>
+          <v-alert v-if="cancelVisitError" class="api-error" type="warning" variant="tonal" role="alert">
+            {{ cancelVisitError }}
+          </v-alert>
+          <div class="assessment-actions">
+            <v-btn variant="text" :disabled="pending" @click="cancelVisitConfirmationOpen = false">Keep visit</v-btn>
+            <v-btn color="error" :loading="pending" :disabled="pending" @click="cancelVisit">Cancel visit</v-btn>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <div class="encounter-grid">
       <v-card class="conversation-card" rounded="xl" variant="flat">
         <div class="patient-tabs" role="tablist" aria-label="Encounter workspace">
@@ -289,6 +306,15 @@
           </ol>
           <p v-if="profile" class="privacy-note">The diagnosis and educator answer key stay hidden during the interview.</p>
 
+          <v-btn
+            v-if="profile && phase !== 'debrief'"
+            class="cancel-visit-button"
+            variant="text"
+            color="error"
+            :disabled="pending"
+            @click="openCancelVisitConfirmation"
+          >Cancel visit</v-btn>
+
           <v-btn v-if="!profile" color="primary" :loading="pending" :disabled="status !== 'error'" block @click="retryReadiness">
             {{ status === 'error' ? 'Retry patient setup' : 'Preparing patient' }}
           </v-btn>
@@ -364,6 +390,8 @@ const checkingMicrophone = ref(false)
 const preflightError = ref('')
 const phase = ref<'history' | 'assessment' | 'debrief'>('history')
 const assessmentConfirmationOpen = ref(false)
+const cancelVisitConfirmationOpen = ref(false)
+const cancelVisitError = ref('')
 const assessmentId = ref<string | null>(null)
 const assessmentFields = ref<AssessmentFields>({ summary: '', differential: '', rationale: '', plan: '' })
 const assessmentDraftRevision = ref(0)
@@ -538,6 +566,30 @@ async function checkMicrophoneAccess(): Promise<void> {
 function openAssessmentConfirmation(): void {
   assessmentConfirmationOpen.value = true
   if (voiceConversationActive.value) stopRecognition()
+}
+
+function openCancelVisitConfirmation(): void {
+  cancelVisitError.value = ''
+  cancelVisitConfirmationOpen.value = true
+}
+
+async function cancelVisit(): Promise<void> {
+  if (!sessionId.value || pending.value) return
+  cancelVisitError.value = ''
+  stopVoiceConversation(false)
+  status.value = 'working'
+  try {
+    await flushPendingLocalUtterances()
+    if (pendingLocalUtterances.value.length > 0) {
+      throw new Error('Save the pending transcript items before cancelling this visit.')
+    }
+    await flushAssessmentDraft()
+    await api.cancelSession(sessionId.value)
+    await navigateTo('/')
+  } catch (error) {
+    status.value = 'active'
+    cancelVisitError.value = readableError(error)
+  }
 }
 
 function cancelAssessmentConfirmation(): void {

@@ -7,6 +7,7 @@ import {
   AudioTranscriptionCallSchema,
   AssessmentSubmittedResponseSchema,
   BeginAssessmentResponseSchema,
+  CancelSessionResponseSchema,
   SetupResponseSchema,
   TurnResponseSchema,
   type CreateSessionResult,
@@ -180,6 +181,17 @@ export function usePatientApi() {
     return parsed.data
   }
 
+  async function cancelSession(sessionId: string): Promise<void> {
+    const result = await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/cancel`,
+      { method: 'POST', headers: await auth.accessHeaders() }
+    )
+    const parsed = CancelSessionResponseSchema.safeParse(result)
+    if (!parsed.success || parsed.data.sessionId !== sessionId) {
+      throw new Error('The encounter service returned an invalid cancellation response.')
+    }
+  }
+
   async function saveAssessmentDraft(
     sessionId: string,
     revision: number,
@@ -208,6 +220,7 @@ export function usePatientApi() {
     createAudioTranscriptionCall,
     beginAssessment,
     saveAssessmentDraft,
-    submitAssessment
+    submitAssessment,
+    cancelSession
   }
 }

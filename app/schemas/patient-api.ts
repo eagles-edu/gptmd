@@ -143,6 +143,11 @@ export const AssessmentSubmittedResponseSchema = z.object({
   submittedAt: z.iso.datetime({ offset: true })
 }).strict()
 
+export const CancelSessionResponseSchema = z.object({
+  sessionId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
+  status: z.literal('cancelled')
+}).strict()
+
 export type CreateSessionResult = z.infer<typeof CreateSessionResponseSchema>
 export type OwnedSessionResult = z.infer<typeof OwnedSessionResponseSchema>
 export type PatientProfile = z.infer<typeof PatientProfileSchema>

@@ -1018,6 +1018,67 @@ describe('serialized assessment mutations', () => {
   })
 })
 
+describe('serialized session cancellation', () => {
+  const current = {
+    sessionId, patientProfileId, openedAt: createdAt.toISOString(),
+    profile: generated.profile,
+    setupProjection: derivePatientSetup(generated.profile),
+    conversationId: generated.conversationId, profileDigest: scenarioFingerprint, schemaVersion: 8,
+    state: {
+      sessionId, scenarioId: patientProfileId, status: 'active', phase: 'assessment',
+      interactionMode: 'transcript', openedAt: createdAt.toISOString(),
+      updatedAt: createdAt.toISOString(), currentTurnSequence: 2, terminalEventId: null
+    },
+    acceptedTurns: [], assessment: null, terminalEvent: null
+  } as unknown as LivePatientState
+
+  it('commits one owner-scoped cancellation under the session lock and removes its draft', async () => {
+    const stateStore = {
+      read: vi.fn(async () => current),
+      acquireTurnLock: vi.fn(async () => true),
+      releaseTurnLock: vi.fn(),
+      recordTerminal: vi.fn(async () => 'accepted' as const)
+    } as unknown as PatientStateStore
+    const pool = { query: queryResultWithIdentity([{ status: 'active' }]) } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+
+    await expect(store.cancelSession(principal, sessionId)).resolves.toEqual({ sessionId, status: 'cancelled' })
+    const terminal = (stateStore.recordTerminal as ReturnType<typeof vi.fn>).mock.calls[0]?.[0]
+    expect(terminal).toMatchObject({
+      sessionId, outcome: 'cancelled', reason: null, finalTurnSequence: 2
+    })
+    expect(terminal.occurredAt).toMatch(/^\d{4}-\d\d-\d\dT/)
+    expect(pool.query).toHaveBeenCalledWith(
+      expect.stringMatching(/DELETE FROM app_assessment_drafts/),
+      [sessionId, principal.tenantId, principal.subjectId]
+    )
+    expect(stateStore.releaseTurnLock).toHaveBeenCalledOnce()
+  })
+
+  it('does not cancel while another session mutation holds the lock', async () => {
+    const stateStore = {
+      read: vi.fn(async () => current),
+      acquireTurnLock: vi.fn(async () => false),
+      releaseTurnLock: vi.fn(),
+      recordTerminal: vi.fn()
+    } as unknown as PatientStateStore
+    const pool = { query: queryResultWithIdentity([{ status: 'active' }]) } as unknown as Pool
+    const store = createPostgresSessionStore(pool, stateStore)
+
+    await expect(store.cancelSession(principal, sessionId)).resolves.toBe('turn_in_progress')
+    expect(stateStore.recordTerminal).not.toHaveBeenCalled()
+    expect(stateStore.releaseTurnLock).not.toHaveBeenCalled()
+  })
+
+  it('returns the already-cancelled outcome idempotently without requiring Redis', async () => {
+    const pool = { query: vi.fn().mockResolvedValue({ rows: [{ status: 'cancelled' }], rowCount: 1 }) } as unknown as Pool
+    const store = createPostgresSessionStore(pool)
+
+    await expect(store.cancelSession(principal, sessionId)).resolves.toEqual({ sessionId, status: 'cancelled' })
+    expect(pool.query).toHaveBeenCalledOnce()
+  })
+})
+
 describe('current owned encounter recovery', () => {
   it('returns Redis live status and transcript ahead of the PostgreSQL event worker', async () => {
     const acceptedAt = new Date('2026-10-01T00:05:00.000Z').toISOString()

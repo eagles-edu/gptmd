@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process'
-import { access, mkdir, readFile, readlink, readdir, rename, symlink } from 'node:fs/promises'
+import { access, chmod, lstat, mkdir, readFile, readlink, readdir, rename, symlink } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { promisify } from 'node:util'
@@ -37,6 +37,17 @@ async function assertNoSecrets(directory, hits = []) {
     }
   }
   return hits
+}
+
+async function secureReleaseTree(path) {
+  const info = await lstat(path)
+  if (info.uid !== process.getuid() || info.gid !== process.getgid()) {
+    throw new Error(`Release path must be owned by ${process.getuid()}:${process.getgid()}: ${path}`)
+  }
+  if (info.isDirectory()) {
+    for (const entry of await readdir(path)) await secureReleaseTree(join(path, entry))
+  }
+  if (!info.isSymbolicLink()) await chmod(path, info.mode & 0o777 & ~0o022)
 }
 
 async function waitFor(url, label) {
@@ -79,6 +90,7 @@ const secretFiles = await assertNoSecrets(stageRoot)
 if (secretFiles.length) {
   throw new Error(`Refusing release with secret-looking files: ${secretFiles.map((path) => path.slice(stageRoot.length + 1)).join(', ')}`)
 }
+await secureReleaseTree(stageRoot)
 
 const liveEnv = parse(await readFile(liveEnvPath, 'utf8'))
 if (!liveEnv.DATABASE_URL || !liveEnv.REDIS_URL) {

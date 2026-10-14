@@ -126,6 +126,13 @@ export type AssessmentResult =
   | 'turn_in_progress'
   | 'state_unavailable'
   | 'phase_conflict'
+export type CancelSessionResult =
+  | { sessionId: string; status: 'cancelled' }
+  | 'not_found'
+  | 'not_ready'
+  | 'turn_in_progress'
+  | 'state_unavailable'
+  | 'phase_conflict'
 export type AssessmentDraftRecord = {
   revision: number
   fields: AssessmentDraftFields
@@ -203,6 +210,11 @@ export interface SessionStore {
     fields: AssessmentFields,
     recordCommitTiming?: SessionCommitTimingRecorder
   ): Promise<AssessmentResult>
+  cancelSession(
+    principal: AuthenticatedPrincipal,
+    sessionId: string,
+    recordCommitTiming?: SessionCommitTimingRecorder
+  ): Promise<CancelSessionResult>
   getOwnedSession(
     principal: AuthenticatedPrincipal,
     sessionId: string
@@ -352,7 +364,7 @@ async function releaseSessionMutationLock(
   stateStore: PatientStateStore,
   sessionId: string,
   lockToken: string,
-  operation: 'assessment_phase' | 'assessment_submission' | 'local_utterance'
+  operation: 'assessment_phase' | 'assessment_submission' | 'local_utterance' | 'session_cancellation'
 ): Promise<void> {
   try {
     await stateStore.releaseTurnLock(sessionId, lockToken)
@@ -1313,6 +1325,54 @@ export function createPostgresSessionStore(
         return { assessmentId, status: 'unscored', submittedAt: submission.submittedAt }
       } finally {
         await releaseSessionMutationLock(patientStateStore, sessionId, lockToken, 'assessment_submission')
+      }
+    },
+
+    async cancelSession(principal, sessionId, recordCommitTiming) {
+      const owner = await pool.query<{ status: SessionStatus }>(
+        `SELECT s.status FROM app_sessions s
+         JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+         JOIN tenant_memberships m ON m.tenant_id = s.tenant_id AND m.subject_id = s.subject_id AND m.status = 'active'
+         WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      const session = owner.rows[0]
+      if (!session) return 'not_found'
+      if (session.status === 'cancelled') return { sessionId, status: 'cancelled' }
+      if (session.status === 'completed') return 'phase_conflict'
+      if (!['ready', 'active'].includes(session.status)) return 'not_ready'
+      if (!patientStateStore) return 'state_unavailable'
+
+      await this.ensureLiveState?.(principal, sessionId)
+      const lockToken = randomUUID()
+      if (!await patientStateStore.acquireTurnLock(sessionId, lockToken)) return 'turn_in_progress'
+      try {
+        const current = await patientStateStore.read(sessionId)
+        if (!current) return 'state_unavailable'
+        if (current.state.status === 'cancelled') return { sessionId, status: 'cancelled' }
+        if (current.state.status === 'completed') return 'phase_conflict'
+        if (!['ready', 'active'].includes(current.state.status)) return 'not_ready'
+
+        const terminal: TerminalEvent = {
+          eventId: randomUUID(),
+          sessionId,
+          outcome: 'cancelled',
+          occurredAt: new Date(Math.max(Date.now(), Date.parse(current.state.updatedAt))).toISOString(),
+          reason: null,
+          finalTurnSequence: current.state.currentTurnSequence
+        }
+        const result = await patientStateStore.recordTerminal(terminal, recordCommitTiming)
+        if (result === 'missing_state') return 'state_unavailable'
+        if (result === 'conflict') return 'phase_conflict'
+
+        await pool.query(
+          `DELETE FROM app_assessment_drafts
+           WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+          [sessionId, principal.tenantId, principal.subjectId]
+        )
+        return { sessionId, status: 'cancelled' }
+      } finally {
+        await releaseSessionMutationLock(patientStateStore, sessionId, lockToken, 'session_cancellation')
       }
     },
 

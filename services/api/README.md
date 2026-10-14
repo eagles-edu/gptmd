@@ -82,6 +82,8 @@ psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/020_session_i
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/021_assessment_drafts.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/022_session_local_utterances.sql
 psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/023_realtime_transcription_usage.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/024_session_archive_jobs.sql
+psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f services/api/migrations/025_tenant_entitlement_audit.sql
 ```
 
 Provision a tenant row in `tenants`, its active `(tenant_id, subject_id)` in
@@ -95,6 +97,44 @@ when the API accepts work, including a provider request that later fails.
 
 See [`docs/SELF-HOSTED-SUPABASE.md`](../../docs/SELF-HOSTED-SUPABASE.md) for
 the Docker and Google OAuth setup.
+
+### Tenant entitlement controls
+
+`customer_admin` can manage only the selected tenant's policy through
+`GET`/`PUT /api/admin/entitlements`. The API derives that tenant from the
+verified JWT subject's active membership and `X-GPTMD-Tenant-ID`; a client
+cannot submit a tenant ID in the policy body. Learners and instructors cannot
+read or change controls. Encounter routes still require the learner role and
+recheck the database policy when reserving work.
+
+The policy covers visit and response enablement, workspace and per-learner
+monthly quotas, per-visit response limits, concurrent visits, voice quota,
+voice enablement, and the recorded voice privacy approval. Blank limits are
+`NULL` (unlimited); zero denies use. New/missing policy rows default to all
+capabilities off. Each successful save and its append-only before/after audit
+row commit in the same PostgreSQL transaction.
+
+To create the isolated control workspace for `scsstx@gmail.com`, first have the
+user complete Google sign-in so Supabase Auth creates the identity. Supabase
+Auth and GPTMD use separate databases. Then run `npm run provision:scsstx-test`.
+The provisioner resolves exactly one active UUID from the Supabase Auth
+database, verifies the target is `gptmd_live` with migrations 024/025 applied,
+and runs `ops/sql/provision-scsstx-entitlement-test.sql` as `gptmd_live_app`.
+It refuses a missing/ambiguous identity or an existing test tenant, then
+verifies the active tenant-scoped `customer_admin` membership, conservative
+quotas, and all capabilities disabled. It does not create an Auth identity,
+change global roles, modify Auth metadata, or touch another tenant. Do not
+hard-code the email into runtime authorization.
+
+After the control workspace exists, `npm run provision:scsstx-learner` adds a
+separate learner workspace for the same authenticated subject. It refuses a
+missing or drifted control workspace, an existing learner workspace, a wrong
+database/role, or missing migrations. The learner workspace allows text visit
+setup and Responses with limits of 5 visits/month, 5 visits per learner/month,
+50 Responses/month, 50 per learner/month, 12 per visit, and one active visit.
+Voice remains disabled with zero audio grants. Its initial before/after policy
+is written to the append-only entitlement audit. The account page labels each
+workspace by role so the learner and control contexts are distinguishable.
 
 Session IDs contain 256 random bits encoded as base64url. Session lookup binds
 the ID, tenant, and authenticated subject in one database query; an absent or

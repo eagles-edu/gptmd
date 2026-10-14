@@ -361,6 +361,7 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
         existing.event_type === event.eventType && existing.payload_matches &&
         existing.occurred_at.getTime() === Date.parse(event.occurredAt)
       if (!matches) throw new Error('A durable event ID was reused with different content')
+      if (event.eventType === 'terminal') await ensureArchiveJob(client, event)
       if (event.eventType === 'accepted_turn') {
         const usageRows = await client.query<{
           provider_response_id: string
@@ -481,6 +482,25 @@ async function persistTerminalOutcome(
      ) VALUES ($1, $2, $3, $4, NULL, $5, $6)`,
     [event.sessionId, terminal.eventId, terminal.outcome, terminal.finalTurnSequence, terminal.reason, terminal.occurredAt]
   )
+  await ensureArchiveJob(client, event)
+}
+
+async function ensureArchiveJob(
+  client: PoolClient,
+  event: Extract<SessionHistoryEvent, { eventType: 'terminal' }>
+): Promise<void> {
+  await client.query(
+    `INSERT INTO session_archive_jobs (session_id, terminal_event_id)
+     VALUES ($1, $2) ON CONFLICT (session_id) DO NOTHING`,
+    [event.sessionId, event.payload.eventId]
+  )
+  const existing = await client.query<{ terminal_event_id: string }>(
+    `SELECT terminal_event_id FROM session_archive_jobs WHERE session_id = $1`,
+    [event.sessionId]
+  )
+  if (existing.rows[0]?.terminal_event_id !== event.payload.eventId) {
+    throw new Error('A session archive job is already bound to a different terminal event')
+  }
 }
 
 async function rollback(client: PoolClient): Promise<void> {

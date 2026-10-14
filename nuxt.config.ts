@@ -30,7 +30,7 @@ export default defineNuxtConfig({
       paymentPortalUrl: process.env.NUXT_PUBLIC_PAYMENT_PORTAL_URL ?? '',
       paymentCheckout6MonthUrl: process.env.NUXT_PUBLIC_PAYMENT_CHECKOUT_6_MONTH_URL ?? '',
       paymentCheckout12MonthUrl: process.env.NUXT_PUBLIC_PAYMENT_CHECKOUT_12_MONTH_URL ?? '',
-      supportEmail: process.env.NUXT_PUBLIC_SUPPORT_EMAIL ?? '',
+      supportEmail: process.env.NUXT_PUBLIC_SUPPORT_EMAIL || 'admin@eagles.edu.vn',
       merchantLegalName: process.env.NUXT_PUBLIC_MERCHANT_LEGAL_NAME ?? '',
       merchantTaxId: process.env.NUXT_PUBLIC_MERCHANT_TAX_ID ?? '',
       merchantTaxIdIssued: process.env.NUXT_PUBLIC_MERCHANT_TAX_ID_ISSUED ?? '',

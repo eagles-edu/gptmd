@@ -2,16 +2,16 @@ import { expect, test } from '@playwright/test'
 import { Buffer } from 'node:buffer'
 import { TEST_LEARNER_CHART_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
 
-function makeAuthCookie(): string {
+function makeAuthCookie(subjectId = 'a18f0de1-7b60-49b6-8eaf-19ac1e6b1c0d', email = 'learner@example.test'): string {
   const encode = (value: object): string => Buffer.from(JSON.stringify(value)).toString('base64url')
   const now = Math.floor(Date.now() / 1000)
   const accessToken = [
     encode({ alg: 'HS256', typ: 'JWT' }),
     encode({
-      sub: 'a18f0de1-7b60-49b6-8eaf-19ac1e6b1c0d',
+      sub: subjectId,
       aud: 'authenticated',
       role: 'authenticated',
-      email: 'learner@example.test',
+      email,
       iat: now,
       exp: now + 3600
     }),
@@ -131,6 +131,18 @@ test('signed-in account workspace context carries through the home into Begin Vi
       { tenantId: 'tenant-four', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: false }
     ] })
   }))
+  await page.route('**/api/admin/entitlements', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ policy: {
+      sessionsEnabled: false, responsesEnabled: false,
+      monthlySessionQuota: null, monthlySessionQuotaPerUser: null,
+      monthlyResponseQuota: null, monthlyResponseQuotaPerUser: null,
+      responseQuotaPerSession: null, maxActiveSessions: null,
+      audioTranscriptionEnabled: false, audioTranscriptionPrivacyApproved: false,
+      monthlyAudioTranscriptionSessionQuota: null
+    } })
+  }))
   await page.route('**/api/encounters/current', async (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -189,9 +201,12 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await expect(page.getByText('Signed in as learner@example.test')).toBeVisible()
   const accountWorkspace = page.getByRole('combobox', { name: 'GPTpatient workspace' })
   await expect(accountWorkspace).toBeVisible()
-  await expect(accountWorkspace.locator('option')).toHaveText(['Workspace 1', 'Workspace 2', 'Workspace 3', 'Workspace 4'])
+  await expect(accountWorkspace.locator('option')).toHaveText([
+    'Workspace 1 (Learner)', 'Workspace 2 (Customer administrator)',
+    'Workspace 3 (Learner)', 'Workspace 4 (Learner)'
+  ])
   await accountWorkspace.selectOption('tenant-two')
-  await expect(page.getByText('Your role in this workspace: Customer administrator. Role-specific tools are not available yet.')).toBeVisible()
+  await expect(page.getByText('Your role in this workspace: Customer administrator. Visit setup is available to learners only.')).toBeVisible()
   await accountWorkspace.selectOption('tenant-three')
   await expect(page.getByText('Visit setup is not enabled for this workspace. Contact your workspace administrator.')).toBeVisible()
   await accountWorkspace.selectOption('tenant-two')
@@ -245,4 +260,81 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await expect(transcriptOnlyPreflight.getByRole('button', { name: 'Continue with transcript' })).toBeEnabled()
   expect(pageErrors).toEqual([])
   expect(consoleErrors).toEqual([])
+})
+
+test('customer administrator can change workspace entitlements with bounded controls', async ({ page }) => {
+  const controlTenantId = 'gptmd-entitlement-test-scsstx'
+  const learnerTenantId = 'gptmd-learner-test-scsstx'
+  await page.route('**/auth/v1/user', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      id: 'test-admin-subject', aud: 'authenticated', role: 'authenticated',
+      email: 'scsstx@gmail.com', app_metadata: { provider: 'google', providers: ['google'] },
+      user_metadata: { full_name: 'Test Client' }, created_at: '2026-01-01T00:00:00.000Z'
+    })
+  }))
+  await page.route('**/api/account/tenants', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ memberships: [
+      {
+        tenantId: controlTenantId, role: 'customer_admin',
+        sessionsEnabled: false, responsesEnabled: false, audioTranscriptionAvailable: false
+      },
+      {
+        tenantId: learnerTenantId, role: 'learner',
+        sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: false
+      }
+    ] })
+  }))
+  let currentPolicy = {
+    sessionsEnabled: false,
+    responsesEnabled: false,
+    monthlySessionQuota: 5,
+    monthlySessionQuotaPerUser: 5,
+    monthlyResponseQuota: 50,
+    monthlyResponseQuotaPerUser: 50,
+    responseQuotaPerSession: 12,
+    maxActiveSessions: 1,
+    audioTranscriptionEnabled: false,
+    audioTranscriptionPrivacyApproved: false,
+    monthlyAudioTranscriptionSessionQuota: 0
+  }
+  await page.route('**/api/admin/entitlements', async (route) => {
+    if (route.request().method() === 'PUT') {
+      currentPolicy = route.request().postDataJSON() as typeof currentPolicy
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ policy: currentPolicy }) })
+    } else {
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ policy: currentPolicy }) })
+    }
+  })
+  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie('test-admin-subject', 'scsstx@gmail.com'), url: 'https://localhost:3001', sameSite: 'Lax' }])
+
+  await page.goto('/')
+  await expect(page.getByRole('heading', { name: 'scsstx@gmail.com' })).toBeVisible()
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Account' }).click()
+
+  const accountWorkspace = page.getByRole('combobox', { name: 'GPTpatient workspace' })
+  await expect(accountWorkspace.locator('option')).toHaveText([
+    'Workspace 1 (Customer administrator)', 'Workspace 2 (Learner)'
+  ])
+  await accountWorkspace.selectOption(controlTenantId)
+  await expect(page.getByRole('heading', { name: 'Entitlements and limits' })).toBeVisible()
+  const allowVisits = page.getByLabel('Allow visit setup')
+  await allowVisits.check()
+  await page.getByRole('button', { name: 'Save changes' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Entitlement policy saved and applied.' })).toBeVisible()
+  await expect(allowVisits).toBeChecked()
+  await expect(page.getByLabel('Privacy approval recorded for voice')).not.toBeChecked()
+
+  await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Home' }).click()
+  const practiceWorkspace = page.getByLabel('Practice workspace')
+  await expect(practiceWorkspace).toHaveValue(controlTenantId)
+  await expect(page.getByRole('button', { name: 'Learner access is required' })).toBeDisabled()
+  await expect(page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' })).toHaveCount(0)
+
+  await practiceWorkspace.selectOption(learnerTenantId)
+  await expect(page.getByText('Visit setup is included in this workspace. Remaining quota is checked when you begin.')).toBeVisible()
+  await expect(page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' })).toBeEnabled()
 })

@@ -298,3 +298,217 @@ source.
 
 <!-- curatormd:record_id=14ac9226e487f64d679dfff15f464e93;content_sha256=05f0ddb79f1aaeaa4dc658ebf120ef79253684d075c763bb1c592324d7cd521c -->
 <!-- curatormd:fingerprint=5668612a4b101d35d4cd1c50a6966bb1bf5eadd7f36af502b32546d7957cd82f -->
+
+## Treat unexpected public 403/5xx responses as release blockers
+
+An unexpected 403 or 5xx on a user-facing route, login handoff, or required
+asset is a live-site incident until the intended user path is restored. Do not
+stop after identifying a likely layer or report an origin-versus-edge
+attribution as a fix.
+
+1. Capture the URL, time, status, response body, response/request IDs, and
+   client class without exposing credentials or personal data.
+2. Compare browser and command-line probes, then bypass the edge to test the
+   origin directly. Correlate origin access/error logs with the response to
+   identify whether Nginx, the upstream app, or the edge generated it.
+3. Repair the confirmed generating rule or upstream fault. Preserve unrelated
+   security controls; never disable bot/WAF protections or allowlist shared
+   test egress without trace-level evidence and an approved narrow change.
+4. Validate configuration before reload, reload only after validation, then
+   retest the exact failing route through both origin and public ingress with
+   the affected client class. Check required assets and a real browser render.
+5. Keep the incident open if any affected user path still returns an
+   unexplained 403/5xx. Record the live change, backup/recovery path, exact
+   verification, and any separate edge classification requiring the provider.
+
+For origin changes under `/etc/nginx`, preserve a timestamped backup, run
+`sudo nginx -t` before reload, and verify `systemctl is-active nginx` plus the
+public route afterward. A browser-style User-Agent on curl is only an HTTP
+probe; it is not a substitute for browser rendering or completed OAuth.
+
+## Keep live releases owned by the service account
+
+Run `npm run deploy:live` as `eaglesvn`, matching the `User=` and `Group=` on
+the web, API, and worker units. Before moving staging into releases, the deploy
+script verifies every path has the invoking UID/GID and removes group/other
+write bits while preserving executable bits. If ownership differs, stop and
+diagnose the staging source; do not paper over it with recursive `chown`.
+After deployment, verify the `current` symlink target, service owners, release
+tree owners/modes, active services, loopback readiness, and affected public
+routes. A symlink's displayed 777 mode is normal and does not represent the
+target tree's permissions. Do not change owners or permissions on retained
+rollback releases unless a concrete access failure requires it.
+
+## Keep LiteSpeed read-only to the source checkout
+
+On this host, LiteSpeed runs as `nobody` with supplementary group `eaglesvn`.
+Because the GPTMD checkout is owned by `eaglesvn:eaglesvn`, group-write bits
+would let the web worker modify source files. Keep owner write access, preserve
+group read/traverse and executable bits, and remove only group-write from
+regular files and directories. The development shell uses `umask 0002`, so set
+default ACLs on checkout directories to keep inherited group/mask permissions
+read-only:
+
+```bash
+root=/home/eaglesvn/dockerz/gptmd
+find "$root" -xdev \( -type f -o -type d \) -perm /0020 -exec chmod g-w -- {} +
+find "$root" -xdev -type d -exec setfacl -m d:u::rwx,d:g::r-x,d:m::r-x,d:o::r-x -- {} +
+```
+
+Verify all checkout paths remain owned by `eaglesvn:eaglesvn`, no regular file
+or directory matches `-perm /0022`, and LiteSpeed can read a source file and
+traverse the checkout but cannot write either. Do not remove LiteSpeed's
+supplementary group without checking every served vhost path; read access is
+intentional. The `deploy-live.mjs` release-tree guard separately enforces the
+published release owner and mode policy.
+
+## Identify OneShield edge denials by trace
+
+Do not attribute a 403/5xx to OneShield from its appearance or a site-wide
+analytics count alone. For a request that receives a OneShield trace, preserve
+the trace ID, UTC timestamp, hostname, path, status/body fingerprint, and
+client class. Exclude OAuth codes, state, cookies, authorization headers, and
+other credentials from notes and support requests. Ask iNET/OneShield to
+correlate that exact trace and return the generating layer, policy/rule ID,
+rule category, matched signal, action, and sanitized event details.
+
+Compare the trace with origin Nginx access/error logs at the same time and
+request path. An absent origin request supports an edge denial; a matching
+origin response must be diagnosed at Nginx, ModSecurity, or the upstream app
+instead. For an edge event, distinguish custom/System WAF rules, bot
+classification, rate limiting, and other access controls. Record the exact
+rule and client signal before changing policy; aggregates, empty visible rule
+tables, or a branded block page do not identify the cause. Do not allowlist a
+shared test egress or alter a broad rule unless the trace proves that rule
+caused an intended user's false positive and the change is approved.
+
+The `eaglesvn.club` OneShield zone was explicitly switched off on 2026-10-13,
+which affects every hostname in that parent zone. While it remains off, public
+requests resolve directly to the origin and cannot produce a fresh OneShield
+block trace for this hostname. Do not re-enable the zone just to generate a
+trace. If protection is later restored, first confirm the intended scope and
+capture a new trace from the affected client; otherwise ask iNET whether it
+can provide the historical event details for the saved trace IDs. Keep
+historical OneShield 403/502 traces distinct from origin-generated OAuth 403s.
+
+## Resolve public CSP violations without weakening enforcement
+
+1. Capture the exact failing URL and distinguish `Content-Security-Policy`
+   from `Content-Security-Policy-Report-Only` in that navigation's response.
+   A report-only message is diagnostic; it does not mean the browser blocked
+   the resource.
+2. Compare the effective upstream policy and edge response headers. Check for
+   duplicated headers from the application and reverse proxy, and verify the
+   actual inline-script hashes and external resource origins from served HTML.
+3. Fix only the source mismatch: keep dynamic application CSP hashes aligned
+   with built HTML, allow only required origins or move dependencies local,
+   and keep Nginx as the public response-header emitter when it owns the site
+   vhost. Do not add broad `unsafe-inline` or `https:` sources to silence a
+   report.
+4. Validate the proxy configuration before reload, then run a fresh browser
+   navigation and confirm no CSP console diagnostics, required assets load,
+   and the page still works. Treat unsupported directives in a captured
+   policy as a source/cache discrepancy until they appear in fresh headers.
+
+## Tune CRS false positives on OAuth callbacks
+
+When an OAuth callback receives a ModSecurity 403, inspect the per-vhost error
+log and ModSecurity audit transaction to identify the triggering CRS rule and
+matched argument. Do not infer the source from the final anomaly-scoring rule
+alone. OAuth `scope` values can contain URI-like strings that resemble file
+paths to CRS rule `930120`.
+
+For the GPTMD live host, the versioned exception is
+`ops/modsecurity/gptmd-oauth-callback-exclusions.conf`. It removes only
+`ARGS:scope` from rule `930120`, and only for host `obgyn.eaglesvn.club` and
+path `/auth/v1/callback`; all other arguments and rules remain inspected. Use
+`REQUEST_FILENAME` for the path match because `REQUEST_URI` includes the query
+string. Install the versioned file under `/etc/modsecurity/crs/`, include it
+from the active `REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`, preserve a
+timestamped backup, run `sudo nginx -t`, and reload only after validation.
+Verify a callback-shaped request reaches GoTrue and returns its missing-state
+response instead of a ModSecurity 403, then complete a fresh browser login and
+check the app session. Do not log or share OAuth `code`, `state`, access tokens,
+or refresh tokens. Record account authentication separately from workspace or
+learner-role provisioning.
+
+## Diagnose Google OAuth `org_internal`
+
+If Google returns `403 org_internal` with a message that the app is available
+only within its organization, treat it as a Google Cloud OAuth audience
+restriction. It is distinct from `redirect_uri_mismatch`, an origin 403, a
+Supabase Auth identity, and GPTMD tenant authorization. Google documents that
+this error occurs when a request comes from outside the Cloud project's parent
+organization.
+
+For the named personal Gmail test client, use Google Auth Platform > Audience:
+set **User type** to **External**, keep **Publishing status** at **Testing**,
+and add the exact account under **Test users**. Do not publish the app or add
+extra OAuth scopes merely to resolve `org_internal`. Verify the saved audience
+and allowlist in Cloud Console, retry sign-in, and then confirm exactly one
+active matching row exists in Supabase `auth.users` before provisioning any
+GPTMD tenant. Add the exact test account even though Google documents an
+exception where apps requesting only basic identity scopes (`openid`, `email`,
+`profile`) may be available without the test-user allowlist. Therefore the
+Google test-user list is not the GPTMD authorization boundary; active tenant
+membership and entitlements remain that boundary. An OAuth redirect or consent
+screen alone does not prove account creation. If the organization policy
+prevents an External audience, stop and have its Cloud administrator authorize
+the narrow test configuration rather than weakening GPTMD or origin access
+controls.
+
+## Administer tenant entitlements safely
+
+GPTMD access authorization is based on the verified JWT `sub`, an active
+`tenant_memberships` row, its database role, and the selected tenant's current
+`tenant_entitlements` row. Do not authorize from a client-supplied email,
+`user_metadata`, a submitted tenant ID, or stale capability claims in a JWT.
+Supabase Auth authenticates the user; GPTMD PostgreSQL owns tenant membership,
+role, feature flags, and quotas.
+
+The account API exposes only the signed-in subject's active memberships. The
+tenant control endpoints (`GET` and `PUT /api/admin/entitlements`) are available
+only to an active `customer_admin` of the selected tenant. The selected tenant
+is resolved from that subject's active membership, never from the request body.
+Learners and instructors cannot access controls, and non-learners remain
+blocked from encounter routes. Session and response operations recheck the
+database flags and reserve quotas transactionally.
+
+Policy writes validate the complete flag/limit set, lock the tenant row, then
+commit the entitlement upsert and append-only before/after audit entry in one
+transaction. Keep new or missing policies disabled by default. A `NULL` limit
+means unlimited and zero denies use. Voice requires both the enable flag and
+the explicit privacy approval flag, as well as available monthly quota. Apply
+`services/api/migrations/025_tenant_entitlement_audit.sql` before deploying the
+controls; `/readyz` checks for this schema.
+
+The test account must first complete Google sign-in; this creates its Supabase
+Auth identity. Supabase Auth and `gptmd_live` are separate databases. After the
+first sign-in, run `npm run provision:scsstx-test`. The provisioner resolves
+exactly one active UUID from `auth.users` in the `supabase-db` container,
+verifies `gptmd_live` and migrations 024/025, then runs
+`ops/sql/provision-scsstx-entitlement-test.sql` as `gptmd_live_app`. It refuses
+a missing or ambiguous identity and refuses to overwrite an existing test
+tenant. The seed validates the UUID, creates the isolated
+`gptmd-entitlement-test-scsstx` tenant, grants only a tenant-scoped
+`customer_admin` role, and initializes conservative quotas with all features
+disabled; post-seed checks verify the role, quota values, and every feature
+flag. It does not create or modify a Supabase Auth account. Do not add the email
+to application authorization logic or activate features outside that test
+tenant. After provisioning, refresh Account, confirm the tenant controls
+appear, enable only the feature under test, and verify the API account response
+plus the actual encounter/audio authorization path. Rollback by disabling all
+flags and revoking the test membership in that isolated tenant; preserve audit
+rows.
+
+When the test user must act as a learner, retain that all-off control workspace
+and run `npm run provision:scsstx-learner`. It creates a second isolated
+`gptmd-learner-test-scsstx` membership with the `learner` role, text visits and
+Responses enabled, finite quotas (5 visits and 50 Responses monthly, 12 per
+visit, one active visit), and voice disabled with zero grants. It requires the
+control workspace to remain all-off and refuses to overwrite an existing
+learner workspace. The initial policy is written to the append-only audit. On
+Account, select the workspace labeled `Learner`; its selected role and access
+status should show learner visit access. To revoke test access, disable both
+text flags from the customer-admin workspace controls or revoke only the
+learner membership after inspecting outstanding session data; keep the audit.

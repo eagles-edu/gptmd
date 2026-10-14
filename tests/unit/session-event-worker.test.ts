@@ -21,6 +21,14 @@ const event = {
   eventId: turn.turnId, sessionId, sequence: turn.sequence, eventOrdinal: 0, eventType: 'accepted_turn',
   occurredAt: turn.acceptedAt, providerUsage: [], payload: turn
 } as const
+const terminalEvent = {
+  eventId: 'terminal-1', sessionId, sequence: 1, eventOrdinal: 0, eventType: 'terminal',
+  occurredAt: '2026-10-01T00:02:00.000Z',
+  payload: {
+    eventId: 'terminal-1', sessionId, outcome: 'cancelled',
+    occurredAt: '2026-10-01T00:02:00.000Z', reason: 'Learner ended the visit', finalTurnSequence: 0
+  }
+} as const
 
 function usageSample(
   responseId: string,
@@ -68,7 +76,9 @@ function workerHarness(options: {
     occurred_at: Date
   }>
   existingAudit?: { session_id: string; turn_id_hash: string; event_type: string; attempt_count: number; occurred_at: Date }
+  existingArchiveJob?: { terminal_event_id: string }
   failInsert?: boolean
+  failArchiveJob?: boolean
   failUsageInsert?: boolean
   streamEvent?: unknown
   prior?: { sequence: number; event_ordinal: number }
@@ -79,7 +89,9 @@ function workerHarness(options: {
   }
 } = {}) {
   const order: string[] = []
-  const streamEvent = JSON.stringify(options.streamEvent ?? event)
+  const streamEventValue = options.streamEvent ?? event
+  const streamEventRecord = streamEventValue as Record<string, unknown>
+  const streamEvent = JSON.stringify(streamEventValue)
   const redis = {
     isOpen: true,
     connect: vi.fn(),
@@ -119,8 +131,17 @@ function workerHarness(options: {
     }
     if (sql.includes('SELECT sequence, event_ordinal, event_type, occurred_at')) {
       return options.existing
-        ? { rows: [{ sequence: 1, event_ordinal: 0, event_type: 'accepted_turn', occurred_at: new Date(turn.acceptedAt), payload_matches: true }], rowCount: 1 }
+        ? { rows: [{
+            sequence: Number(streamEventRecord.sequence ?? 1),
+            event_ordinal: Number(streamEventRecord.eventOrdinal ?? 0),
+            event_type: String(streamEventRecord.eventType ?? 'accepted_turn'),
+            occurred_at: new Date(String(streamEventRecord.occurredAt ?? turn.acceptedAt)),
+            payload_matches: true
+          }], rowCount: 1 }
         : { rows: [], rowCount: 0 }
+    }
+    if (sql.includes('SELECT terminal_event_id FROM session_archive_jobs')) {
+      return { rows: options.existingArchiveJob ? [options.existingArchiveJob] : [{ terminal_event_id: 'terminal-1' }], rowCount: 1 }
     }
     if (sql.includes('SELECT sequence, event_ordinal FROM session_events')) {
       return { rows: options.prior ? [options.prior] : [], rowCount: options.prior ? 1 : 0 }
@@ -147,6 +168,15 @@ function workerHarness(options: {
       if (options.failInsert) throw new Error('database unavailable')
       order.push('insert-audit')
       expect(values?.[1]).toBe(sessionId)
+      return { rows: [], rowCount: 1 }
+    }
+    if (sql.includes('INSERT INTO session_outcomes')) {
+      order.push('insert-outcome')
+      return { rows: [], rowCount: 1 }
+    }
+    if (sql.includes('INSERT INTO session_archive_jobs')) {
+      if (options.failArchiveJob) throw new Error('archive queue database unavailable')
+      order.push('insert-archive-job')
       return { rows: [], rowCount: 1 }
     }
     if (sql.includes('UPDATE app_sessions')) return { rows: [], rowCount: 1 }
@@ -207,6 +237,51 @@ describe('PostgreSQL session event worker', () => {
 
     expect(harness.order).toEqual(['begin', 'insert', 'commit', 'ack-delete'])
     expect(harness.client.release).toHaveBeenCalledOnce()
+  })
+
+  it('commits terminal state and one archive job before acknowledging the terminal event', async () => {
+    const harness = workerHarness({ streamEvent: terminalEvent })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.order).toEqual([
+      'begin', 'insert', 'insert-outcome', 'insert-archive-job', 'commit', 'ack-delete'
+    ])
+    expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_archive_jobs'), [
+      sessionId, terminalEvent.eventId
+    ])
+    expect(harness.client.release).toHaveBeenCalledOnce()
+  })
+
+  it('leaves terminal events pending when archive-job persistence fails', async () => {
+    const harness = workerHarness({ streamEvent: terminalEvent, failArchiveJob: true })
+
+    await expect(harness.worker.processOnce()).rejects.toThrow('archive queue database unavailable')
+
+    expect(harness.order).toEqual(['begin', 'insert', 'insert-outcome', 'rollback'])
+    expect(harness.redis.sendCommand.mock.calls.filter(([command]) => command[0] === 'EVAL')).toHaveLength(0)
+  })
+
+  it('repairs a missing archive job when a terminal event is redelivered', async () => {
+    const harness = workerHarness({ streamEvent: terminalEvent, existing: true })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.order).toEqual(['begin', 'insert-archive-job', 'commit', 'ack-delete'])
+    expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_outcomes'), expect.anything())
+  })
+
+  it('keeps a terminal retry pending if its archive job points to a different terminal event', async () => {
+    const harness = workerHarness({
+      streamEvent: terminalEvent,
+      existing: true,
+      existingArchiveJob: { terminal_event_id: 'different-terminal' }
+    })
+
+    await expect(harness.worker.processOnce()).rejects.toThrow('different terminal event')
+
+    expect(harness.order).toEqual(['begin', 'insert-archive-job', 'rollback'])
+    expect(harness.redis.sendCommand.mock.calls.filter(([command]) => command[0] === 'EVAL')).toHaveLength(0)
   })
 
   it('acknowledges a PostgreSQL duplicate after verifying its saved payload', async () => {

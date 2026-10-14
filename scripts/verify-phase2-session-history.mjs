@@ -169,7 +169,8 @@ try {
     '020_session_identity_binding.sql',
     '021_assessment_drafts.sql',
     '022_session_local_utterances.sql',
-    '023_realtime_transcription_usage.sql'
+    '023_realtime_transcription_usage.sql',
+    '024_session_archive_jobs.sql'
   ]) {
     const sql = await readFile(new URL(`../services/api/migrations/${file}`, import.meta.url), 'utf8')
     await testPool.query(sql)
@@ -352,7 +353,10 @@ try {
   })
   const memberships = await membershipsResponse.json()
   if (membershipsResponse.status !== 200 ||
-      JSON.stringify(memberships.memberships) !== JSON.stringify([{ tenantId, role: 'learner' }])) {
+      JSON.stringify(memberships.memberships) !== JSON.stringify([{
+        tenantId, role: 'learner', sessionsEnabled: true, responsesEnabled: true,
+        audioTranscriptionAvailable: false
+      }])) {
     throw new Error(
       `Supabase-style ES256 authentication could not resolve the active learner tenant membership ` +
       `(HTTP ${membershipsResponse.status}; response=${JSON.stringify(memberships)})`
@@ -802,13 +806,46 @@ try {
   }
   if (await worker.processOnce() !== 2) throw new Error('Worker did not persist assessment submission and terminal events')
   const assessmentHistory = await testPool.query(
-    `SELECT event_type, sequence, event_ordinal FROM session_events
+    `SELECT event_id, event_type, sequence, event_ordinal, occurred_at, payload FROM session_events
      WHERE session_id = $1 ORDER BY sequence, event_ordinal`, [sessionId]
   )
   const assessmentOrder = assessmentHistory.rows.slice(-3).map((row) => `${row.event_type}:${row.sequence}.${row.event_ordinal}`)
   if (assessmentOrder.join(',') !== 'phase_changed:1.2,assessment_submitted:1.3,terminal:2.0') {
     throw new Error('Assessment phase, submission, and terminal events were not durably ordered')
   }
+  const terminalRecord = assessmentHistory.rows.find((row) => row.event_type === 'terminal')
+  if (!terminalRecord) throw new Error('Persisted terminal history is missing')
+  const archiveJobs = await testPool.query(
+    `SELECT session_id, terminal_event_id, status, attempt_count
+     FROM session_archive_jobs WHERE session_id = $1`, [sessionId]
+  )
+  if (archiveJobs.rows.length !== 1 || archiveJobs.rows[0]?.session_id !== sessionId ||
+      archiveJobs.rows[0]?.terminal_event_id !== terminalRecord.event_id ||
+      archiveJobs.rows[0]?.status !== 'pending' || Number(archiveJobs.rows[0]?.attempt_count) !== 0) {
+    throw new Error('Terminal event did not atomically create one pending archive job')
+  }
+  const terminalEnvelope = {
+    eventId: terminalRecord.event_id, sessionId,
+    sequence: Number(terminalRecord.sequence), eventOrdinal: Number(terminalRecord.event_ordinal),
+    eventType: 'terminal', occurredAt: new Date(terminalRecord.occurred_at).toISOString(),
+    payload: terminalRecord.payload
+  }
+  const expectedRedisExpiry = Math.floor(Date.parse(terminalEnvelope.occurredAt) / 1000) + 20 * 60
+  const terminalRedisKeys = [
+    `gptmd:session:${sessionId}`, `gptmd:patient:${patientProfileId}`, `gptmd:retries:${sessionId}`
+  ]
+  const committedTerminalExpiries = await Promise.all(terminalRedisKeys.map(async (key) =>
+    Number(await redis.sendCommand(['EXPIRETIME', key]))
+  ))
+  if (committedTerminalExpiries.some((expiresAt) => expiresAt !== expectedRedisExpiry)) {
+    throw new Error('Terminal Redis keys do not expire at the exact terminal time +20 minutes')
+  }
+  await redis.sendCommand(['XADD', streamKey, '*', 'event', JSON.stringify(terminalEnvelope)])
+  if (await worker.processOnce() !== 1) throw new Error('Worker did not acknowledge the duplicate terminal event')
+  const retryArchiveJobs = await testPool.query(
+    `SELECT count(*)::int AS count FROM session_archive_jobs WHERE session_id = $1`, [sessionId]
+  )
+  if (retryArchiveJobs.rows[0]?.count !== 1) throw new Error('Retrying a terminal event duplicated its archive job')
 
   await redis.sendCommand(['DEL', `gptmd:session:${sessionId}`, `gptmd:patient:${patientProfileId}`, `gptmd:retries:${sessionId}`])
   await sessionStore.ensureLiveState?.(principal, sessionId)
@@ -823,6 +860,12 @@ try {
   }
   const redisTtl = Number(await redis.sendCommand(['TTL', `gptmd:session:${sessionId}`]))
   if (redisTtl < 1 || redisTtl > 20 * 60) throw new Error('Recovered terminal Redis state has the wrong expiry')
+  const recoveredTerminalExpiries = await Promise.all(terminalRedisKeys.map(async (key) =>
+    Number(await redis.sendCommand(['EXPIRETIME', key]))
+  ))
+  if (recoveredTerminalExpiries.some((expiresAt) => expiresAt !== expectedRedisExpiry)) {
+    throw new Error('Recovered terminal Redis keys do not share the exact terminal time +20-minute expiry')
+  }
 
   const { key, cert } = getE2ECertificate()
   const supabaseUser = {
@@ -910,7 +953,7 @@ try {
   await page.goto(`${webOrigin}/`)
   await page.getByRole('heading', { name: 'Your practice space' }).waitFor({ state: 'visible' })
   await page.getByRole('heading', { name: 'phase2-browser@example.test' }).waitFor({ state: 'visible' })
-  await page.getByText('Workspace access is ready.', { exact: true }).waitFor({ state: 'visible' })
+  await page.getByRole('link', { name: 'Begin Visit' }).first().waitFor({ state: 'visible' })
   const sessionCreatedResponse = page.waitForResponse((response) =>
     response.request().method() === 'POST' && new URL(response.url()).pathname === '/api/sessions')
   await page.getByRole('link', { name: 'Begin Visit' }).first().click()
@@ -980,6 +1023,41 @@ try {
     throw new Error('Browser-created setup and patient-turn provider usage did not persist through the worker')
   }
 
+  const browserCancellationResponse = await fetch(`${apiBase}/api/sessions/${browserSessionId}/cancel`, {
+    method: 'POST', headers: authHeaders
+  })
+  const browserCancellation = await browserCancellationResponse.json()
+  if (browserCancellationResponse.status !== 200 || browserCancellation.status !== 'cancelled') {
+    throw new Error('The authenticated browser-created session could not be cancelled through the real API')
+  }
+  if (await worker.processOnce() !== 1) {
+    throw new Error('The cancellation terminal event was not persisted through the Redis/PostgreSQL worker')
+  }
+  const repeatedCancellationResponse = await fetch(`${apiBase}/api/sessions/${browserSessionId}/cancel`, {
+    method: 'POST', headers: authHeaders
+  })
+  const repeatedCancellation = await repeatedCancellationResponse.json()
+  if (repeatedCancellationResponse.status !== 200 || repeatedCancellation.status !== 'cancelled' ||
+      await worker.processOnce() !== 0) {
+    throw new Error('Repeating cancellation did not return the terminal result without emitting another event')
+  }
+  const cancelledSession = await testPool.query(
+    `SELECT s.status, o.outcome, o.final_turn_sequence,
+            (SELECT count(*)::int FROM session_events e
+             WHERE e.session_id = s.session_id AND e.event_type = 'terminal') AS terminal_events,
+            (SELECT count(*)::int FROM session_archive_jobs j WHERE j.session_id = s.session_id) AS archive_jobs
+     FROM app_sessions s JOIN session_outcomes o USING (session_id)
+     WHERE s.session_id = $1`,
+    [browserSessionId]
+  )
+  if (cancelledSession.rows[0]?.status !== 'cancelled' ||
+      cancelledSession.rows[0]?.outcome !== 'cancelled' ||
+      Number(cancelledSession.rows[0]?.final_turn_sequence) !== 1 ||
+      Number(cancelledSession.rows[0]?.terminal_events) !== 1 ||
+      Number(cancelledSession.rows[0]?.archive_jobs) !== 1) {
+    throw new Error('Cancellation did not persist one matching terminal outcome and archive job')
+  }
+
   process.stdout.write(JSON.stringify({
     isolatedRedisDatabase,
     redisAppendFsync: 'everysec',
@@ -991,6 +1069,9 @@ try {
     providerUsage: 'patient-turn and scenario-generation token counts, model/tier metadata, versioned public-rate estimates, and duration persisted through the worker',
     turnFailureAudit: 'identifier-only failure metadata persisted through Redis and the PostgreSQL worker',
     assessmentOutcome: 'confirmed phase, unscored submission, and terminal events persisted in order',
+    archiveJob: 'one pending archive job was committed with the terminal outcome and remained unique on event replay',
+    terminalRedisExpiry: `terminal commit and PostgreSQL recovery both set session, patient, and retry keys to ${expectedRedisExpiry} (terminal event +20 minutes)`,
+    browserCancellation: 'authenticated browser-created session cancellation persisted through Express, Redis, and PostgreSQL; repeat returned cancelled without duplicating terminal event or archive job',
     assessmentDraft: 'partial assessment fields survive owner-scoped restore; monotonically increasing revisions reject late stale saves',
     realtimeAudioUsage: 'migration 023 applied to the disposable database; provider-event duration stored once despite duplicate delivery and observer interruption persisted without storing transcript text',
     missingStateRecovery: 'rebuilt accepted patient fact, disclosure, assessment, and terminal event from PostgreSQL while preserving the immutable seeded profile',

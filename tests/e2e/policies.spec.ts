@@ -41,8 +41,14 @@ test('policy pages show bilingual current terms and footer navigation', async ({
   await page.goto('/')
   const footer = page.getByRole('navigation', { name: 'Policies' })
   await expect(footer.getByRole('link', { name: 'Privacy' })).toHaveAttribute('href', '/privacy')
+  await expect(page.getByRole('link', { name: 'Read the GPTpatient privacy policy' })).toHaveAttribute('href', '/privacy')
+  await expect(page.getByText(/uses your Google account email and account ID to sign you in/)).toBeVisible()
   await footer.getByRole('link', { name: 'Privacy' }).click()
   await expect(page).toHaveURL(/\/privacy$/)
+  await expect(page.getByRole('heading', { name: 'Google account data' })).toBeVisible()
+  await expect(page.getByText(/does not access Gmail, Drive, Calendar, or Contacts/)).toBeVisible()
+  await expect(page.getByText(/do not currently have a fixed automatic deletion schedule/)).toBeVisible()
+  await expect(page.getByText(/admin@eagles\.edu\.vn/).first()).toBeVisible()
 
   for (const policy of policyPages) {
     if (new URL(page.url()).pathname !== policy.path) {
@@ -68,7 +74,8 @@ test('policy pages show bilingual current terms and footer navigation', async ({
   await page.getByRole('link', { name: 'Contact GPTpatient support' }).click()
   await expect(page.getByRole('heading', { name: 'Complaints and service issues' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Khiếu nại và sự cố dịch vụ' })).toBeVisible()
-  await expect(page.getByText(/Complaint intake is not operational/)).toBeVisible()
+  await expect(page.getByRole('link', { name: 'admin@eagles.edu.vn' })).toHaveAttribute('href', 'mailto:admin@eagles.edu.vn')
+  await expect(page.getByText(/Complaint intake is not operational/)).toHaveCount(0)
 
   await footer.getByRole('link', { name: 'Privacy' }).click()
   await page.screenshot({ path: '/tmp/gptmd-policy-desktop.png', fullPage: true })

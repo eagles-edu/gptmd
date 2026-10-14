@@ -14,17 +14,53 @@
       <label id="workspace-title" for="workspace-select">GPTpatient workspace</label>
       <select id="workspace-select" v-model="selectedTenantId">
         <option v-for="(membership, index) in memberships" :key="membership.tenantId" :value="membership.tenantId">
-          Workspace {{ index + 1 }}
+          Workspace {{ index + 1 }} ({{ roleLabel(membership.role) }})
         </option>
       </select>
     </section>
-    <p v-if="selectedRoleLabel" class="membership-status" role="status">Your role in this workspace: {{ selectedRoleLabel }}<template v-if="selectedRole !== 'learner'">. Role-specific tools are not available yet.</template></p>
+    <p v-if="selectedRoleLabel" class="membership-status" role="status">Your role in this workspace: {{ selectedRoleLabel }}<template v-if="selectedRole !== 'learner'">. Visit setup is available to learners only.</template></p>
     <p v-if="selectedRole === 'learner' && selectedMembership" class="membership-status" role="status">
       {{ visitEntitled ? 'Visit setup is included in this workspace. Remaining quota is checked when you begin.' : 'Visit setup is not enabled for this workspace. Contact your workspace administrator.' }}
     </p>
     <p v-if="selectedRole === 'learner' && selectedMembership" class="membership-status" role="status">
       {{ selectedMembership.audioTranscriptionAvailable ? 'Voice transcription is available for this workspace.' : 'Voice transcription is unavailable for this workspace. Transcript mode remains available.' }}
     </p>
+    <section v-if="selectedRole === 'customer_admin' && selectedTenantId" class="entitlement-controls" aria-labelledby="entitlement-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">Workspace controls</p>
+          <h2 id="entitlement-title">Entitlements and limits</h2>
+        </div>
+        <button type="button" class="retry-button" :disabled="entitlementState === 'loading' || entitlementState === 'saving'" @click="saveEntitlements">
+          {{ entitlementState === 'saving' ? 'Saving…' : 'Save changes' }}
+        </button>
+      </div>
+      <p v-if="entitlementMessage" class="membership-status" role="status">{{ entitlementMessage }}</p>
+      <div v-if="entitlementPolicy" class="entitlement-grid">
+        <fieldset>
+          <legend>Access</legend>
+          <label><input v-model="entitlementPolicy.sessionsEnabled" type="checkbox"> Allow visit setup</label>
+          <label><input v-model="entitlementPolicy.responsesEnabled" type="checkbox"> Allow patient responses</label>
+          <label><input v-model="entitlementPolicy.audioTranscriptionEnabled" type="checkbox"> Allow voice transcription</label>
+          <label><input v-model="entitlementPolicy.audioTranscriptionPrivacyApproved" type="checkbox"> Privacy approval recorded for voice</label>
+        </fieldset>
+        <fieldset>
+          <legend>Usage limits</legend>
+          <label v-for="field in quotaFields" :key="field.key" class="limit-field">
+            <span>{{ field.label }}</span>
+            <input
+              :value="entitlementPolicy[field.key] ?? ''"
+              type="number"
+              min="0"
+              step="1"
+              inputmode="numeric"
+              @input="setEntitlementLimit(field.key, $event)"
+            >
+            <small>Blank means unlimited</small>
+          </label>
+        </fieldset>
+      </div>
+    </section>
     <div v-if="user" class="membership-status" aria-live="polite">
       <span v-if="membershipState === 'loading'">Loading workspace access…</span>
       <span v-else-if="membershipState === 'ready' && memberships.length === 1">Workspace membership loaded.</span>
@@ -115,14 +151,41 @@ const tenantIds = computed(() => memberships.value.map((membership) => membershi
 const selectedMembership = computed(() => memberships.value.find((membership) => membership.tenantId === selectedTenantId.value))
 const selectedRole = computed(() => selectedMembership.value?.role)
 const visitEntitled = computed(() => Boolean(selectedMembership.value?.sessionsEnabled && selectedMembership.value.responsesEnabled))
-const selectedRoleLabel = computed(() => {
-  const role = selectedRole.value
+const roleLabel = (role: string | undefined): string => {
   return role === 'customer_admin' ? 'Customer administrator'
     : role === 'instructor' ? 'Instructor'
       : role === 'learner' ? 'Learner' : ''
-})
+}
+const selectedRoleLabel = computed(() => roleLabel(selectedRole.value))
 const membershipMessage = ref('')
 const membershipState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+type EntitlementLimitKey = 'monthlySessionQuota' | 'monthlySessionQuotaPerUser' | 'monthlyResponseQuota' |
+  'monthlyResponseQuotaPerUser' | 'responseQuotaPerSession' | 'maxActiveSessions' | 'monthlyAudioTranscriptionSessionQuota'
+interface EntitlementPolicy {
+  sessionsEnabled: boolean
+  responsesEnabled: boolean
+  monthlySessionQuota: number | null
+  monthlySessionQuotaPerUser: number | null
+  monthlyResponseQuota: number | null
+  monthlyResponseQuotaPerUser: number | null
+  responseQuotaPerSession: number | null
+  maxActiveSessions: number | null
+  audioTranscriptionEnabled: boolean
+  audioTranscriptionPrivacyApproved: boolean
+  monthlyAudioTranscriptionSessionQuota: number | null
+}
+const quotaFields: Array<{ key: EntitlementLimitKey; label: string }> = [
+  { key: 'monthlySessionQuota', label: 'Visits per workspace / month' },
+  { key: 'monthlySessionQuotaPerUser', label: 'Visits per learner / month' },
+  { key: 'monthlyResponseQuota', label: 'Responses per workspace / month' },
+  { key: 'monthlyResponseQuotaPerUser', label: 'Responses per learner / month' },
+  { key: 'responseQuotaPerSession', label: 'Responses per visit' },
+  { key: 'maxActiveSessions', label: 'Concurrent visits' },
+  { key: 'monthlyAudioTranscriptionSessionQuota', label: 'Voice sessions per month' }
+]
+const entitlementPolicy = ref<EntitlementPolicy | null>(null)
+const entitlementState = ref<'idle' | 'loading' | 'saving' | 'error'>('idle')
+const entitlementMessage = ref('')
 
 watch(selectedTenantId, (tenantId) => {
   if (membershipState.value === 'ready' && tenantId && tenantIds.value.includes(tenantId)) {
@@ -145,13 +208,66 @@ async function loadMemberships(): Promise<void> {
       selectedTenantId.value = tenantIds.value[0] ?? null
     }
     membershipState.value = 'ready'
+    await loadEntitlements()
   } catch {
     membershipMessage.value = 'GPTpatient could not load your workspace access. Try again later.'
     membershipState.value = 'error'
   }
 }
 
+async function loadEntitlements(): Promise<void> {
+  if (selectedRole.value !== 'customer_admin' || !selectedTenantId.value) {
+    entitlementPolicy.value = null
+    return
+  }
+  entitlementState.value = 'loading'
+  try {
+    const config = useRuntimeConfig()
+    const result = await $fetch<{ policy: EntitlementPolicy }>(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/admin/entitlements`,
+      { headers: await useGptmdAuth().accessHeaders() }
+    )
+    entitlementPolicy.value = result.policy
+    entitlementMessage.value = ''
+    entitlementState.value = 'idle'
+  } catch {
+    entitlementMessage.value = 'Workspace controls could not be loaded. Try again.'
+    entitlementState.value = 'error'
+  }
+}
+
+function setEntitlementLimit(key: EntitlementLimitKey, event: Event): void {
+  if (!entitlementPolicy.value) return
+  const raw = (event.target as HTMLInputElement).value
+  entitlementPolicy.value[key] = raw === '' ? null : Number(raw)
+}
+
+async function saveEntitlements(): Promise<void> {
+  if (!entitlementPolicy.value || !selectedTenantId.value) return
+  entitlementState.value = 'saving'
+  entitlementMessage.value = ''
+  try {
+    const config = useRuntimeConfig()
+    const result = await $fetch<{ policy: EntitlementPolicy }>(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/admin/entitlements`,
+      {
+        method: 'PUT',
+        headers: await useGptmdAuth().accessHeaders(),
+        body: entitlementPolicy.value
+      }
+    )
+    entitlementPolicy.value = result.policy
+    entitlementState.value = 'idle'
+    await loadMemberships()
+    entitlementMessage.value = 'Entitlement policy saved and applied.'
+  } catch {
+    entitlementMessage.value = 'Entitlement policy was not saved. Check the limits and try again.'
+    entitlementState.value = 'error'
+  }
+}
+
 onMounted(loadMemberships)
+watch(selectedTenantId, () => { void loadEntitlements() })
 </script>
 
 <style scoped>
@@ -233,6 +349,69 @@ h1 {
   color: var(--app-muted-text, #59696a);
   font-size: 0.9rem;
   min-height: 1.5rem;
+}
+
+.entitlement-controls {
+  border-top: 1px solid rgb(31 74 77 / 18%);
+  margin: 2rem 0;
+  padding-top: 1.25rem;
+}
+
+.section-heading {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: space-between;
+}
+
+.section-heading h2 {
+  font-size: 1.35rem;
+  margin: 0.25rem 0 0;
+}
+
+.entitlement-grid {
+  display: grid;
+  gap: 2rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 1rem;
+}
+
+.entitlement-grid fieldset {
+  border: 1px solid rgb(31 74 77 / 22%);
+  display: grid;
+  gap: 0.85rem;
+  min-width: 0;
+  padding: 1rem;
+}
+
+.entitlement-grid legend {
+  font-weight: 750;
+  padding: 0 0.35rem;
+}
+
+.entitlement-grid fieldset > label:not(.limit-field) {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.6rem;
+}
+
+.limit-field {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.limit-field input {
+  border: 1px solid rgb(31 74 77 / 30%);
+  color: inherit;
+  font: inherit;
+  min-height: 2.5rem;
+  padding: 0.4rem 0.55rem;
+  width: 100%;
+}
+
+.limit-field small {
+  color: var(--app-muted-text, #59696a);
 }
 
 .retry-button {
@@ -325,6 +504,10 @@ h2 {
 
 @media (width <= 680px) {
   .account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .entitlement-grid {
     grid-template-columns: 1fr;
   }
 }

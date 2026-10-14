@@ -39,7 +39,11 @@ list, so source, tests, and `node_modules` cannot be deployed from that pair.
 
 Run `npm run build`, `npm run api:build`, then `npm run deploy:live` as the
 `eaglesvn` user. The script runs the installed FreeFileSync batch jobs and
-keeps the previous release if the new processes do not pass readiness.
+keeps the previous release if the new processes do not pass readiness. Before
+activation it verifies every staged path is owned by the invoking account and
+group, then removes group/other write bits without stripping executable bits.
+The three live systemd units run as `eaglesvn:eaglesvn`; investigate any owner
+mismatch instead of deploying or masking it with a recursive `chown`.
 
 FreeFileSync's current standard license restricts use to private individuals;
 its FAQ says business, organizational, government, or other commercial use
@@ -176,3 +180,190 @@ OneShield's injected `/_rum/beacon.js` and `/_osh-cs/widget.js` scripts because
 `strict-dynamic` does not accept their host source alone. This did not prevent
 GPTMD's home page from rendering. A rendered public home page does not verify
 Google OAuth completion or an authenticated learner session.
+
+**2026-10-13 origin incident remediation:** The trace-specific User-Agent
+denial was removed from `/etc/nginx/sites-available/obgyn.eaglesvn.club.conf`
+after saving `/etc/nginx/sites-available/obgyn.eaglesvn.club.conf.bak-20261013-oauth-ua-block`.
+The former rule rejected curl, Python, Java, and other command-line clients on
+all paths. Nginx validated and reloaded successfully. The same public
+`curl/8.5.0` OAuth request now returns HTTP 302 to Google with the configured
+`/auth/v1/callback` redirect URI; direct-origin and public curl requests to `/`
+return HTTP 200, and a public Chrome 130 request returns HTTP 200. The app
+upstream emitted 4,123 bytes of response headers, exceeding Nginx's default
+proxy header buffer; the GPTMD HTTPS vhost now uses `proxy_buffer_size 16k` and
+`proxy_buffers 4 16k`. The 502 disappeared after that host-scoped adjustment.
+The hosted Playwright browser still receives a OneShield-branded 403 on `/`
+(trace `01M4T5V789PYJNC2G7GJ9CVKNB`); it did not reach the origin, whose access
+log has no matching browser request. This separate edge classification remains
+open for iNET trace correlation and must not be represented as an origin fix
+failure or as verified learner sign-in. No callback was completed. Recovery:
+restore the timestamped vhost backup only if a rollback is needed, validate it
+with `sudo nginx -t`, and reload; if edge denial persists, have iNET inspect the
+exact trace and adjust only the confirmed false-positive rule.
+
+**2026-10-13 OneShield and browser-policy follow-up:** At the user's explicit
+request for the entire `eaglesvn.club` zone, OneShield protection was switched
+off in OnePortal. This disables proxy/WAF protection across every record in
+that parent zone, not only `obgyn.eaglesvn.club`; zone DNS now directs clients
+to origin addresses. Public DNS resolves the app to `103.72.98.158`, and live
+probes returned HTTP 200 for `/` and HTTP 302 to Google's OAuth start for
+`/auth/v1/authorize?provider=google`. The user confirmed the page is serving.
+This is not evidence of a completed OAuth callback or learner session.
+
+The user's 2026-10-13 console capture also showed inline-script and jsDelivr
+stylesheet violations under the origin's `Content-Security-Policy-Report-Only`
+header. These were reports, not enforced blocks. The live header had stale
+inline hashes and omitted the page's Material Design Icons CDN origin. A first
+attempt added the two exact hashes from Chrome's report to the static report-
+only policy, but the CDN source update was incomplete; that temporary policy
+was later replaced by the dynamic Nginx forwarding described below. The
+enforced Nuxt CSP was not weakened. Backup:
+`/etc/nginx/sites-available/obgyn.eaglesvn.club.conf.bak-20261013T083751-csp-report`.
+The four unsupported Permissions-Policy names in that capture were absent from
+the fresh public response and active Nginx configuration inspected afterward;
+refresh the browser and inspect that navigation's response headers if they
+persist. A separate hosted Playwright browser still returned HTTP 502 during
+the transition, despite the user's browser loading the page and direct public
+HTTP probes succeeding; the hosted-browser path is not considered verified.
+
+**2026-10-13 Nginx header authority and CSP verification:** The live Nginx
+overlay now strips upstream copies of fixed security headers and emits the
+public values once. It forwards Nuxt's generated `Content-Security-Policy`
+through Nginx so release-specific script hashes stay aligned with the served
+HTML; `Content-Security-Policy-Report-Only` uses the same generated policy,
+with only `upgrade-insecure-requests` omitted because browsers ignore that
+directive in report-only mode. This supersedes the temporary static-hash
+report-only adjustment above. The hostname-scoped Nginx map is versioned at
+`ops/nginx/gptmd-permissions-policy-map.conf`, and the server overlay at
+`ops/nginx/gptmd-live-locations.conf`. Nginx configuration test passed; a fresh
+Chromium navigation returned HTTP 200 with no CSP, Permissions-Policy, console,
+or page errors. The same-origin microphone policy remained enabled. OAuth
+authorization still returns HTTP 302 to Google; callback and learner sign-in
+remain unverified.
+
+**2026-10-13 Google OAuth redirect mismatch:** The live `/auth/v1/authorize`
+request returns HTTP 302 to Google with
+`redirect_uri=https://obgyn.eaglesvn.club/auth/v1/callback`. The running
+`supabase-auth` container reports the same `GOTRUE_EXTERNAL_GOOGLE_REDIRECT_URI`,
+derived from `API_EXTERNAL_URL=https://obgyn.eaglesvn.club/auth/v1` in the
+Supabase project configuration. The app therefore sends the intended
+same-origin callback; Google's `redirect_uri_mismatch` means this exact URI is
+not authorized for the OAuth client used by the request, or the Google Cloud
+Console has a different client configured. Add
+`https://obgyn.eaglesvn.club/auth/v1/callback` to that client's **Authorized
+redirect URIs** and confirm the client ID matches the live request. Do not add
+`/confirm` or `/auth/v1/authorize` as the Google callback: `SITE_URL` and
+`ADDITIONAL_REDIRECT_URLS` govern the post-auth return destination, not Google's
+callback URI. Google Cloud Console registration has not been inspected or
+changed, and no OAuth callback or learner session has been verified; keep
+checklist node `a03` open. After updating the client, repeat sign-in and verify
+Google returns to `/auth/v1/callback` before the app's post-auth redirect.
+
+**2026-10-13 Google OAuth callback repair and browser verification:** The user
+updated the existing `gptMD` Google Cloud web client to authorize the exact
+live callback `https://obgyn.eaglesvn.club/auth/v1/callback`. A fresh desktop
+Chrome sign-in completed the Google return and `/account` displayed
+`onlineadmin@eaglesvn.online` as signed in. The callback initially returned
+403 because OWASP CRS 3.3.5 rule `930120` treated Google's URI-like OAuth
+`scope` argument as an OS file access attempt, adding anomaly score 5 and
+triggering `949110`. The origin now has a host-and-exact-path conditional
+exception that removes only `ARGS:scope` from rule `930120`; all other callback
+arguments and CRS rules remain inspected. The versioned source is
+`ops/modsecurity/gptmd-oauth-callback-exclusions.conf`, installed at
+`/etc/modsecurity/crs/gptmd-oauth-callback-exclusions.conf` and included from
+`REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf`. The live Nginx config passed
+`sudo nginx -t` and was reloaded. A callback-shaped request carrying Google's
+scope value but no OAuth state now reaches GoTrue and returns its expected
+303 `bad_oauth_callback`, rather than ModSecurity's 403; the fresh browser flow
+then completed. Backups are
+`/etc/modsecurity/crs/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf.bak-20261013-oauth-scope`
+and `/etc/modsecurity/crs/gptmd-oauth-callback-exclusions.conf.bak-20261013-request-uri`.
+The signed-in account page reports no active GPTpatient workspace and requires
+a learner role. OAuth authentication is verified; workspace provisioning and
+learner entitlement are not. Earlier notes in this file describe the state
+before this repair.
+
+**2026-10-13 entitlement-controls release:** After `npm run check` passed, the
+live deploy installed release `2026-10-13T152107396Z`. The deployment applied
+`024_session_archive_jobs.sql` and
+`025_tenant_entitlement_audit.sql` to the verified `gptmd_live` database and
+restarted web, API, and worker successfully. All three services are active;
+loopback web/API readiness returned HTTP 200, public `/` returned HTTP 200,
+and `/auth/v1/authorize?provider=google` returned HTTP 302. The isolated
+`scsstx@gmail.com` tenant is not yet seeded: its Auth identity does not exist in
+the separate Supabase Auth database. Complete first Google sign-in, resolve
+the subject UUID from that Auth database, then run the versioned seed against
+`gptmd_live`. The seed now accepts a validated `test_subject_id` psql variable
+and keeps every capability disabled. Live account controls and authorization
+remain unverified until that sequence completes.
+
+**2026-10-13 Google OAuth audience denial for the test client:** The user
+attempted Google sign-in as `scsstx@gmail.com` and Google returned HTTP 403
+`org_internal`, stating that `gptMD-web-oauth` can only be used within its
+organization. This is an OAuth audience restriction, not a callback URI,
+origin Nginx/ModSecurity, OneShield, Supabase Auth, or GPTMD entitlement error.
+Google defines `org_internal` as a request from outside the Cloud project's
+parent organization. For this personal Gmail test account, the intended narrow
+configuration is Google Auth Platform **Audience > User type: External**, with
+publishing status kept at **Testing** and `scsstx@gmail.com` explicitly added
+under **Test users**. Do not publish the app or broaden requested scopes for
+this fix. Google's testing guidance notes an exception for apps requesting
+only basic identity scopes (`openid`, `email`, `profile`), so the test-user
+list itself is not GPTMD's access-control boundary; active tenant membership
+and entitlements remain that boundary. The local Chrome session was opened to
+the Audience page, but the setting has not yet been changed or verified. After
+the change, repeat Google sign-in; only a resulting active row in Supabase
+`auth.users` proves identity creation. Then run `npm run provision:scsstx-test`
+and verify the isolated tenant. Until then, no test identity or tenant is
+provisioned.
+
+**2026-10-14 learner provision and full mirror sync:** This later state
+supersedes earlier dated notes above that say no test identity or tenant was
+provisioned. After the user completed
+Google sign-in, the provisioning checks found exactly one active Auth identity.
+The live `gptmd_live` database now has two separate test workspaces: an all-off
+`customer_admin` control workspace and a `learner` workspace with bounded text
+visits/Responses enabled, five visits and 50 Responses monthly, 12 Responses
+per visit, one concurrent visit, and voice disabled with zero audio quota. The
+seed records before/after state in the append-only entitlement audit. This
+verifies database provisioning, not a signed-in learner browser workflow.
+
+The full `npm run check` passed before release `2026-10-13T173629854Z` was
+activated. Web, API, and worker services are active; `/`, `/privacy`, and
+`/contact` each returned public HTTP 200. A follow-up ownership audit found
+every current release path owned by `eaglesvn:eaglesvn`; group/other write bits
+were removed from 9,193 release paths. The deploy script now enforces that
+owner/group and permission policy before future activation. The `current`
+symlink itself reports mode 777, which is normal for a symlink; its target tree
+is the checked release. Direct learner browser access remains to be verified
+by refreshing Account and selecting the workspace labeled `Learner`.
+
+**2026-10-14 Home workspace status and full mirror sync:** A regression test
+using the provisioned control and learner workspace slugs found that Home kept
+showing the customer-admin status after switching to the learner workspace,
+even though visit entry became enabled. Home now clears that stale message when
+the selected active workspace changes. The fixture verifies admin visit entry
+stays blocked and the learner workspace enables it in Chromium, Firefox, and
+WebKit. The full `npm run check` passed: 275 unit tests, 39 standard browser
+tests, 44 preflight browser cases, 10 mobile viewport cases, and one Mobile
+Viewer tool case, along with lint, type, schema, API, diagram, and warning-free
+production-build checks. Release `2026-10-13T194537478Z` is active after
+`npm run deploy:live`; all 9,193 release paths are owned by
+`eaglesvn:eaglesvn`, with zero group/other-writable paths. All three services
+and loopback web/API readiness checks passed; public `/`, `/privacy`, and
+`/contact` returned HTTP 200. A fresh Playwright public navigation rendered
+Home with zero console errors or warnings. Unauthenticated `/account` redirects
+to sign-in. The fixture is not live learner-browser proof; that gate remains
+open until the signed-in learner selects the workspace and starts a visit.
+
+**2026-10-14 learner-session corroboration:** The user reports that transcript
+mode works. A read-only transaction against `gptmd_live`, limited to the
+isolated `gptmd-learner-test-scsstx` workspace and returning no session IDs or
+utterance content, found one active session, three accepted-turn events, four
+patient-turn provider-usage rows linked to durable events, and one
+`patient_turn_recovered_after_validation_retry` audit. This corroborates that
+the learner workspace has processed live turns. The schema does not persist
+whether those turns used typed transcript or Realtime transcription, and this
+browser remains signed out; do not describe the database check as proof of the
+Account selector UI or of a particular interaction mode. No transcript or
+patient text was read.
