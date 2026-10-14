@@ -1,6 +1,7 @@
 import { spawnSync } from 'node:child_process'
 import { createInterface } from 'node:readline'
 import { stdin, stdout } from 'node:process'
+import { pathToFileURL } from 'node:url'
 
 const VERSION_PATTERN = /gptMD-dev\\?_(\d+)\.(\d+)\.(\d+)\.(\d+)/i
 
@@ -45,6 +46,24 @@ function nextVersion(commits) {
   return '0.0.0.01'
 }
 
+export function promptForCommitMessage(suggestedMessage, input = stdin, output = stdout) {
+  const prompt = createInterface({ input, output })
+  prompt.setPrompt('Edit commit message; Enter accepts, Ctrl+C cancels:\n> ')
+
+  return new Promise((resolve, reject) => {
+    prompt.prompt()
+    prompt.write(suggestedMessage)
+    prompt.once('line', (answer) => {
+      prompt.close()
+      resolve(answer.trim() || suggestedMessage)
+    })
+    prompt.once('SIGINT', () => {
+      prompt.close()
+      reject(new Error('Commit cancelled.'))
+    })
+  })
+}
+
 async function main() {
   const commits = runGit(['log', '--format=%s'], { capture: true })
   const version = nextVersion(commits)
@@ -59,25 +78,17 @@ async function main() {
     throw new Error('Run npm run git:update from an interactive terminal.')
   }
 
-  const prompt = createInterface({ input: stdin, output: stdout })
-  const message = await new Promise((resolve, reject) => {
-    prompt.question('Commit message (edit, Enter accepts): ', (answer) => {
-      prompt.close()
-      resolve(answer.trim() || suggestedMessage)
-    })
-    prompt.write(suggestedMessage)
-    prompt.once('SIGINT', () => {
-      prompt.close()
-      reject(new Error('Commit cancelled.'))
-    })
-  })
+  const message = await promptForCommitMessage(suggestedMessage)
+  stdout.write(`\nUsing commit message: ${message}\n`)
 
   runGit(['add', '.'])
   runGit(['commit', '-m', message])
   runGit(['push'])
 }
 
-main().catch((error) => {
-  console.error(error.message)
-  process.exitCode = 1
-})
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    console.error(error.message)
+    process.exitCode = 1
+  })
+}
