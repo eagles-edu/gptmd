@@ -719,13 +719,14 @@ describe('patient setup persistence coordination', () => {
       expect.objectContaining({
         eventId: `usage_${createHash('sha256').update('openai\0resp_rejected').digest('hex')}`,
         sessionId, eventType: 'provider_usage', operation: 'scenario_generation',
-        occurredAt: expect.any(String), usage: rejectedAttemptUsage
+        occurredAt: expect.any(String), usage: { ...rejectedAttemptUsage, provider: 'openai' }
       }),
       expect.objectContaining({
         eventId: `usage_${createHash('sha256').update('openai\0resp_private').digest('hex')}`,
         sessionId, eventType: 'provider_usage', operation: 'scenario_generation',
         occurredAt: expect.any(String),
         usage: {
+          provider: 'openai',
           responseId: 'resp_private', model: 'gpt-6-luna', serviceTier: 'default',
           inputTokens: 100, cachedInputTokens: 12, cacheWriteTokens: 0,
           outputTokens: 50, totalTokens: 150, durationMs: 620,
@@ -1036,16 +1037,28 @@ describe('serialized patient turns', () => {
     let finishGeneration!: (value: {
       responseId: string
       output: unknown
+      provider?: 'openai' | 'anthropic'
       providerUsage: { responseId: string; inputTokens: number; cachedInputTokens: number; outputTokens: number; totalTokens: number; durationMs: number } | null
     }) => void
     const generationWait = new Promise<{
       responseId: string
       output: unknown
+      provider?: 'openai' | 'anthropic'
       providerUsage: { responseId: string; inputTokens: number; cachedInputTokens: number; outputTokens: number; totalTokens: number; durationMs: number } | null
     }>((resolve) => {
       finishGeneration = resolve
     })
-    const generateTurn = vi.fn(() => generationWait)
+    const generateTurn = vi.fn()
+      .mockImplementationOnce(() => generationWait)
+      .mockResolvedValueOnce({
+        responseId: 'msg-second', provider: 'anthropic', providerUsage: null,
+        output: {
+          patientResponse: 'Yes, I have pelvic pain.', proposedFacts: [], proposedPainFacts: [],
+          historyCoverage: [], disclosedHistoryFields: [],
+          painHistoryCoverage: [{ painEpisodeId: 'pain-1', field: 'anyPain' }],
+          painDisclosures: [{ painEpisodeId: 'pain-1', field: 'anyPain' }]
+        }
+      })
     const submitting = store.submitPatientTurn(
       principal, sessionId, 'turn-0001', 'Do you have pain?', generateTurn, 'realtime_transcription'
     )
@@ -1060,6 +1073,7 @@ describe('serialized patient turns', () => {
     expect(contendedLockAttempt.mock.calls[0]?.[0]).toBeGreaterThanOrEqual(0)
     finishGeneration({
       responseId: 'resp-private',
+      provider: 'anthropic',
       providerUsage: {
         responseId: 'resp-private', inputTokens: 10, cachedInputTokens: 0,
         outputTokens: 8, totalTokens: 18, durationMs: 450
@@ -1078,6 +1092,11 @@ describe('serialized patient turns', () => {
       responseId: 'resp-private', inputTokens: 10, cachedInputTokens: 0,
       outputTokens: 8, totalTokens: 18, durationMs: 450
     }], undefined)
+    expect(stateStore.acceptTurn.mock.calls[0]?.[0]).toMatchObject({ provider: 'anthropic' })
+    expect(await store.submitPatientTurn(
+      principal, sessionId, 'turn-0003', 'Do you have pain?', generateTurn
+    )).toMatchObject({ status: 'accepted', sequence: 2 })
+    expect(generateTurn.mock.calls[1]?.[0]).toMatchObject({ provider: 'anthropic' })
 
     expect(await store.submitPatientTurn(
       principal, sessionId, 'turn-0001', 'Do you have pain?', generateTurn, 'realtime_transcription'
@@ -1090,20 +1109,20 @@ describe('serialized patient turns', () => {
     expect(await store.submitPatientTurn(
       principal, sessionId, 'turn-0001', 'Do you have pain?', generateTurn, 'typed'
     )).toBe('conflict')
-    expect(generateTurn).toHaveBeenCalledOnce()
-    expect(pool.connect).toHaveBeenCalledOnce()
+    expect(generateTurn).toHaveBeenCalledTimes(2)
+    expect(pool.connect).toHaveBeenCalledTimes(2)
     expect(pool.query).toHaveBeenCalledWith(
       expect.stringContaining('e.sessions_enabled = true'),
       [sessionId, principal.tenantId, principal.subjectId]
     )
-    expect(stateStore.acceptTurn).toHaveBeenCalledOnce()
+    expect(stateStore.acceptTurn).toHaveBeenCalledTimes(2)
     expect(stateStore.acceptTurn).toHaveBeenCalledWith(expect.objectContaining({
       learnerModality: 'realtime_transcription'
     }), [{
       responseId: 'resp-private', inputTokens: 10, cachedInputTokens: 0,
       outputTokens: 8, totalTokens: 18, durationMs: 450
     }], undefined)
-    expect(stateStore.releaseTurnLock).toHaveBeenCalledTimes(4)
+    expect(stateStore.releaseTurnLock).toHaveBeenCalledTimes(5)
   })
 
   it('retries invalid model facts and commits only a safe clarification after bounded failure', async () => {

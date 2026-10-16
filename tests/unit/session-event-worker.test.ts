@@ -5,7 +5,7 @@ import type { ProviderUsageSample } from '../../services/api/src/session-contrac
 
 const sessionId = 's'.repeat(43)
 const turn = {
-  turnId: 'turn-1', sessionId, sequence: 1,
+  turnId: 'turn-1', sessionId, provider: 'openai', sequence: 1,
   acceptedAt: '2026-10-01T00:01:00.000Z', phase: 'history', learnerMessage: 'What brings you in?',
   versions: {
     promptVersion: 'patient-turn-prompt-v10', modelVersion: 'gpt-6-luna',
@@ -35,10 +35,12 @@ function usageSample(
   inputTokens: number,
   cachedInputTokens: number,
   outputTokens: number,
-  durationMs: number
+  durationMs: number,
+  provider: ProviderUsageSample['provider'] = 'openai'
 ): ProviderUsageSample {
   return {
-    responseId, model: 'gpt-6-luna', serviceTier: null,
+    provider,
+    responseId, model: provider === 'anthropic' ? 'claude-haiku-5-5' : 'gpt-6-luna', serviceTier: null,
     inputTokens, cachedInputTokens, cacheWriteTokens: 0,
     outputTokens, totalTokens: inputTokens + outputTokens, durationMs,
     pricingVersion: null, estimatedCostUsd: null
@@ -48,6 +50,7 @@ function usageSample(
 function workerHarness(options: {
   existing?: boolean
   existingUsage?: Array<{
+    provider: string
     provider_response_id: string
     model_id: string | null
     service_tier: string | null
@@ -149,7 +152,7 @@ function workerHarness(options: {
     if (sql.includes('FROM provider_usage WHERE session_id')) {
       return { rows: options.existingUsage ?? [], rowCount: options.existingUsage?.length ?? 0 }
     }
-    if (sql.includes("FROM provider_usage WHERE provider = 'openai'")) {
+    if (sql.includes('FROM provider_usage WHERE provider = $1')) {
       return { rows: options.existingProviderUsage ?? [], rowCount: options.existingProviderUsage?.length ?? 0 }
     }
     if (sql.includes('INSERT INTO provider_usage')) {
@@ -301,12 +304,39 @@ describe('PostgreSQL session event worker', () => {
 
     expect(harness.order).toEqual(['begin', 'insert', 'insert-usage', 'commit', 'ack-delete'])
     expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
-      expect.any(String), sessionId, 'tenant-a', 'learner-a', turn.turnId, 'resp-private',
+      expect.any(String), sessionId, 'tenant-a', 'learner-a', turn.turnId, 'openai', 'resp-private',
       'gpt-6-luna', null, 120, 20, 0, 30, 150, null, null, 842, turn.acceptedAt
     ])
     const persistedTurn = harness.query.mock.calls.find(([sql]) => sql.includes('INSERT INTO session_events'))?.[1]?.[6]
     expect(JSON.parse(String(persistedTurn))).toEqual(turn)
     expect(String(persistedTurn)).not.toContain('resp-private')
+  })
+
+  it('persists Anthropic usage under its own provider identity', async () => {
+    const usage = usageSample('msg-private', 120, 0, 30, 842, 'anthropic')
+    const harness = workerHarness({ streamEvent: { ...event, providerUsage: [usage] } })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
+      expect.any(String), sessionId, 'tenant-a', 'learner-a', turn.turnId, 'anthropic', 'msg-private',
+      'claude-haiku-5-5', null, 120, 0, 0, 30, 150, null, null, 842, turn.acceptedAt
+    ])
+  })
+
+  it('accepts legacy usage events without a provider and attributes them to OpenAI', async () => {
+    const { provider: _provider, ...legacyUsage } = usageSample('resp-legacy', 120, 20, 30, 842)
+    const harness = workerHarness({ streamEvent: {
+      ...event,
+      providerUsage: [legacyUsage]
+    } })
+
+    await expect(harness.worker.processOnce()).resolves.toBe(1)
+
+    expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
+      expect.any(String), sessionId, 'tenant-a', 'learner-a', turn.turnId, 'openai', 'resp-legacy',
+      'gpt-6-luna', null, 120, 20, 0, 30, 150, null, null, 842, turn.acceptedAt
+    ])
   })
 
   it('verifies saved provider usage on duplicate delivery instead of counting it twice', async () => {
@@ -315,6 +345,7 @@ describe('PostgreSQL session event worker', () => {
       existing: true,
       streamEvent: { ...event, providerUsage: [usage] },
       existingUsage: [{
+        provider: 'openai',
         provider_response_id: usage.responseId, model_id: usage.model, service_tier: usage.serviceTier,
         input_tokens: usage.inputTokens, cached_input_tokens: usage.cachedInputTokens,
         cache_write_tokens: usage.cacheWriteTokens, output_tokens: usage.outputTokens,
@@ -353,7 +384,7 @@ describe('PostgreSQL session event worker', () => {
 
     expect(harness.order).toEqual(['begin', 'insert-usage', 'commit', 'ack-delete'])
     expect(harness.query).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO provider_usage'), [
-      expect.any(String), sessionId, 'tenant-a', 'learner-a', 'scenario_generation',
+      expect.any(String), sessionId, 'tenant-a', 'learner-a', 'openai', 'scenario_generation',
       'resp-setup', 'gpt-6-luna', null, 900, 0, 0, 300, 1200, null, null, 3420, turn.acceptedAt
     ])
     expect(harness.query).not.toHaveBeenCalledWith(expect.stringContaining('INSERT INTO session_events'), expect.anything())

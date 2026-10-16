@@ -1,10 +1,13 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
+import { strToU8, zipSync } from 'fflate'
 import type { Pool, PoolClient } from 'pg'
 import type { AuthenticatedPrincipal } from './auth.ts'
 import { ArchiveStatusSchema, type ArchiveStatus } from './session-contracts.ts'
 
 const MAX_ARCHIVE_TURNS = 10_000
 const MAX_ARCHIVE_BYTES = 5 * 1024 * 1024
+const MAX_AUDIO_SEGMENT_BYTES = 5 * 1024 * 1024
+const MAX_AUDIO_ARCHIVE_BYTES = 64 * 1024 * 1024
 const MAX_ARCHIVE_ATTEMPTS = 5
 const STALE_CLAIM_AFTER = "interval '5 minutes'"
 const ARCHIVE_RETENTION_HOURS = 72
@@ -30,6 +33,17 @@ type DownloadResolution =
   | { status: 'ready'; downloadId: string; artifactId: string; filename: string; contentType: string; content: Buffer }
 
 export interface SessionArchiveStore {
+  recordAudioConsent(principal: AuthenticatedPrincipal, sessionId: string, consentVersion: string): Promise<boolean>
+  saveAudioSegment(principal: AuthenticatedPrincipal, input: {
+    sessionId: string
+    speaker: 'learner' | 'patient'
+    recordingPart: number
+    sequence: number
+    turnId: string | null
+    contentType: 'audio/webm' | 'audio/mp4' | 'audio/mpeg'
+    content: Buffer
+  }): Promise<'saved' | 'duplicate' | 'consent_required' | 'conflict'>
+  hasAudioConsent(principal: AuthenticatedPrincipal, sessionId: string): Promise<boolean>
   listOwnedArchives(principal: AuthenticatedPrincipal): Promise<ArchiveStatus[]>
   resolveDownload(
     principal: AuthenticatedPrincipal,
@@ -51,6 +65,65 @@ export interface SessionArchiveStore {
 
 export function createPostgresSessionArchiveStore(pool: Pool): SessionArchiveStore {
   return {
+    async recordAudioConsent(principal, sessionId, consentVersion) {
+      const result = await pool.query(
+        `INSERT INTO session_audio_recording_consents (session_id, tenant_id, subject_id, consent_version)
+         SELECT session_id, tenant_id, subject_id, $4
+         FROM app_sessions
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3 AND status IN ('ready', 'active')
+         ON CONFLICT (session_id) DO NOTHING`,
+        [sessionId, principal.tenantId, principal.subjectId, consentVersion]
+      )
+      if ((result.rowCount ?? 0) > 0) return true
+      const existing = await pool.query(
+        `SELECT 1 FROM session_audio_recording_consents
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3 AND consent_version = $4`,
+        [sessionId, principal.tenantId, principal.subjectId, consentVersion]
+      )
+      return (existing.rowCount ?? 0) > 0
+    },
+
+    async saveAudioSegment(principal, input) {
+      if (input.content.byteLength < 1 || input.content.byteLength > MAX_AUDIO_SEGMENT_BYTES) {
+        throw new Error('audio_segment_size_limit')
+      }
+      const digest = createHash('sha256').update(input.content).digest('hex')
+      const result = await pool.query(
+        `INSERT INTO session_audio_segments (
+           session_id, tenant_id, subject_id, speaker, recording_part, sequence, turn_id,
+           content_type, content, content_sha256
+         )
+         SELECT consent.session_id, consent.tenant_id, consent.subject_id, $4, $5, $6, $7, $8, $9, $10
+         FROM session_audio_recording_consents AS consent
+         JOIN app_sessions AS session ON session.session_id = consent.session_id
+         WHERE consent.session_id = $1 AND consent.tenant_id = $2 AND consent.subject_id = $3
+           AND session.status IN ('ready', 'active')
+         ON CONFLICT (session_id, speaker, recording_part, sequence) DO NOTHING
+         RETURNING content_sha256`,
+        [input.sessionId, principal.tenantId, principal.subjectId, input.speaker,
+          input.recordingPart, input.sequence, input.turnId, input.contentType, input.content, digest]
+      )
+      if ((result.rowCount ?? 0) > 0) return 'saved'
+      const existing = await pool.query<{ content_sha256: string }>(
+        `SELECT content_sha256 FROM session_audio_segments
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3
+           AND speaker = $4 AND recording_part = $5 AND sequence = $6`,
+        [input.sessionId, principal.tenantId, principal.subjectId, input.speaker,
+          input.recordingPart, input.sequence]
+      )
+      if (!existing.rows[0]) return 'consent_required'
+      return existing.rows[0].content_sha256 === digest ? 'duplicate' : 'conflict'
+    },
+
+    async hasAudioConsent(principal, sessionId) {
+      const result = await pool.query(
+        `SELECT 1 FROM session_audio_recording_consents
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      return (result.rowCount ?? 0) > 0
+    },
+
     async listOwnedArchives(principal) {
       const result = await pool.query<ArchiveRow>(
         `SELECT job.session_id, job.status, job.artifact_id, job.download_expires_at,
@@ -210,6 +283,14 @@ type ArchiveSource = {
   outcome: string
   occurred_at: Date
 }
+type AudioSegmentRow = {
+  speaker: 'learner' | 'patient'
+  recording_part: number
+  sequence: number
+  turn_id: string | null
+  content_type: 'audio/webm' | 'audio/mp4' | 'audio/mpeg'
+  content: Buffer
+}
 
 export function createSessionArchiveWorker(
   pool: Pool,
@@ -247,8 +328,13 @@ export function createSessionArchiveWorker(
         const content = await readTranscript(pool, job.session_id, source)
         const contentBuffer = Buffer.from(content, 'utf8')
         if (contentBuffer.byteLength > MAX_ARCHIVE_BYTES) throw new Error('archive_size_limit')
+        const audioSegments = await readAudioSegments(pool, job.session_id)
+        const artifactContent = audioSegments
+          ? buildAudioArchive(contentBuffer, audioSegments, source)
+          : contentBuffer
+        const contentType = audioSegments ? 'application/zip' : 'text/plain; charset=utf-8'
         const artifactId = randomUUID()
-        const filename = `gptmd-transcript-${source.occurred_at.toISOString().slice(0, 10)}-${job.session_id.slice(0, 8)}.txt`
+        const filename = `gptmd-session-${source.occurred_at.toISOString().slice(0, 10)}-${job.session_id.slice(0, 8)}.${audioSegments ? 'zip' : 'txt'}`
         const client = await pool.connect()
         try {
           await client.query('BEGIN')
@@ -256,10 +342,10 @@ export function createSessionArchiveWorker(
             `INSERT INTO session_archive_artifacts (
                artifact_id, session_id, tenant_id, subject_id, content_type, filename, content,
                terminal_at, created_at, expires_at
-             ) VALUES ($1, $2, $3, $4, 'text/plain; charset=utf-8', $5, $6, $7, now(), $8)
+             ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now(), $9)
              RETURNING expires_at`,
-            [artifactId, job.session_id, source.tenant_id, source.subject_id, filename, contentBuffer,
-              source.occurred_at, expiresAt]
+            [artifactId, job.session_id, source.tenant_id, source.subject_id, contentType,
+              filename, artifactContent, source.occurred_at, expiresAt]
           )
           const updated = await client.query(
             `UPDATE session_archive_jobs
@@ -372,6 +458,77 @@ async function readTranscript(pool: Pool, sessionId: string, source: ArchiveSour
   return renderSessionTranscript(result.rows, source)
 }
 
+async function readAudioSegments(pool: Pool, sessionId: string): Promise<AudioSegmentRow[] | null> {
+  const consent = await pool.query(
+    `SELECT 1 FROM session_audio_recording_consents WHERE session_id = $1`, [sessionId]
+  )
+  if ((consent.rowCount ?? 0) === 0) return null
+
+  const result = await pool.query<AudioSegmentRow>(
+    `SELECT speaker, recording_part, sequence, turn_id, content_type, content
+     FROM session_audio_segments WHERE session_id = $1
+     ORDER BY speaker, recording_part, sequence`,
+    [sessionId]
+  )
+  const segments = result.rows
+  const learner = segments.filter((segment) => segment.speaker === 'learner')
+  const patient = segments.filter((segment) => segment.speaker === 'patient')
+  if (learner.length === 0) throw new Error('recording_learner_audio_missing')
+
+  const expectedPatientTurns = await pool.query<{ turn_id: string }>(
+    `SELECT turn_id FROM session_transcript
+     WHERE session_id = $1 AND speaker = 'patient' AND turn_id IS NOT NULL
+     GROUP BY turn_id ORDER BY min(sequence), min(utterance_index)`,
+    [sessionId]
+  )
+  const storedPatientTurns = new Set(patient.map((segment) => segment.turn_id))
+  if (expectedPatientTurns.rows.some((turn) => !storedPatientTurns.has(turn.turn_id))) {
+    throw new Error('recording_patient_audio_missing')
+  }
+  if (segments.reduce((total, segment) => total + segment.content.byteLength, 0) > MAX_AUDIO_ARCHIVE_BYTES) {
+    throw new Error('audio_archive_size_limit')
+  }
+  return segments
+}
+
+function buildAudioArchive(transcript: Buffer, segments: AudioSegmentRow[], source: ArchiveSource): Buffer {
+  const files: Record<string, Uint8Array> = { 'transcript.txt': transcript }
+  const learnerParts = new Map<number, AudioSegmentRow[]>()
+  const manifestEntries: Array<{ speaker: string; filename: string; contentType: string; chunks: number }> = []
+  for (const segment of segments) {
+    if (segment.speaker === 'learner') {
+      const part = learnerParts.get(segment.recording_part) ?? []
+      part.push(segment)
+      learnerParts.set(segment.recording_part, part)
+      continue
+    }
+    const filename = `audio/patient-turn-${String(segment.sequence).padStart(5, '0')}.mp3`
+    files[filename] = segment.content
+    manifestEntries.push({ speaker: 'patient', filename, contentType: segment.content_type, chunks: 1 })
+  }
+
+  for (const [partNumber, partSegments] of learnerParts) {
+    const contentType = partSegments[0]?.content_type
+    if (!contentType || partSegments.some((segment) => segment.content_type !== contentType)) {
+      throw new Error('recording_learner_audio_type_mismatch')
+    }
+    const extension = contentType === 'audio/mp4' ? 'm4a' : 'webm'
+    const filename = `audio/learner-part-${String(partNumber).padStart(3, '0')}.${extension}`
+    files[filename] = Buffer.concat(partSegments.map((segment) => segment.content))
+    manifestEntries.push({ speaker: 'learner', filename, contentType, chunks: partSegments.length })
+  }
+
+  files['manifest.json'] = strToU8(JSON.stringify({
+    format: 'gptmd-two-sided-audio-v1',
+    outcome: source.outcome,
+    endedAt: source.occurred_at.toISOString(),
+    recordings: manifestEntries
+  }, null, 2))
+  const archive = Buffer.from(zipSync(files, { level: 0 }))
+  if (archive.byteLength > MAX_AUDIO_ARCHIVE_BYTES) throw new Error('audio_archive_size_limit')
+  return archive
+}
+
 export function renderSessionTranscript(lines: TranscriptLine[], source: ArchiveSource): string {
   if (lines.length > MAX_ARCHIVE_TURNS) throw new Error('archive_turn_limit')
   const entries = lines
@@ -401,10 +558,15 @@ async function recordArchiveFailure(pool: Pool, job: ClaimedArchive): Promise<vo
 }
 
 async function pruneExpiredArchives(pool: Pool): Promise<number> {
+  const audio = await pool.query(
+    `DELETE FROM session_audio_segments AS segment
+     USING session_audio_recording_consents AS consent
+     WHERE consent.session_id = segment.session_id AND consent.expires_at <= now()`
+  )
   const result = await pool.query(
     `DELETE FROM session_archive_artifacts WHERE expires_at <= now()`
   )
-  return result.rowCount ?? 0
+  return (result.rowCount ?? 0) + (audio.rowCount ?? 0)
 }
 
 async function recordEngagement(

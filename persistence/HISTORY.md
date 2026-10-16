@@ -1,5 +1,62 @@
 # Architectural and operational decisions
 
+## 2026-10-16 - Deploy system-admin-only patient variant controls
+
+**Beginning - trigger and context:** The project policy assigns model voice and
+persona controls to TEAECL system administration, not hospital instructors or
+learners. The local instructor UI/API conflicted with that authority rule.
+
+**Middle - decisions and work:** Moved the tenant selector and per-tenant
+variant editor under the exact system-admin subject allowlist, returned 403
+from the former instructor API paths, and added authenticated API and
+cross-browser regressions. Re-read the dirty worktree and preserved unrelated
+changes, updated the guide/checklist to match implementation, and ran the full
+project gate before deployment. `npm run deploy:live` activated release
+`2026-10-16T143141766Z`; no new migration was required.
+
+**End - outcome and verification:** The captured `npm run check` passed with
+431 unit tests, 60 desktop browser tests, 44 preflight tests, 10 mobile-viewer
+tests, and one viewer-tool test; lint, type, API, schema, diagram, and
+warning-free production-build gates passed. Deployment readiness, live OAuth
+and browser preflights, three service states, API readiness, and the public
+patient-settings route passed. The active API bundle contains the new
+system-admin routes and explicit instructor 403 routes. A permission audit
+confirmed release ownership `eaglesvn:eaglesvn` and no group/other-writable
+paths. A read-only query confirmed zero live patient-variant settings and
+audit rows. No signed-in live instructor or system-admin role flow was tested;
+do not claim authenticated live editing is verified.
+
+**Future utility:** Keeps system settings out of tenant roles while preserving
+tenant-scoped configuration data, revisions, and audit history. Complete a
+signed-in live role check and obtain explicit educator values before approval.
+
+## 2026-10-16 - Verify VinMed invitation and correct live-state documentation
+
+**Beginning - trigger and context:** The user asked to provision VinMed and
+where to add Google OAuth test accounts. Existing checklist and tenant notes
+still described the tenant as absent, although a later deployment and seed had
+been reported.
+
+**Middle - decisions and work:** Read the current worktree and project SOP,
+then queried the live database read-only as `gptmd_live_app`. Confirmed the
+fictitious `vinmed-hospital-demo` tenant, VinMed branding and logo path, and a
+pending verified-email invitation for `ayeyamsam@gmail.com` with
+`customer_admin` role, no learner assignments, no accepted identity, and
+disabled AI entitlements. Updated the checklist and tenant guide to distinguish
+provisioned invitation from active membership. Documented Google Auth Platform
+> Audience > External / Testing > Test users and the fact that an Internal
+audience still rejects personal Gmail with `org_internal`.
+
+**End - outcome and verification:** The live DB identity was confirmed as
+`gptmd_live` / `gptmd_live_app`; the tenant/invitation/branding state was
+returned by a read-only query. `git diff --check` passed. No OAuth audience
+setting or invitation was changed in this task. The customer admin still needs
+to sign in with the invited Google account before membership activation.
+
+**Future utility:** This records the operator's remaining Google Console action
+and prevents the checklist from implying that a pending invitation is already
+an active customer-admin account.
+
 ## 2026-10-16 - Deploy tenant-scoped VinMed branding
 
 **Beginning - trigger and context:** The user requested a fictitious corporate
@@ -807,3 +864,63 @@ callback or broaden the CRS exclusion for that separate gate.
 **Future utility:** After the migration is deployed, run the guarded seed only against its exact live database target; require the invited identity to authenticate with the matching verified provider email before customer-admin membership exists. Continue implementing and testing the consent-gated audio path and separate speech quota before revisiting `t36` or `v09`.
 
 **Project impact:** Observed: invitation elevation is represented by a durable system-issued role field and audit, learner roster management cannot rewrite that role, and the isolated verifier now exercises all current migrations. Expected: schema additions will be covered automatically by the phase verifier. Live corporate account activation and audio recording remain outstanding.
+
+## 2026-10-17 - Deploy system speech quota and opt-in audio archive
+
+**Beginning - trigger and context:** The user requested a mirror sync and reported that `ayeyamsam@gmail.com` was already in Google OAuth, later clarifying the audience type is External. Local speech and two-sided recording work included new migrations 043 and 044, so the release required full local, isolated-database, OAuth, readiness, and ownership verification.
+
+**Middle - decisions and work:** The first disposable phase run exposed a missing unique `(session_id, tenant_id, subject_id)` key on recording consent, required by the segment ownership foreign key; migration 044 now declares that key. The first deploy applied migrations 043/044 but the new API failed to start because `fflate` was imported by the ZIP archive code yet absent from `services/api/package.json`; the deploy script rolled back to the previous release. Added `fflate` to API production dependencies and a regression test that parses every API source import and requires its external package in the API production dependency manifest.
+
+**End - outcome and verification:** `npm run verify:phase2` passed with a disposable PostgreSQL database and a dedicated loopback Redis Stack, applying all migrations and exercising the real Express/session/archive flow. `npm run check` passed with 453 unit tests, 63 desktop browser tests, 44 encounter-preflight cases, 10 mobile-viewer cases, and one viewer-tool case, plus lint, type, API, schema, diagram, and warning-free production-build checks. The retry activated release `2026-10-16T180135773Z`; all three services are active, `/readyz` is healthy, public home returns 200, and origin/public OAuth-start probes reach Google's authorization endpoint with the expected callback. A read-only live query found 43 migration records through 044, speech disabled at zero monthly characters, and zero audio consents/segments. The release tree has matching `eaglesvn:eaglesvn` ownership, no group/other-writable paths, and no env/PEM/key files. No real account sign-in, live speech generation, microphone consent/upload, archive download, or 72-hour expiry test was performed. The isolated verifier container was stopped after completion.
+
+**Future utility:** Keep API runtime dependencies scoped to `services/api/package.json`; a successful monorepo build alone does not prove the deployment's isolated `npm ci --omit=dev` can load the API bundle. Keep the live speech policy disabled until an authorized system-admin review and test; verify recording only with explicit learner opt-in and a signed-in owned-session browser flow.
+
+**Project impact:** Observed: the production-only API dependency failure and migration FK defect were repaired and covered; the mirror runs the new release and schema. Speech remains deliberately disabled and no audio is stored until a learner opts in; live user behavior remains unverified.
+
+## 2026-10-17 - Configure and smoke-test Anthropic failover credential on mirror
+
+**Beginning - trigger and context:** The user selected Claude Haiku 5.5 as the OpenAI failover provider and asked to sync current work to the mirror. The active release already contained the Anthropic patient-turn adapter, but only the developer `.env` had an Anthropic key; the private live API environment did not.
+
+**Middle - decisions and work:** Added `npm run configure:live-anthropic`, a guarded helper that reads the existing local credential without printing it, refuses to overwrite a different live credential, preserves the private API environment's ownership/mode, creates a private backup before modifying the file, atomically writes the value, restarts the API, and waits for readiness. Added focused tests for setting replacement, append, duplicate entries, and unsupported values. The mirror's existing API environment now contains the key at mode 0600. No credential was added to repository files, release artifacts, or terminal output.
+
+**End - outcome and verification:** `npm run check` exited 0 with 456 unit tests, 63 desktop browser tests, 44 encounter-preflight cases, 10 mobile-viewer cases, and one viewer-tool case; lint, type, API, schema, diagram, and production-build gates passed. The guarded configuration command restarted the live API and readiness passed. All three GPTMD app services report active. The active API bundle contains the Anthropic failover adapter and canonical `claude-haiku-5-5` model ID. A minimal non-PHI request to Anthropic returned HTTP 200 with 17 input and 5 output tokens. An initial manual smoke using an uppercase model identifier returned 404; retrying the canonical lowercase model ID succeeded. This proves credential/provider availability only, not the GPTMD patient-turn failover path under an OpenAI outage. The VinMed invitation remains pending; learner/admin sign-in and AI entitlements remain unverified/disabled. Live speech quota remains disabled at zero characters, and no audio consent or segment rows exist.
+
+**Future utility:** Keep real provider failover and recovery, scenario-setup behavior, privacy/operational review, and a signed-in role-specific browser flow open. Never simulate an outage using real learner/patient data; provider routing needs deterministic tests or an isolated synthetic test session.
+
+**Project impact:** Observed: the mirror has the selected provider credential and Anthropic accepts the canonical model request; the main application path is not yet proven to route an accepted session to Anthropic after OpenAI failure. No live user was signed in, no learner entitlement was enabled, and no clinical content was submitted to Anthropic.
+
+## 2026-10-17 - Stream patient speech into supported browser players
+
+**Beginning - trigger and context:** Checklist node `t36` remained open because the API streamed patient MP3 data but the browser called `response.blob()` and waited for the full reply before playback. OpenAI's current Text-to-Speech guide documents chunk-transfer streaming; MediaSource capability checks showed MP3 support in Chromium and WebKit, but not Firefox.
+
+**Middle - decisions and work:** Changed the authenticated patient-speech client to return the response body stream and content type. Added a MediaSource player that appends ordered MP3 chunks incrementally, reports completion/cancellation, and rejects an empty stream. Browsers without MP3 MediaSource support retain the existing buffered path. Patient audio capture remains server-side and still stores the complete audio segment before ending the response, preserving archive semantics. Added a unit test proving the first chunk is appended while the body is still open and another proving cancellation settles the active read and completion promise.
+
+**End - outcome and verification:** `npm run check` passed with 459 unit tests, 63 desktop browser tests, 44 encounter-preflight cases, 10 mobile-viewer tests, and one viewer-tool test, plus lint, type, API, schema, diagram, and production-build gates. `npm run deploy:live` activated `2026-10-16T185826836Z`. All three services are active, API `/readyz` and public home returned HTTP 200, and live OAuth/browser probes passed. The release bundle contains the streaming reader. The live speech policy remains disabled at zero monthly characters, so no signed-in speech generation or actual browser playback timing was verified. Keep `t36` open for browser-level quota-backed playback and retain the Firefox buffered fallback caveat.
+
+**Future utility:** When live speech is enabled by an authorized system administrator, test a signed-in session in Chromium, Firefox, and Safari/WebKit, confirming the first-audio and playback-complete timings and matching any recorded patient audio to the accepted reply. Do not use a synthetic stream test as evidence of real provider latency.
+
+**Project impact:** Observed: supported browsers can receive the streamed MP3 progressively in code, and the mirror serves the updated bundle. Expected: faster first-audio response for supported browsers. Live voice remains disabled; no user audio or provider TTS request was produced.
+
+## 2026-10-17 - Measure streamed patient-speech timing boundaries
+
+**Beginning - trigger and context:** Checklist node `z04` had request, playback-start, and playback-end marks in the encounter DOM but could not distinguish first server audio bytes or response-body completion. The new MediaSource playback path needed the same measurement semantics as its buffered browser fallback.
+
+**Middle - decisions and work:** Added a pass-through audio stream observer that records the first non-empty byte chunk and normal EOF using the same monotonic `performance.now()` clock as request and playback marks. The encounter exposes these values with request/start/end timing as transient root DOM attributes. Cancellation does not count as completion, and no patient text, audio content, or timing is persisted. Added regression tests for first-byte order, empty chunks, forwarding, EOF completion, and cancellation.
+
+**End - outcome and verification:** `npm run check` exited 0 with 461 unit tests, 63 desktop browser tests, 44 encounter-preflight cases, 10 mobile-viewer tests, and one viewer-tool test, alongside lint, type, API, schema, diagram, and production-build gates. Release `2026-10-16T191137010Z` is active on the mirror; all three services are active, API readiness and public home return HTTP 200, OAuth and browser probes pass, and the active bundle includes the new timing instrumentation. Live speech remains disabled at zero monthly characters, so no user-generated first-byte, response-completion, or playback-end sample was collected. `z04` remains open pending such samples.
+
+**Future utility:** Collect representative signed-in TTS timing samples after an authorized system administrator enables a bounded speech quota; retain the Firefox buffered compatibility path and compare its timing with MediaSource playback without storing content.
+
+**Project impact:** Observed: supported and buffered server-audio paths now expose consistent client-side timing boundaries. Live provider latency and learner playback remain unverified.
+
+## 2026-10-17 - Verify archive lifecycle and consent-gated patient audio capture
+
+**Beginning - trigger and context:** The archive checklist's latest isolated verifier evidence was dated 2026-10-16, and the patient-speech route had no focused test for storing generated patient MP3 under the existing per-session recording consent.
+
+**Middle - decisions and work:** A first `npm run verify:phase2` attempt safely stopped before any writes because every non-default logical DB on the configured shared Redis was occupied. Following the SOP, ran the verifier against a disposable loopback Redis Stack on port 16379 with `appendfsync=everysec`; the run created and dropped its own temporary PostgreSQL database and the shell stopped/removed the disposable Redis container. It verified text archive generation/download, exact terminal+72-hour listing metadata, download outcomes/byte counts, and retry after an injected artifact-write failure. Added API route regressions proving generated patient audio is stored against the accepted turn only when two-sided recording consent exists, and not stored when consent is absent.
+
+**End - outcome and verification:** `npm run verify:phase2` exited 0 with the isolated infrastructure and produced a clean cleanup result. The focused patient-speech route tests passed, and `npm run check` exited 0 with 462 unit tests, 63 desktop browser tests, 44 encounter-preflight cases, 10 mobile-viewer cases, and one viewer-tool case, plus lint, type, API, schema, diagram, and production-build gates. `git diff --check` passed. The runtime was unchanged by the test-only regression and remains on release `2026-10-16T191137010Z`; no deployment was needed. Live archive jobs, consent, audio segments, user downloads, and expiry cleanup remain unverified.
+
+**Future utility:** Keep live retention gates open until an authorized signed-in learner performs an opted-in session and the artifact, ownership, download event, and exact expiry cleanup are checked on the target runtime.
+
+**Project impact:** Observed: disposable integration evidence now covers the current text archive lifecycle, and the API has regression coverage for the patient-audio consent/storage boundary. Expected: prevents unconsented generated patient audio from entering a session archive. No live learner audio was recorded.

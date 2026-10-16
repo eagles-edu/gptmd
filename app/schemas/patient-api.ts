@@ -49,12 +49,12 @@ export const PatientVariantPresentationSettingsSchema = z.object({
   ]),
   settingsRevision: z.number().int().positive(),
   voiceProfileId: z.string().min(1),
-  provider: z.literal('browser-speech-synthesis'),
+  provider: z.enum(['browser-speech-synthesis', 'openai-audio-speech']),
   voiceId: z.string().min(1),
   locale: z.string().min(1),
-  rate: z.number().min(0.5).max(2),
-  pitch: z.number().min(0).max(2),
-  volume: z.number().min(0).max(1),
+  rate: z.number().min(0.5).max(2).nullable(),
+  pitch: z.number().min(0).max(2).nullable(),
+  volume: z.number().min(0).max(1).nullable(),
   fallbackVoiceId: z.string().min(1)
 }).strict()
 

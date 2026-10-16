@@ -70,6 +70,7 @@ export type PatientTurnGenerationContext = {
   acceptedTurns: SessionTurn[]
   phase: EncounterPhase
   learnerMessage: string
+  provider?: 'openai' | 'anthropic'
   retryAfterValidationFailure?: boolean
 }
 
@@ -217,7 +218,7 @@ export function matchPainCueFields(learnerMessage: string): (typeof PAIN_PROFILE
     PAIN_CUES[field].some((cue) => message.includes(` ${normalizedWords(cue)} `)))
 }
 
-const patientTurnInstructions = [
+export const PATIENT_TURN_INSTRUCTIONS = [
   'You are roleplaying the fictional patient in a medical training encounter.',
   'Use only the supplied patient-known scenario details and the accepted encounter transcript.',
   'Do not reveal or rely on any private diagnosis, answer key, rubric, or clinician-only interpretation, including information already present in this session Conversation.',
@@ -248,7 +249,7 @@ export async function generatePatientTurn(
   context: PatientTurnGenerationContext,
   recordTiming?: ResponsesTimingRecorder,
   reserveProviderTokens?: (inputTokens: number, outputTokenCap: number) => Promise<ProviderTokenReservation>
-): Promise<{ responseId: string; output: unknown; providerUsage: ProviderUsageSample | null }> {
+): Promise<{ responseId: string; output: unknown; providerUsage: ProviderUsageSample | null; provider: 'openai' }> {
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
   const matchedPainFields = new Set(matchPainCueFields(context.learnerMessage))
   const scenarioFields = new Set(context.profile.history.map((entry) => entry.field))
@@ -289,7 +290,7 @@ export async function generatePatientTurn(
     model,
     conversation: context.conversationId,
     input: [
-      { role: 'developer', content: patientTurnInstructions },
+      { role: 'developer', content: PATIENT_TURN_INSTRUCTIONS },
       {
         role: 'user',
         content: JSON.stringify({
@@ -377,6 +378,7 @@ export async function generatePatientTurn(
       outputTokens: usage.output_tokens
     })
     return {
+      provider: 'openai',
       responseId: response.id,
       model: response.model,
       serviceTier: response.service_tier ?? null,
@@ -399,7 +401,8 @@ export async function generatePatientTurn(
   return {
     responseId: response.id,
     output: parsedOutput,
-    providerUsage
+    providerUsage,
+    provider: 'openai'
   }
 }
 

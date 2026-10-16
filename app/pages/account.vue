@@ -142,8 +142,8 @@
           <p v-if="archiveMessage" class="membership-status" role="status">{{ archiveMessage }}</p>
           <p v-if="archiveState === 'loading'" class="status-label">Loading archives…</p>
           <p v-else-if="archiveState === 'error'" class="status-label">Archives unavailable</p>
-          <p v-else-if="archives.length === 0">No completed encounter transcripts are available.</p>
-          <ul v-else class="archive-list" aria-label="Encounter transcript archives">
+          <p v-else-if="archives.length === 0">No completed session archives are available.</p>
+          <ul v-else class="archive-list" aria-label="Session archives">
             <li v-for="archive in archives" :key="archive.archiveId">
               <div class="archive-details">
                 <strong>{{ archiveLabel(archive) }}</strong>
@@ -159,7 +159,7 @@
                 :disabled="downloadingArchiveId === archive.sessionId"
                 @click="downloadArchive(archive)"
               >
-                {{ downloadingArchiveId === archive.sessionId ? 'Preparing…' : 'Download transcript' }}
+                {{ downloadingArchiveId === archive.sessionId ? 'Preparing…' : 'Download archive' }}
               </button>
             </li>
           </ul>
@@ -167,7 +167,7 @@
             Refresh archives
           </button>
         </template>
-        <p v-else class="membership-status">Transcript archives are available to learners in their selected workspace.</p>
+        <p v-else class="membership-status">Session archives are available to learners in their selected workspace.</p>
       </section>
       <section class="status-card payment-card" aria-labelledby="payment-title">
         <div class="card-heading"><span aria-hidden="true">$</span><h2 id="payment-title">Payment gateway</h2></div>
@@ -555,17 +555,18 @@ async function downloadArchive(archive: SessionArchive): Promise<void> {
     )
     if (!result.ok) throw new Error('download_unavailable')
     const blob = await result.blob()
+    const extension = result.headers.get('content-type')?.includes('application/zip') ? 'zip' : 'txt'
     const filename = result.headers.get('content-disposition')?.match(/filename="([A-Za-z0-9._-]+)"/)?.[1]
-      ?? `gptmd-transcript-${archive.sessionId.slice(0, 8)}.txt`
+      ?? `gptmd-session-${archive.sessionId.slice(0, 8)}.${extension}`
     const objectUrl = URL.createObjectURL(blob)
     const link = document.createElement('a')
     link.href = objectUrl
     link.download = filename
     link.click()
     window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
-    archiveMessage.value = 'Transcript download started.'
+    archiveMessage.value = 'Session archive download started.'
   } catch {
-    archiveMessage.value = 'Transcript could not be downloaded. Refresh the archive list and try again.'
+    archiveMessage.value = 'Session archive could not be downloaded. Refresh the archive list and try again.'
     await loadArchives()
   } finally {
     downloadingArchiveId.value = null

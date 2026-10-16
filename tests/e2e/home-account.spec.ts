@@ -77,7 +77,7 @@ test('account requires sign-in when Supabase is configured', async ({ page }) =>
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
 })
 
-test('learner can download an available transcript archive from Account', async ({ page }) => {
+test('learner can download an available session archive from Account', async ({ page }) => {
   const sessionId = 't'.repeat(43)
   let downloadHeaders: Record<string, string> = {}
   await page.route('**/auth/v1/user', async (route) => route.fulfill({
@@ -185,9 +185,9 @@ test('learner can download an available transcript archive from Account', async 
   await expect(page.getByText('Ready to download')).toBeVisible()
 
   const download = page.waitForEvent('download')
-  await page.getByRole('button', { name: 'Download transcript' }).click()
-  expect((await download).suggestedFilename()).toBe(`gptmd-transcript-${sessionId.slice(0, 8)}.txt`)
-  await expect(page.getByRole('status').filter({ hasText: 'Transcript download started.' })).toBeVisible()
+  await page.getByRole('button', { name: 'Download archive' }).click()
+  expect((await download).suggestedFilename()).toBe(`gptmd-session-${sessionId.slice(0, 8)}.txt`)
+  await expect(page.getByRole('status').filter({ hasText: 'Session archive download started.' })).toBeVisible()
   expect(downloadHeaders.authorization).toMatch(/^Bearer /)
   expect(downloadHeaders['x-gptmd-tenant-id']).toBe('tenant-one')
 })
@@ -203,7 +203,7 @@ test('login navigates to Supabase to start Google OAuth', async ({ page }) => {
     })
   })
 
-  await page.goto('/login')
+  await page.goto('/login', { waitUntil: 'domcontentloaded' })
 
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
   await expect(page).toHaveTitle('Sign in | GPTpatient')

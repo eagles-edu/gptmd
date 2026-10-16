@@ -143,6 +143,7 @@ export const PatientScenarioSetupResponseSchema = z.object({
 export const SessionTurnSchema = z.object({
   turnId: OpaqueIdSchema,
   sessionId: ApplicationSessionIdSchema,
+  provider: z.enum(['openai', 'anthropic']).default('openai'),
   sequence: z.number().int().positive(),
   acceptedAt: UtcTimestampSchema,
   phase: EncounterPhaseSchema,
@@ -320,6 +321,7 @@ export const CurrentEncounterResponseSchema = z.object({
 
 /** Provider-side metering metadata carried only with the private recovery event. */
 export const ProviderUsageSampleSchema = z.object({
+  provider: z.enum(['openai', 'anthropic']).default('openai'),
   responseId: z.string().trim().min(1).max(200),
   model: z.string().trim().min(1).max(200),
   serviceTier: z.enum(['auto', 'default', 'flex', 'scale', 'priority', 'fast', 'ultrafast']).nullable(),
@@ -372,7 +374,7 @@ export const SessionHistoryEventSchema = z.discriminatedUnion('eventType', [
         event.sequence !== event.payload.sequence || event.occurredAt !== event.payload.acceptedAt) {
       context.addIssue({ code: 'custom', message: 'Accepted-turn envelope does not match its payload' })
     }
-    if (new Set(event.providerUsage.map((usage) => usage.responseId)).size !== event.providerUsage.length) {
+    if (new Set(event.providerUsage.map((usage) => `${usage.provider}\0${usage.responseId}`)).size !== event.providerUsage.length) {
       context.addIssue({ code: 'custom', message: 'Provider response IDs must be unique within an accepted turn' })
     }
   }),

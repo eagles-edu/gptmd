@@ -1,0 +1,4 @@
+;!function(){try { var e="undefined"!=typeof globalThis?globalThis:"undefined"!=typeof global?global:"undefined"!=typeof window?window:"undefined"!=typeof self?self:{},n=(new e.Error).stack;n&&((e._debugIds|| (e._debugIds={}))[n]="9570725d-b5f6-2079-cf0a-d3ce4388de34")}catch(e){}}();
+(globalThis.TURBOPACK||(globalThis.TURBOPACK=[])).push(["object"==typeof document?document.currentScript:void 0,541861,t=>{"use strict";var e=t.i(843476),a=t.i(302673);try{var r=window;r._sentryModuleMetadata=r._sentryModuleMetadata||{},r._sentryModuleMetadata[(new r.Error).stack]=Object.assign({},r._sentryModuleMetadata[(new r.Error).stack],{"_sentryBundlerPluginAppKey:anthropic-apps":!0})}catch(t){}t.s(["SkillsLayout",0,({children:t})=>(0,e.jsx)(a.PageLayout,{children:t})])}]);
+
+//# debugId=9570725d-b5f6-2079-cf0a-d3ce4388de34

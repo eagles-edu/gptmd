@@ -12,6 +12,14 @@
       "type": "string",
       "pattern": "^[A-Za-z0-9_-]{43}$"
     },
+    "provider": {
+      "default": "openai",
+      "type": "string",
+      "enum": [
+        "openai",
+        "anthropic"
+      ]
+    },
     "sequence": {
       "type": "integer",
       "exclusiveMinimum": 0,
@@ -874,6 +882,7 @@
   "required": [
     "turnId",
     "sessionId",
+    "provider",
     "sequence",
     "acceptedAt",
     "phase",

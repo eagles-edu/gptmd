@@ -837,6 +837,7 @@ export async function generatePatientScenario(
         outputTokens: response.usage.output_tokens
       })
       return {
+        provider: 'openai',
         responseId: response.id,
         model: response.model,
         serviceTier: response.service_tier ?? null,

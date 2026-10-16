@@ -12,6 +12,7 @@ import {
   AssessmentFieldsSchema,
   LocalTranscriptUtteranceSchema,
   TerminalEventSchema,
+  ProviderUsageSampleSchema,
   type AssessmentFields,
   type AssessmentDraftFields,
   type AssessmentSubmission,
@@ -202,6 +203,7 @@ export interface SessionStore {
       responseId: string
       output: unknown
       providerUsage: ProviderUsageSample | null
+      provider?: 'openai' | 'anthropic'
     }>,
     learnerModality?: LearnerInputModality,
     onLockAttemptMeasured?: (waitMs: number) => void,
@@ -905,17 +907,19 @@ export function createPostgresSessionStore(
 
         const queuedProviderResponseIds = new Set<string>()
         const recordProviderUsage = async (usage: ProviderUsageSample): Promise<void> => {
-          if (queuedProviderResponseIds.has(usage.responseId)) return
-          const usageEventId = `usage_${createHash('sha256').update(`openai\0${usage.responseId}`).digest('hex')}`
+          const normalizedUsage = ProviderUsageSampleSchema.parse(usage)
+          const responseKey = `${normalizedUsage.provider}\0${normalizedUsage.responseId}`
+          if (queuedProviderResponseIds.has(responseKey)) return
+          const usageEventId = `usage_${createHash('sha256').update(responseKey).digest('hex')}`
           await patientStateStore.appendProviderUsage({
             eventId: usageEventId,
             sessionId,
             eventType: 'provider_usage',
             operation: 'scenario_generation',
             occurredAt: new Date().toISOString(),
-            usage
+            usage: normalizedUsage
           })
-          queuedProviderResponseIds.add(usage.responseId)
+          queuedProviderResponseIds.add(responseKey)
         }
         const generated = await generateScenario(versions, session.created_at, scenarioSeed, recordProviderUsage)
         if (generated.addonTokensUsed) {
@@ -925,8 +929,11 @@ export function createPostgresSessionStore(
             [sessionId, principal.tenantId, principal.subjectId]
           )
         }
-        if (generated.usage && !queuedProviderResponseIds.has(generated.usage.responseId)) {
-          await recordProviderUsage(generated.usage)
+        if (generated.usage) {
+          const normalizedUsage = ProviderUsageSampleSchema.parse(generated.usage)
+          if (!queuedProviderResponseIds.has(`${normalizedUsage.provider}\0${normalizedUsage.responseId}`)) {
+            await recordProviderUsage(normalizedUsage)
+          }
         }
         const profile = PatientScenarioProfileSchema.parse(generated.profile)
         const presentationSettings = generated.presentationSettings
@@ -1085,20 +1092,27 @@ export function createPostgresSessionStore(
           },
           acceptedTurns: current.acceptedTurns,
           phase: current.state.phase,
-          learnerMessage
+          learnerMessage,
+          provider: current.acceptedTurns.at(-1)?.provider ?? 'openai'
         }
 
         let acceptedContent: AcceptedPatientTurnContent | undefined
         let validationFailed = false
+        let turnProvider: 'openai' | 'anthropic' = context.provider ?? 'openai'
         const providerUsage: ProviderUsageSample[] = []
         for (let attempt = 0; attempt < 2; attempt += 1) {
-          let generated: { responseId: string; output: unknown; providerUsage: ProviderUsageSample | null }
+          let generated: { responseId: string; output: unknown; providerUsage: ProviderUsageSample | null; provider?: 'openai' | 'anthropic' }
           try {
-            generated = await generateTurn({ ...context, retryAfterValidationFailure: attempt > 0 })
+            generated = await generateTurn({
+              ...context,
+              provider: turnProvider,
+              retryAfterValidationFailure: attempt > 0
+            })
           } catch {
             queueTurnAudit(patientStateStore, 'patient_turn_model_failure', sessionId, turnId, attempt + 1, options.recordHandoffTiming)
             return 'provider_error'
           }
+          turnProvider = generated.provider ?? generated.providerUsage?.provider ?? turnProvider
           if (generated.providerUsage) providerUsage.push(generated.providerUsage)
           try {
             acceptedContent = validatePatientTurnOutput(
@@ -1127,6 +1141,7 @@ export function createPostgresSessionStore(
         const turn = SessionTurnSchema.parse({
           turnId,
           sessionId,
+          provider: turnProvider,
           sequence,
           acceptedAt,
           phase: context.phase,

@@ -85,6 +85,9 @@ test('resumes a saved encounter and sends the next turn through its existing ses
       })
     })
   })
+  await page.route(`**/api/sessions/${sessionId}/audio-recording/consent`, (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ consented: false })
+  }))
   await page.route('**/api/sessions', async (route) => {
     if (route.request().method() === 'POST' && new URL(route.request().url()).pathname === '/api/sessions') {
       createSessionRequests += 1
@@ -318,12 +321,12 @@ test('preflight explains voice privacy and lets the learner choose transcript or
   await page.waitForTimeout(300)
   await expect(dialog.getByText(/local storage is not a secure session vault/)).toBeVisible()
   await expect(dialog.getByText(/records a 30-second pulse only while this page is visible/)).toBeVisible()
-  await expect(dialog.getByText(/your microphone audio goes to OpenAI Realtime for transcription only/i)).toBeVisible()
-  await expect(dialog.getByText(/patient reply audio is not sent to OpenAI/i)).toBeVisible()
+  await expect(dialog.getByText(/your microphone audio goes to OpenAI Realtime for transcription/i)).toBeVisible()
+  await expect(dialog.getByText(/raw microphone audio is not stored by GPTMD/i)).toBeVisible()
   await page.screenshot({ path: '/tmp/gptmd-encounter-preflight-desktop.png', fullPage: false })
 
   await dialog.getByRole('radio', { name: /Voice conversation/ }).check()
-  await expect(dialog.getByText(/your microphone audio goes to OpenAI Realtime for transcription only/i)).toBeVisible()
+  await expect(dialog.getByText(/your microphone audio goes to OpenAI Realtime for transcription/i)).toBeVisible()
   await expect(dialog.getByRole('button', { name: 'Continue with voice' })).toBeDisabled()
   await dialog.getByRole('checkbox', { name: /use fictional details only/i }).check()
   await expect(dialog.getByRole('button', { name: 'Continue with voice' })).toBeDisabled()
@@ -584,7 +587,7 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
   await page.goto('/encounter')
   const dialog = page.getByRole('dialog', { name: 'Before you begin' })
   await dialog.getByRole('radio', { name: /Voice conversation/ }).check()
-  await expect(dialog.getByText(/your microphone audio goes to OpenAI Realtime for transcription only/i)).toBeVisible()
+  await expect(dialog.getByText(/your microphone audio goes to OpenAI Realtime for transcription/i)).toBeVisible()
   await dialog.getByRole('checkbox', { name: /use fictional details only/i }).check()
   await dialog.getByRole('checkbox', { name: /send my microphone audio to OpenAI/i }).check()
   await dialog.getByRole('button', { name: 'Allow microphone access' }).click()
@@ -1054,6 +1057,9 @@ test('restores and autosaves an unsubmitted assessment draft through the owner s
       assessmentDraft: { revision: 4, fields: draftFields, updatedAt: '2026-10-01T00:05:00.000Z' },
       assessment: null
     } })
+  }))
+  await page.route(`**/api/sessions/${sessionId}/audio-recording/consent`, (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ consented: false })
   }))
   await page.route(`**/api/sessions/${sessionId}/assessment-draft`, async (route) => {
     const body = route.request().postDataJSON() as { revision: number; summary: string; plan: string }

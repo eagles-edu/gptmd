@@ -213,7 +213,7 @@ describe('patient setup Conversation isolation', () => {
       .toContain(`Stable scenario variation seed: ${'s'.repeat(43)}`)
     expect(request.text?.format).toEqual(expect.any(Object))
     expect(scenario.usage).toEqual({
-      responseId: 'resp-1', model: 'gpt-6-luna', serviceTier: 'default',
+      provider: 'openai', responseId: 'resp-1', model: 'gpt-6-luna', serviceTier: 'default',
       inputTokens: 20, cachedInputTokens: 0, cacheWriteTokens: 0, outputTokens: 30,
       totalTokens: 50, durationMs: expect.any(Number),
       pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000017000000'

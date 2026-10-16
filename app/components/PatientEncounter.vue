@@ -3,6 +3,8 @@
     class="encounter-page"
     aria-label="Patient encounter"
     :data-tts-requested-at="ttsRequestedAt"
+    :data-tts-first-byte-at="ttsFirstByteAt"
+    :data-tts-response-completed-at="ttsResponseCompletedAt"
     :data-tts-started-at="ttsStartedAt"
     :data-tts-ended-at="ttsEndedAt"
   >
@@ -63,14 +65,15 @@
               <input v-model="interactionMode" type="radio" name="interaction-mode" value="audio" :disabled="!audioTranscriptionAvailable">
               <span>
                 <strong>Voice conversation</strong>
-                <small v-if="audioTranscriptionAvailable">OpenAI transcribes your microphone audio; the patient replies in text, which this browser reads aloud.</small>
+                <small v-if="audioTranscriptionAvailable && profile?.presentationSettings?.provider === 'openai-audio-speech'">OpenAI transcribes your microphone. This patient's replies may use AI-generated speech; browser speech is the fallback.</small>
+                <small v-else-if="audioTranscriptionAvailable">OpenAI transcribes your microphone audio; the patient replies in text, which this browser reads aloud.</small>
                 <small v-else>Voice transcription is unavailable for this workspace right now. Continue with Transcript mode.</small>
               </span>
             </label>
           </fieldset>
 
           <div class="readiness-details">
-            <p v-if="interactionMode === 'audio'"><strong>Voice data flow:</strong> your microphone audio goes to OpenAI Realtime for transcription only. GPTpatient sends the finalized words to the patient model; its text reply is read aloud by your browser. Patient reply audio is not sent to OpenAI. GPTpatient does not record or store raw microphone audio. OpenAI processes your audio under the account’s API terms and data controls.</p>
+            <p v-if="interactionMode === 'audio'"><strong>Voice data flow:</strong> your microphone audio goes to OpenAI Realtime for transcription. GPTpatient sends finalized words to the patient model. <span v-if="audioRecordingConsent">Because you opted in, GPTMD also stores microphone audio and generated patient speech in a private session archive, available until 72 hours after the visit ends. The recording is marked unavailable if either side is missing.</span><span v-else>Raw microphone audio is not stored by GPTMD. The patient may speak using server-generated or browser speech.</span> OpenAI processes submitted audio under the account’s API terms and data controls.</p>
             <p v-else><strong>Typed transcript:</strong> type each question and read the patient's written reply. No microphone access or audio processing is used. You can choose voice conversation before continuing.</p>
             <p><strong>Active-time estimate:</strong> during an active visit, GPTpatient records a 30-second pulse only while this page is visible and there has been recent interaction. This estimate appears in workspace-admin reports; it is not continuous monitoring or CEU evidence.</p>
             <p><strong>Browser storage:</strong> local storage is not a secure session vault and has no permission prompt. GPTpatient does not save account or encounter data there. Any browser request for persistent storage would be separate; this app makes no such request.</p>
@@ -85,6 +88,10 @@
               <input v-model="audioTranscriptionConsent" type="checkbox">
               <span>I agree to send my microphone audio to OpenAI for live transcription during this visit.</span>
             </label>
+            <label v-if="interactionMode === 'audio'" class="fictional-confirmation">
+              <input v-model="audioRecordingConsent" type="checkbox">
+              <span>I opt in to recording both sides for a private download. GPTMD stores the microphone and generated patient audio until 72 hours after this visit ends.</span>
+            </label>
             <button
               v-if="interactionMode === 'audio'"
               type="button"
@@ -95,10 +102,10 @@
               {{ checkingMicrophone ? 'Checking microphone…' : microphoneAccessGranted ? 'Microphone access ready' : 'Allow microphone access' }}
             </button>
             <p v-if="microphoneAccessGranted && interactionMode === 'audio'" class="permission-status" role="status">
-              Microphone access is ready. Audio will only be sent for transcription after you enter the room.
+              Microphone access is ready. Audio transmission and recording follow the choices above.
             </p>
             <p v-if="preflightError" class="permission-error" role="alert">{{ preflightError }}</p>
-            <button type="button" class="continue-button" :disabled="!canContinue" @click="continueWithMode">
+            <button type="button" class="continue-button" :disabled="!canContinue || savingRecordingConsent" @click="continueWithMode">
               Continue with {{ interactionMode === 'audio' ? 'voice' : 'transcript' }}
             </button>
           </div>
@@ -367,6 +374,7 @@
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, shallowRef, watch } from 'vue'
 import { BudgetGroupSelectionRequiredError, usePatientApi, type CurrentEncounterResult, type PatientProfile } from '../composables/usePatientApi'
 import type { AssessmentFields } from '../schemas/patient-api'
+import { observeAudioStream, streamAudioToMediaSource, supportsMediaSourceAudio, type MediaSourceAudioPlayback } from '../utils/media-source-audio'
 import { derivePatientPortraitPath } from '../utils/patient-portrait'
 import { resolvePatientVoice, waitForSpeechSynthesisVoices } from '../utils/patient-variant-voice'
 import { classifyVoiceRepair, isAssessmentTransitionCue, MicrophoneSilenceCommitter, shouldSpeakPatientReply, VoiceTurnBuffer } from '../utils/voice-turn'
@@ -429,6 +437,9 @@ const preflightOpen = ref(false)
 const interactionMode = ref<InteractionMode>('audio')
 const fictionalDetailsConfirmed = ref(false)
 const audioTranscriptionConsent = ref(false)
+const audioRecordingConsent = ref(false)
+const savingRecordingConsent = ref(false)
+const audioRecordingFailed = ref(false)
 const preflightComplete = ref(false)
 const microphoneAccessGranted = ref(false)
 const checkingMicrophone = ref(false)
@@ -448,6 +459,7 @@ const realtimeConnection = shallowRef<RTCPeerConnection | null>(null)
 const realtimeEvents = shallowRef<RTCDataChannel | null>(null)
 const realtimeReady = ref(false)
 const microphoneStream = shallowRef<MediaStream | null>(null)
+const audioRecorder = shallowRef<MediaRecorder | null>(null)
 const microphoneContext = shallowRef<AudioContext | null>(null)
 const microphoneAnalyser = shallowRef<AnalyserNode | null>(null)
 const speechListening = ref(false)
@@ -455,9 +467,12 @@ const speechMessage = ref('')
 const voiceConversationActive = ref(false)
 const patientSpeaking = ref(false)
 const ttsRequestedAt = ref<number | null>(null)
+const ttsFirstByteAt = ref<number | null>(null)
+const ttsResponseCompletedAt = ref<number | null>(null)
 const ttsStartedAt = ref<number | null>(null)
 const ttsEndedAt = ref<number | null>(null)
 const lastPatientReply = ref('')
+const lastPatientTurnId = ref<string | null>(null)
 const speechVolume = ref(0.78)
 const speechRate = ref(1)
 const patientPanel = ref<'interview' | 'chart'>('interview')
@@ -469,6 +484,12 @@ let assessmentDraftWrite = Promise.resolve()
 let flushingLocalUtterances = false
 let voiceAttemptSequence = 0
 let silenceMonitor: number | undefined
+let activePatientAudio: HTMLAudioElement | null = null
+let activePatientAudioUrl: string | null = null
+let activePatientAudioStream: MediaSourceAudioPlayback | null = null
+let audioRecordingPart = 0
+let audioRecordingUploadChain = Promise.resolve()
+let audioRecordingFlush = Promise.resolve()
 const microphoneSilenceCommitter = new MicrophoneSilenceCommitter(() => {
   if (realtimeEvents.value?.readyState === 'open') {
     realtimeEvents.value.send(JSON.stringify({ type: 'input_audio_buffer.commit' }))
@@ -556,7 +577,7 @@ const patientImage = computed(() => {
   return derivePatientPortraitPath(profile.value, sessionCreatedAt.value)
 })
 
-function continueWithMode(): void {
+async function continueWithMode(): Promise<void> {
   if (!canContinue.value) return
   preflightError.value = ''
   preflightComplete.value = true
@@ -566,6 +587,7 @@ function continueWithMode(): void {
 function prepareModeForPreflight(): void {
   interactionMode.value = audioTranscriptionAvailable.value ? 'audio' : 'transcript'
   audioTranscriptionConsent.value = false
+  audioRecordingConsent.value = false
   microphoneAccessGranted.value = false
 }
 
@@ -592,6 +614,10 @@ async function checkMicrophoneAccess(): Promise<void> {
   }
   if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
     preflightError.value = 'This browser cannot grant secure microphone access. Choose Transcript mode instead.'
+    return
+  }
+  if (audioRecordingConsent.value && typeof MediaRecorder === 'undefined') {
+    preflightError.value = 'This browser cannot record audio for the private session archive. Uncheck recording consent or choose Transcript mode.'
     return
   }
   checkingMicrophone.value = true
@@ -629,6 +655,7 @@ async function cancelVisit(): Promise<void> {
       throw new Error('Save the pending transcript items before cancelling this visit.')
     }
     await flushAssessmentDraft()
+    await flushAudioRecordingUploads()
     await api.cancelSession(sessionId.value)
     await navigateTo('/')
   } catch (error) {
@@ -648,6 +675,7 @@ async function confirmBeginAssessment(): Promise<void> {
   if (pendingLocalUtterances.value.length) return
   assessmentConfirmationOpen.value = false
   stopVoiceConversation()
+  await flushAudioRecordingUploads()
   status.value = 'working'
   errorMessage.value = ''
   try {
@@ -670,6 +698,7 @@ async function submitAssessment(): Promise<void> {
   assessmentError.value = ''
   status.value = 'working'
   try {
+    await flushAudioRecordingUploads()
     await flushAssessmentDraft()
     assessmentId.value ??= createTurnId()
     await api.submitAssessment(sessionId.value, assessmentId.value, assessmentFields.value)
@@ -767,6 +796,7 @@ async function startRealtimeTranscription(attempt: number): Promise<void> {
       return
     }
     microphoneStream.value = localStream
+    if (audioRecordingConsent.value) await startAudioRecording(localStream, activeSessionId)
     const peer = new RTCPeerConnection()
     pendingPeer = peer
     realtimeConnection.value = peer
@@ -856,6 +886,65 @@ async function startRealtimeTranscription(attempt: number): Promise<void> {
   }
 }
 
+async function startAudioRecording(stream: MediaStream, activeSessionId: string): Promise<void> {
+  if (!audioRecordingConsent.value) return
+  await audioRecordingFlush
+  const mimeType = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4']
+    .find((candidate) => MediaRecorder.isTypeSupported(candidate))
+  if (!mimeType) throw new Error('This browser has no supported audio recording format.')
+  const part = audioRecordingPart++
+  let sequence = 0
+  const recorder = new MediaRecorder(stream, { mimeType })
+  recorder.addEventListener('dataavailable', (event) => {
+    if (event.data.size === 0) return
+    const partSequence = sequence++
+    audioRecordingUploadChain = audioRecordingUploadChain.then(async () => {
+      await api.uploadLearnerAudioSegment(activeSessionId, part, partSequence, event.data)
+    }).catch(() => {
+      audioRecordingFailed.value = true
+      speechMessage.value = 'The microphone recording could not be fully stored. The archive will not be marked complete.'
+    })
+  })
+  recorder.addEventListener('error', () => {
+    audioRecordingFailed.value = true
+    speechMessage.value = 'Microphone recording stopped unexpectedly. The archive will not be marked complete.'
+  })
+  savingRecordingConsent.value = true
+  try {
+    await api.recordAudioConsent(activeSessionId)
+  } finally {
+    savingRecordingConsent.value = false
+  }
+  audioRecorder.value = recorder
+  recorder.start(10_000)
+}
+
+function stopAudioRecordingPart(): void {
+  const recorder = audioRecorder.value
+  if (!recorder) return
+  audioRecorder.value = null
+  audioRecordingFlush = new Promise<void>((resolve) => {
+    if (recorder.state === 'inactive') {
+      resolve()
+      return
+    }
+    recorder.addEventListener('stop', () => resolve(), { once: true })
+    try {
+      recorder.stop()
+    } catch {
+      resolve()
+    }
+  }).then(async () => {
+    await audioRecordingUploadChain
+  })
+}
+
+async function flushAudioRecordingUploads(): Promise<void> {
+  stopAudioRecordingPart()
+  await audioRecordingFlush
+  await audioRecordingUploadChain
+}
+
 function waitForIceGathering(peer: RTCPeerConnection): Promise<void> {
   if (peer.iceGatheringState === 'complete') return Promise.resolve()
   return new Promise((resolve, reject) => {
@@ -935,12 +1024,14 @@ function stopVoiceConversation(flushFinalizedUtterance = true): void {
   realtimeConnection.value?.close()
   realtimeEvents.value = null
   realtimeConnection.value = null
+  stopAudioRecordingPart()
   for (const track of microphoneStream.value?.getTracks() ?? []) track.stop()
   microphoneStream.value = null
   void microphoneContext.value?.close()
   microphoneContext.value = null
   microphoneAnalyser.value = null
   window.speechSynthesis?.cancel()
+  clearPatientAudio()
   patientSpeaking.value = false
   speechMessage.value = 'Voice conversation ended.'
   if (pendingUtterance && roomEntered.value && phase.value === 'history') {
@@ -948,19 +1039,148 @@ function stopVoiceConversation(flushFinalizedUtterance = true): void {
   }
 }
 
-async function speakPatientReply(text: string, onPlaybackComplete?: () => void | Promise<void>): Promise<void> {
-  if (!shouldSpeakPatientReply(interactionMode.value, voiceConversationActive.value)) return
-  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
-    speechMessage.value = 'The reply is in the transcript. Spoken replies are unavailable in this browser.'
-    status.value = 'active'
-    scheduleVoiceRecognition()
-    return
+function clearPatientAudio(): void {
+  const stream = activePatientAudioStream
+  activePatientAudioStream = null
+  if (activePatientAudio) {
+    activePatientAudio.pause()
+    activePatientAudio.removeAttribute('src')
+    activePatientAudio.load()
+    activePatientAudio = null
   }
+  if (stream) stream.cancel()
+  else if (activePatientAudioUrl) URL.revokeObjectURL(activePatientAudioUrl)
+  activePatientAudioUrl = null
+}
+
+function finishPatientPlayback(onPlaybackComplete?: () => void | Promise<void>): void {
+  patientSpeaking.value = false
+  status.value = 'active'
+  if (onPlaybackComplete) void Promise.resolve(onPlaybackComplete()).catch(() => undefined)
+  else scheduleVoiceRecognition()
+}
+
+async function speakPatientReply(
+  text: string,
+  onPlaybackComplete?: () => void | Promise<void>,
+  turnId = lastPatientTurnId.value
+): Promise<void> {
+  if (!shouldSpeakPatientReply(interactionMode.value, voiceConversationActive.value)) return
   if (restartVoiceTimer) clearTimeout(restartVoiceTimer)
   restartVoiceTimer = undefined
   stopRecognition()
-  window.speechSynthesis.cancel()
+  clearPatientAudio()
+  window.speechSynthesis?.cancel()
   const playbackSequence = voiceAttemptSequence
+  const presentation = profile.value?.presentationSettings
+  ttsRequestedAt.value = performance.now()
+  ttsFirstByteAt.value = null
+  ttsResponseCompletedAt.value = null
+  ttsStartedAt.value = null
+  ttsEndedAt.value = null
+  status.value = 'working'
+  patientSpeaking.value = true
+  speechMessage.value = 'The patient is speaking. Wait for the green light before your next turn.'
+
+  const requireArchivedSpeech = audioRecordingConsent.value
+  if (requireArchivedSpeech && presentation?.provider !== 'openai-audio-speech') {
+    speechMessage.value = 'This patient voice cannot be recorded. The session archive will be unavailable.'
+    finishPatientPlayback(onPlaybackComplete)
+    return
+  }
+
+  if (presentation?.provider === 'openai-audio-speech' && sessionId.value && turnId) {
+    let playbackFailed = false
+    let audio: HTMLAudioElement | null = null
+    const handleAudioError = () => {
+      if (playbackFailed || !audio || playbackSequence !== voiceAttemptSequence || activePatientAudio !== audio) return
+      playbackFailed = true
+      const playbackHadStarted = ttsStartedAt.value !== null
+      clearPatientAudio()
+      if (requireArchivedSpeech) {
+        speechMessage.value = 'Patient speech could not be recorded. The session archive will be unavailable.'
+        finishPatientPlayback(onPlaybackComplete)
+        return
+      }
+      if (playbackHadStarted) {
+        speechMessage.value = 'Patient speech stopped before the reply finished. The full reply remains in the transcript.'
+        finishPatientPlayback(onPlaybackComplete)
+        return
+      }
+      speechMessage.value = 'Server speech could not play. Using the configured browser voice.'
+      patientSpeaking.value = false
+      status.value = 'active'
+      void speakBrowserPatientReply(text, onPlaybackComplete, playbackSequence)
+    }
+    try {
+      const speech = await api.getPatientSpeech(sessionId.value, turnId)
+      if (playbackSequence !== voiceAttemptSequence || !voiceConversationActive.value) return
+      const observedBody = observeAudioStream(speech.body, {
+        onFirstByte: () => { ttsFirstByteAt.value = performance.now() },
+        onComplete: () => { ttsResponseCompletedAt.value = performance.now() }
+      })
+      const player = new Audio()
+      audio = player
+      activePatientAudio = player
+      player.onplaying = () => { ttsStartedAt.value = performance.now() }
+      player.onended = () => {
+        ttsEndedAt.value = performance.now()
+        clearPatientAudio()
+        finishPatientPlayback(onPlaybackComplete)
+      }
+      player.onerror = handleAudioError
+      if (supportsMediaSourceAudio(speech.contentType)) {
+        const stream = streamAudioToMediaSource({
+          audio: player, body: observedBody, contentType: speech.contentType
+        })
+        activePatientAudioStream = stream
+        activePatientAudioUrl = stream.url
+        void stream.completed.catch(handleAudioError)
+        await stream.firstChunk
+      } else {
+        const blob = await new Response(observedBody, {
+          headers: { 'Content-Type': speech.contentType }
+        }).blob()
+        if (blob.type !== 'audio/mpeg' || blob.size === 0) {
+          throw new Error('The speech service returned an invalid audio response.')
+        }
+        const url = URL.createObjectURL(blob)
+        activePatientAudioUrl = url
+        player.src = url
+      }
+      if (playbackSequence !== voiceAttemptSequence || !voiceConversationActive.value) return
+      await player.play()
+      return
+    } catch {
+      if (playbackFailed) return
+      if (playbackSequence !== voiceAttemptSequence || !voiceConversationActive.value) return
+      clearPatientAudio()
+      if (requireArchivedSpeech) {
+        speechMessage.value = 'Patient speech could not be recorded. The session archive will be unavailable.'
+        finishPatientPlayback(onPlaybackComplete)
+        return
+      }
+      speechMessage.value = 'Server speech is unavailable or its allowance is exhausted. Using the configured browser voice.'
+    }
+  } else if (requireArchivedSpeech) {
+    speechMessage.value = 'Server patient speech is not configured. The session archive will be unavailable.'
+    finishPatientPlayback(onPlaybackComplete)
+    return
+  }
+  await speakBrowserPatientReply(text, onPlaybackComplete, playbackSequence)
+}
+
+async function speakBrowserPatientReply(
+  text: string,
+  onPlaybackComplete: (() => void | Promise<void>) | undefined,
+  playbackSequence: number
+): Promise<void> {
+  if (!window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+    speechMessage.value = 'The reply is in the transcript. Spoken replies are unavailable in this browser.'
+    finishPatientPlayback()
+    return
+  }
+  window.speechSynthesis.cancel()
   const presentation = profile.value?.presentationSettings
   const voices = presentation
     ? await waitForSpeechSynthesisVoices(window.speechSynthesis)
@@ -978,10 +1198,7 @@ async function speakPatientReply(text: string, onPlaybackComplete?: () => void |
   utterance.lang = presentation?.locale ?? 'en-US'
   utterance.volume = presentation?.volume ?? speechVolume.value
   utterance.rate = presentation?.rate ?? speechRate.value
-  if (presentation) utterance.pitch = presentation.pitch
-  ttsRequestedAt.value = performance.now()
-  ttsStartedAt.value = null
-  ttsEndedAt.value = null
+  if (presentation?.pitch !== null && presentation?.pitch !== undefined) utterance.pitch = presentation.pitch
   patientSpeaking.value = true
   utterance.onstart = () => {
     ttsStartedAt.value = performance.now()
@@ -989,13 +1206,7 @@ async function speakPatientReply(text: string, onPlaybackComplete?: () => void |
   }
   utterance.onend = () => {
     ttsEndedAt.value = performance.now()
-    patientSpeaking.value = false
-    status.value = 'active'
-    if (onPlaybackComplete) {
-      void Promise.resolve(onPlaybackComplete()).catch(() => undefined)
-    } else {
-      scheduleVoiceRecognition()
-    }
+    finishPatientPlayback(onPlaybackComplete)
   }
   utterance.onerror = () => {
     if (patientSpeaking.value) speechMessage.value = 'The reply is in the transcript. Spoken playback could not start.'
@@ -1113,10 +1324,11 @@ function repeatLastReply(statusText = 'Repeating the last reply.'): void {
   const repeatedReply = lastPatientReply.value
   void speakPatientReply(repeatedReply, async () => {
     await saveLocalUtterance('patient_repeat', 'patient', repeatedReply, new Date().toISOString())
-  })
+  }, lastPatientTurnId.value ?? undefined)
 }
 
 onBeforeUnmount(() => {
+  clearPatientAudio()
   if (engagementPulseTimer) clearInterval(engagementPulseTimer)
   document.removeEventListener('pointerdown', markEncounterInteraction)
   document.removeEventListener('keydown', markEncounterInteraction)
@@ -1222,6 +1434,9 @@ function resetEncounterForNewVisit(): void {
   interactionMode.value = 'audio'
   fictionalDetailsConfirmed.value = false
   audioTranscriptionConsent.value = false
+  audioRecordingConsent.value = false
+  audioRecordingFailed.value = false
+  audioRecordingPart = 0
   preflightComplete.value = false
   microphoneAccessGranted.value = false
   preflightError.value = ''
@@ -1236,6 +1451,7 @@ function resetEncounterForNewVisit(): void {
   assessmentFieldErrors.value = {}
   assessmentError.value = ''
   lastPatientReply.value = ''
+  lastPatientTurnId.value = null
   patientPanel.value = 'interview'
 }
 
@@ -1262,6 +1478,7 @@ async function resumeCurrentEncounter(): Promise<void> {
   try {
     if (encounter.addonSpendNotice) addonSpendNoticeDue.value = true
     sessionId.value = encounter.sessionId
+    const hasAudioConsent = await api.getAudioRecordingConsent(encounter.sessionId)
     sessionCreatedAt.value = encounter.createdAt
     backendReady.value = false
     imageReady.value = false
@@ -1314,6 +1531,7 @@ async function resumeCurrentEncounter(): Promise<void> {
     pendingLocalUtterances.value = []
     localUtteranceError.value = ''
     lastPatientReply.value = encounter.transcript.at(-1)?.patientResponse ?? ''
+    lastPatientTurnId.value = encounter.transcript.at(-1)?.turnId ?? null
     if (!encounter.patient) {
       await preparePatientSession(encounter.sessionId)
       backendReady.value = true
@@ -1327,6 +1545,7 @@ async function resumeCurrentEncounter(): Promise<void> {
       prepareModeForPreflight()
       preflightOpen.value = true
     }
+    audioRecordingConsent.value = hasAudioConsent
     recoverableEncounter.value = null
   } catch (error) {
     status.value = 'error'
@@ -1482,6 +1701,7 @@ async function submitQuestion(
     if (result.addonSpendNotice) addonSpendNoticeOpen.value = true
     retryableTurn.value = null
     lastPatientReply.value = result.text
+    lastPatientTurnId.value = result.turnId
     appendTranscriptMessage({
       turnId: turn.turnId,
       role: 'patient',
@@ -1498,7 +1718,7 @@ async function submitQuestion(
       } else {
         speechMessage.value = 'The patient wrote a note. Continue in Transcript mode.'
       }
-    } else if (voiceReply && voiceConversationActive.value) void speakPatientReply(result.text)
+    } else if (voiceReply && voiceConversationActive.value) void speakPatientReply(result.text, undefined, result.turnId)
     else if (voiceReply) {
       status.value = 'active'
       speechMessage.value = interactionMode.value === 'audio'

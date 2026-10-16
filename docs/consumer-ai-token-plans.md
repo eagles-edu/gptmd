@@ -52,13 +52,16 @@ personal add-ons begin funding usage.
 
 ## Provider pools and accounting
 
-TEAECL operates two provider capacity pools: OpenAI is primary, and a separate
-provider is the failsafe if OpenAI becomes unavailable. This is continuity
-routing, not a learner-selectable model preference. The trigger must be an
-operator-defined provider-availability condition; do not fail over for
-malformed input, policy refusals, or GPTMD validation errors. The alternate
-provider must satisfy the same GPTMD response contracts and safety boundaries
-before it is enabled. Provider choice and failover remain in-house.
+TEAECL selected Anthropic Claude Haiku 5.5 (`claude-haiku-5-5`) as the
+failsafe. Anthropic announced Haiku 5.5 on October 7, 2026 and lists this API
+identifier for Claude Platform use. See the [Haiku 5.5 release
+page](https://www.anthropic.com/claude-haiku-5-5).
+This is continuity routing, not a learner-selectable model preference. The
+trigger must be an operator-defined provider-availability condition; do not
+fail over for malformed input, policy refusals, or GPTMD validation errors.
+The alternate provider must satisfy the same GPTMD response contracts and
+safety boundaries before it is enabled. Provider choice and failover remain
+in-house.
 
 These are operational controls, not learner-selectable provider preferences.
 Keep included and purchased balances distinct, while applying the same balance
@@ -91,6 +94,12 @@ settles the reservation. Ambiguous reservations retain their allocations. This
 path is verified against disposable PostgreSQL only; migration 035 and these
 application changes are not applied to the live mirror. Trusted payment and
 renewal grant issuance, anniversary processing, the add-on notice acknowledgement,
-checkout, and primary/failsafe provider pools remain unimplemented. The Account
-usage ledger shows actual provider calls, not purchase history. Do not describe
-catalog offers as purchasable until verified payments create grants.
+checkout, and primary/failsafe provider pools remain unimplemented. Claude
+Haiku 5.5 is the selected target, not an active route: a minimal non-PHI
+Messages API probe returned HTTP 200 on 2026-10-16, but the API has no
+Anthropic adapter, structured-output contract tests, availability trigger, or
+cross-provider allowance-meter mapping. The credential remains in local
+configuration and is not recorded here. Keep failover disabled until those
+gates and the required operational privacy review are complete. The Account usage ledger
+shows actual provider calls, not purchase history. Do not describe catalog
+offers as purchasable until verified payments create grants.

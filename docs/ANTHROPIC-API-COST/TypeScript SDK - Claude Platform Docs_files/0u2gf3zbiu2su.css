@@ -1,0 +1,2 @@
+.footer-column:has(:is(a,button):hover) :is(a,button):not(:hover){color:var(--muted-as-secondary,var(--cds-text-muted))}
+@keyframes navbar-mobile-item-enter{0%{opacity:0;transform:translateY(20px)}to{opacity:1;transform:translateY(0)}}.navbar-mobile-section{animation:.3s cubic-bezier(.22,1,.36,1) backwards navbar-mobile-item-enter;animation-delay:calc(.2s + var(--i,0) * 40ms)}.navbar-mobile-footer{animation:.3s cubic-bezier(.22,1,.36,1) .3s backwards navbar-mobile-item-enter}@media (prefers-reduced-motion:reduce){.navbar-mobile-section,.navbar-mobile-footer{animation:none}}

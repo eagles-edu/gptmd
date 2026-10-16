@@ -1,5 +1,8 @@
 import OpenAI from 'openai'
 import { Pool } from 'pg'
+import { AnthropicMessagesClient } from './anthropic-messages.ts'
+import { generateAnthropicPatientTurn } from './anthropic-patient-turn.ts'
+import { isOpenAiAvailabilityError } from './provider-availability.ts'
 import { createClient } from 'redis'
 import type { ApiDependencies, PostgresProbe, RedisProbe } from './app.js'
 import type { SetupQueueLimits } from './bounded-setup-queue.ts'
@@ -13,6 +16,7 @@ import { createPostgresProviderTokenReservationStore } from './provider-token-re
 import { createPostgresSessionArchiveStore } from './session-archives.ts'
 import { createPostgresConsumerTokenCatalogStore } from './consumer-token-catalog.ts'
 import { createPostgresTokenEntitlementStore } from './token-entitlements.ts'
+import { createPostgresSystemSpeechStore } from './system-speech.ts'
 import { createRedisPatientStateStore, type SessionCommitTimingRecorder } from './patient-state-store.ts'
 import { createRealtimeTranscriptionUsageObserver } from './realtime-transcription-usage-observer.ts'
 import { resolveTrustedProxyAddresses } from './listener-config.ts'
@@ -101,6 +105,9 @@ export function createServiceClients(
   const openaiClient = env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 15_000, maxRetries: 2 })
     : null
+  const anthropicClient = env.ANTHROPIC_API_KEY?.trim()
+    ? new AnthropicMessagesClient(env.ANTHROPIC_API_KEY.trim())
+    : null
   const providerTokenReservations = postgresPool
     ? createPostgresProviderTokenReservationStore(postgresPool)
     : null
@@ -156,6 +163,13 @@ export function createServiceClients(
                    AND column_name = 'role'
                ) AND
                to_regclass('public.tenant_entitlements') IS NOT NULL AND
+               to_regclass('public.gptmd_system_speech_policy') IS NOT NULL AND
+               to_regclass('public.gptmd_system_speech_policy_audit') IS NOT NULL AND
+               to_regclass('public.gptmd_system_speech_usage') IS NOT NULL AND
+               EXISTS (
+                 SELECT 1 FROM pg_indexes
+                 WHERE schemaname = 'public' AND indexname = 'gptmd_system_speech_usage_turn_idx'
+               ) AND
                to_regclass('public.app_audio_transcription_sessions') IS NOT NULL AND
                to_regclass('public.app_patient_scenario_conversation_cleanup') IS NOT NULL AND
                EXISTS (
@@ -311,13 +325,37 @@ export function createServiceClients(
           )
         : null,
       generatePatientTurn: openaiClient
-        ? (context, recordTiming, reserveProviderTokens) => generatePatientTurn(
-            openaiClient,
-            env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
-            context,
-            recordTiming,
-            reserveProviderTokens
-          )
+        ? async (context, recordTiming, reserveProviderTokens) => {
+            if (context.provider === 'anthropic') {
+              if (!anthropicClient) throw new Error('Pinned Anthropic provider is unavailable')
+              return generateAnthropicPatientTurn(anthropicClient, context, reserveProviderTokens)
+            }
+            try {
+              return await generatePatientTurn(
+                openaiClient,
+                env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
+                context,
+                recordTiming,
+                reserveProviderTokens
+              )
+            } catch (error) {
+              if (!anthropicClient || !isOpenAiAvailabilityError(error)) throw error
+              return generateAnthropicPatientTurn(anthropicClient, { ...context, provider: 'anthropic' }, reserveProviderTokens)
+            }
+          }
+        : null,
+      synthesizePatientSpeech: openaiClient
+        ? async ({ text, voice }) => {
+            const response = await openaiClient.audio.speech.create({
+              model: 'gpt-4o-mini-tts',
+              input: text,
+              voice,
+              response_format: 'mp3',
+              instructions: 'Speak the patient reply clearly and naturally in English. Do not add or omit words.'
+            }, { maxRetries: 0, timeout: 30_000 })
+            if (!response.body) throw new Error('The speech provider returned no audio stream.')
+            return response.body
+          }
         : null,
       createTranscriptionCall: openaiClient
         ? async (sdpOffer) => {
@@ -421,7 +459,8 @@ export function createServiceClients(
         : null,
       sessionArchiveStore: postgresPool ? createPostgresSessionArchiveStore(postgresPool) : null,
       consumerTokenCatalogStore: postgresPool ? createPostgresConsumerTokenCatalogStore(postgresPool) : null,
-      tokenEntitlementStore: postgresPool ? createPostgresTokenEntitlementStore(postgresPool) : null
+      tokenEntitlementStore: postgresPool ? createPostgresTokenEntitlementStore(postgresPool) : null,
+      systemSpeechStore: postgresPool ? createPostgresSystemSpeechStore(postgresPool) : null
     },
     async close() {
       await Promise.all([...transcriptionUsageObservers.values()].map((closeObserver) => closeObserver()))

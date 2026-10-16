@@ -53,6 +53,7 @@ import {
 } from './consumer-token-catalog.ts'
 import type { TenantEntitlementAdminStore, TenantEntitlementPolicy } from './tenant-entitlements.ts'
 import {
+  OPENAI_SPEECH_VOICES,
   applyApprovedPatientVariantSettings,
   PatientVariantSettingsSchema,
   type PatientVariantSettings,
@@ -78,6 +79,9 @@ import {
   type SystemOperationsClient,
   type SystemService
 } from './system-operations.ts'
+import type { SystemSpeechStore } from './system-speech.ts'
+
+const MAX_PATIENT_RECORDING_BYTES = 5 * 1024 * 1024
 
 export interface RedisProbe {
   readonly isOpen: boolean
@@ -140,6 +144,8 @@ export interface ApiDependencies {
   tokenEntitlementStore?: TokenEntitlementStore | null
   systemAdminSubjectIds?: ReadonlySet<string>
   systemOperations?: SystemOperationsClient | null
+  systemSpeechStore?: SystemSpeechStore | null
+  synthesizePatientSpeech?: ((input: { text: string; voice: typeof OPENAI_SPEECH_VOICES[number] }) => Promise<AsyncIterable<Uint8Array>>) | null
   sampleSystemResources?: () => unknown
   setupQueueLimits?: SetupQueueLimits
   providerCapacityLimits?: ProviderCapacityLimits
@@ -931,11 +937,35 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
   })
 
-  app.get('/api/instructor/patient-variant-settings', async (request, response) => {
-    const principal = request.principal
+  app.get('/api/system-admin/patient-variant-settings/tenants', async (request, response) => {
+    const identity = request.identity
     const store = dependencies.patientVariantSettingsStore
-    if (!principal || principal.role !== 'instructor') {
-      response.status(403).json({ error: 'Instructor role is required' })
+    if (!identity) {
+      response.status(403).json({ error: 'GPTMD system administrator access is required' })
+      return
+    }
+    if (!store?.listTenants) {
+      response.status(503).json({ error: 'Patient variant settings are unavailable' })
+      return
+    }
+    try {
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ tenants: await store.listTenants() })
+    } catch {
+      response.status(503).json({ error: 'Workspace list could not be loaded' })
+    }
+  })
+
+  app.get('/api/system-admin/tenants/:tenantId/patient-variant-settings', async (request, response) => {
+    const identity = request.identity
+    const store = dependencies.patientVariantSettingsStore
+    const tenantId = request.params.tenantId ?? ''
+    if (!identity) {
+      response.status(403).json({ error: 'GPTMD system administrator access is required' })
+      return
+    }
+    if (!tenantId.trim() || tenantId.length > 200) {
+      response.status(400).json({ error: 'A valid workspace ID is required' })
       return
     }
     if (!store) {
@@ -943,18 +973,24 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
-      const settings = await store.getSettings(principal.tenantId)
+      const settings = await store.getSettings(tenantId)
+      response.setHeader('Cache-Control', 'no-store, private')
       response.json({ settings })
     } catch {
       response.status(503).json({ error: 'Patient variant settings could not be loaded' })
     }
   })
 
-  app.put('/api/instructor/patient-variant-settings', async (request, response) => {
-    const principal = request.principal
+  app.put('/api/system-admin/tenants/:tenantId/patient-variant-settings', async (request, response) => {
+    const identity = request.identity
     const store = dependencies.patientVariantSettingsStore
-    if (!principal || principal.role !== 'instructor') {
-      response.status(403).json({ error: 'Instructor role is required' })
+    const tenantId = request.params.tenantId ?? ''
+    if (!identity) {
+      response.status(403).json({ error: 'GPTMD system administrator access is required' })
+      return
+    }
+    if (!tenantId.trim() || tenantId.length > 200) {
+      response.status(400).json({ error: 'A valid workspace ID is required' })
       return
     }
     if (!store) {
@@ -967,12 +1003,295 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
-      const settings = await store.saveSettings(principal.tenantId, principal.subjectId, parsed.data)
+      const settings = await store.saveSettings(tenantId, identity.subjectId, parsed.data)
       if (settings === 'conflict') response.status(409).json({ error: 'Patient variant settings changed; reload before saving' })
       else if (!settings) response.status(404).json({ error: 'Workspace not found' })
-      else response.json({ settings })
+      else {
+        response.setHeader('Cache-Control', 'no-store, private')
+        response.json({ settings })
+      }
     } catch {
       response.status(503).json({ error: 'Patient variant settings could not be saved' })
+    }
+  })
+
+  app.get('/api/system-admin/speech-policy', async (request, response) => {
+    const identity = request.identity
+    const store = dependencies.systemSpeechStore
+    if (!identity) {
+      response.status(403).json({ error: 'GPTMD system administrator access is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'System speech controls are unavailable' })
+      return
+    }
+    try {
+      const now = new Date()
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+      const [policy, usage] = await Promise.all([store.getPolicy(), store.getUsageSummary(monthStart)])
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ policy, usage })
+    } catch {
+      response.status(503).json({ error: 'System speech policy could not be loaded' })
+    }
+  })
+
+  app.put('/api/system-admin/speech-policy', async (request, response) => {
+    const identity = request.identity
+    const store = dependencies.systemSpeechStore
+    if (!identity) {
+      response.status(403).json({ error: 'GPTMD system administrator access is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'System speech controls are unavailable' })
+      return
+    }
+    const body = request.body as Record<string, unknown> | null
+    if (!body || Object.keys(body).length !== 3 ||
+      typeof body.enabled !== 'boolean' || !Number.isInteger(body.monthlyCharactersPerLearner) ||
+      (body.monthlyCharactersPerLearner as number) < 0 || (body.monthlyCharactersPerLearner as number) > 2_147_483_647 ||
+      !Number.isInteger(body.expectedRevision) || (body.expectedRevision as number) < 0) {
+      response.status(400).json({ error: 'Provide the speech enabled flag, monthly per-learner character quota, and expected revision' })
+      return
+    }
+    try {
+      const policy = await store.savePolicy(identity.subjectId, {
+        enabled: body.enabled,
+        monthlyCharactersPerLearner: body.monthlyCharactersPerLearner as number,
+        expectedRevision: body.expectedRevision as number
+      })
+      if (policy === 'conflict') {
+        response.status(409).json({ error: 'Speech policy changed in another session; reload before saving' })
+        return
+      }
+      const now = new Date()
+      const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ policy, usage: await store.getUsageSummary(monthStart) })
+    } catch {
+      response.status(503).json({ error: 'System speech policy could not be saved' })
+    }
+  })
+
+  app.get('/api/instructor/patient-variant-settings', (_request, response) => {
+    response.status(403).json({ error: 'Patient voice and variability settings are managed by GPTMD system administrators' })
+  })
+
+  app.put('/api/instructor/patient-variant-settings', (_request, response) => {
+    response.status(403).json({ error: 'Patient voice and variability settings are managed by GPTMD system administrators' })
+  })
+
+  app.post('/api/sessions/:sessionId/patient-speech', async (request, response) => {
+    const principal = request.principal
+    const sessionStore = dependencies.sessionStore
+    const speechStore = dependencies.systemSpeechStore
+    const archiveStore = dependencies.sessionArchiveStore
+    const synthesize = dependencies.synthesizePatientSpeech
+    const sessionId = request.params.sessionId ?? ''
+    const turnId = request.body?.turnId
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for patient speech' })
+      return
+    }
+    if (!sessionStore || !speechStore || !synthesize) {
+      response.status(503).json({ error: 'Server-generated patient speech is unavailable' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId) || typeof turnId !== 'string' ||
+      !/^[\x21-\x7e]{8,200}$/.test(turnId)) {
+      response.status(400).json({ error: 'A valid session and accepted turn are required' })
+      return
+    }
+    try {
+      const encounter = await sessionStore.getCurrentOwnedEncounter(principal)
+      if (!encounter || encounter.sessionId !== sessionId) {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      const turn = encounter.transcript.find((entry) => entry.turnId === turnId)
+      if (!turn || !encounter.patient?.presentationSettings ||
+        encounter.patient.presentationSettings.provider !== 'openai-audio-speech') {
+        response.status(409).json({ error: 'No approved server-speech voice is configured for this patient turn' })
+        return
+      }
+      const characterCount = Array.from(turn.patientResponse).length
+      if (characterCount > 4096) {
+        response.status(413).json({ error: 'Patient reply exceeds the supported speech length' })
+        return
+      }
+      const voice = encounter.patient.presentationSettings.voiceId
+      if (!OPENAI_SPEECH_VOICES.includes(voice as typeof OPENAI_SPEECH_VOICES[number])) {
+        response.status(503).json({ error: 'The approved patient-speech voice is unavailable' })
+        return
+      }
+      const charge = await speechStore.chargeCharacters({
+        tenantId: principal.tenantId,
+        subjectId: principal.subjectId,
+        sessionIdHash: createHash('sha256').update(sessionId).digest('hex'),
+        turnIdHash: createHash('sha256').update(turnId).digest('hex'),
+        characters: characterCount
+      })
+      if (charge === 'disabled') {
+        response.status(503).json({ error: 'Server-generated speech is disabled by system policy' })
+        return
+      }
+      if (charge === 'quota_exceeded') {
+        response.status(429).json({ error: 'Monthly patient-speech character quota is exhausted' })
+        return
+      }
+      const audio = await synthesize({ text: turn.patientResponse, voice: voice as typeof OPENAI_SPEECH_VOICES[number] })
+      const recordAudio = await archiveStore?.hasAudioConsent(principal, sessionId) ?? false
+      const capturedChunks: Buffer[] = []
+      let capturedBytes = 0
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.setHeader('Content-Type', 'audio/mpeg')
+      response.setHeader('X-Content-Type-Options', 'nosniff')
+      for await (const chunk of audio) {
+        if (response.destroyed) return
+        const buffer = Buffer.from(chunk)
+        if (recordAudio) {
+          capturedBytes += buffer.byteLength
+          if (capturedBytes > MAX_PATIENT_RECORDING_BYTES) throw new Error('recording_patient_audio_size_limit')
+          capturedChunks.push(buffer)
+        }
+        if (!response.write(buffer)) {
+          await new Promise<void>((resolve, reject) => {
+            response.once('drain', resolve)
+            response.once('close', resolve)
+            response.once('error', reject)
+          })
+        }
+      }
+      if (recordAudio) {
+        const result = await archiveStore?.saveAudioSegment(principal, {
+          sessionId, speaker: 'patient', recordingPart: 0, sequence: turn.sequence,
+          turnId, contentType: 'audio/mpeg', content: Buffer.concat(capturedChunks)
+        })
+        if (result !== 'saved' && result !== 'duplicate') throw new Error('recording_patient_audio_persist_failed')
+      }
+      if (!response.destroyed) response.end()
+    } catch {
+      if (!response.headersSent) response.status(503).json({ error: 'Patient speech could not be generated' })
+      else response.destroy()
+    }
+  })
+
+  app.post('/api/sessions/:sessionId/audio-recording/consent', async (request, response) => {
+    const principal = request.principal
+    const sessionStore = dependencies.sessionStore
+    const archiveStore = dependencies.sessionArchiveStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for audio recording' })
+      return
+    }
+    if (!sessionStore || !archiveStore) {
+      response.status(503).json({ error: 'Session audio recording is unavailable' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId) ||
+      request.body?.consentVersion !== 'gptmd-two-sided-audio-v1') {
+      response.status(400).json({ error: 'Current explicit two-sided audio-recording consent is required' })
+      return
+    }
+    try {
+      const owned = await sessionStore.getOwnedSession(principal, sessionId)
+      if (!owned) {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      if (owned.status !== 'ready' && owned.status !== 'active') {
+        response.status(409).json({ error: 'Recording consent must be recorded before the visit ends' })
+        return
+      }
+      const saved = await archiveStore.recordAudioConsent(principal, sessionId, 'gptmd-two-sided-audio-v1')
+      if (!saved) {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.status(201).json({ sessionId, consented: true })
+    } catch {
+      response.status(503).json({ error: 'Audio-recording consent could not be saved' })
+    }
+  })
+
+  app.get('/api/sessions/:sessionId/audio-recording/consent', async (request, response) => {
+    const principal = request.principal
+    const sessionStore = dependencies.sessionStore
+    const archiveStore = dependencies.sessionArchiveStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for audio recording' })
+      return
+    }
+    if (!sessionStore || !archiveStore) {
+      response.status(503).json({ error: 'Session audio recording is unavailable' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    try {
+      const owned = await sessionStore.getOwnedSession(principal, sessionId)
+      if (!owned) {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ consented: await archiveStore.hasAudioConsent(principal, sessionId) })
+    } catch {
+      response.status(503).json({ error: 'Audio-recording consent could not be loaded' })
+    }
+  })
+
+  app.put('/api/sessions/:sessionId/audio-recording/:part/:sequence', express.raw({
+    type: ['audio/webm', 'audio/mp4'], limit: '5mb'
+  }), async (request, response) => {
+    const principal = request.principal
+    const sessionStore = dependencies.sessionStore
+    const archiveStore = dependencies.sessionArchiveStore
+    const sessionId = request.params.sessionId ?? ''
+    const recordingPart = Number(request.params.part)
+    const sequence = Number(request.params.sequence)
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for audio recording' })
+      return
+    }
+    if (!sessionStore || !archiveStore) {
+      response.status(503).json({ error: 'Session audio recording is unavailable' })
+      return
+    }
+    const contentType = request.header('content-type')?.split(';', 1)[0]
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId) || !Number.isSafeInteger(recordingPart) || recordingPart < 0 ||
+      !Number.isSafeInteger(sequence) || sequence < 0 || !Buffer.isBuffer(request.body) ||
+      !['audio/webm', 'audio/mp4'].includes(contentType ?? '')) {
+      response.status(400).json({ error: 'A bounded learner audio segment is required' })
+      return
+    }
+    try {
+      const owned = await sessionStore.getOwnedSession(principal, sessionId)
+      if (!owned || (owned.status !== 'ready' && owned.status !== 'active')) {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      const result = await archiveStore.saveAudioSegment(principal, {
+        sessionId, speaker: 'learner', recordingPart, sequence, turnId: null,
+        contentType: contentType as 'audio/webm' | 'audio/mp4', content: request.body
+      })
+      if (result === 'consent_required') {
+        response.status(403).json({ error: 'Two-sided audio-recording consent is required' })
+      } else if (result === 'conflict') {
+        response.status(409).json({ error: 'This audio segment sequence already contains different data' })
+      } else {
+        response.setHeader('Cache-Control', 'no-store, private')
+        response.status(result === 'saved' ? 201 : 200).json({ saved: true, duplicate: result === 'duplicate' })
+      }
+    } catch {
+      response.status(503).json({ error: 'Audio segment could not be stored' })
     }
   })
 

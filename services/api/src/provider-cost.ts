@@ -1,4 +1,5 @@
 export const OPENAI_PUBLIC_PRICING_VERSION = 'openai-api-pricing-2026-10-06'
+export const ANTHROPIC_HAIKU_55_PRICING_VERSION = 'anthropic-api-pricing-2026-10-17'
 
 type TokenRates = {
   input: number
@@ -56,6 +57,24 @@ export function estimateOpenAiResponseCost(input: {
 
   return {
     pricingVersion: OPENAI_PUBLIC_PRICING_VERSION,
+    estimatedCostUsd: cost.toFixed(12)
+  }
+}
+
+export function estimateAnthropicHaiku55Cost(input: {
+  model: string
+  inputTokens: number
+  outputTokens: number
+}): { pricingVersion: string; estimatedCostUsd: string } | null {
+  if (input.model !== 'claude-haiku-5-5') return null
+  const longPrompt = input.inputTokens > 100_000
+  const inputRatePerMillion = longPrompt ? 0.5 : 0.1
+  const outputRatePerMillion = longPrompt ? 2.5 : 0.5
+  const cost = (
+    input.inputTokens * inputRatePerMillion + input.outputTokens * outputRatePerMillion
+  ) / TOKENS_PER_MILLION
+  return {
+    pricingVersion: ANTHROPIC_HAIKU_55_PRICING_VERSION,
     estimatedCostUsd: cost.toFixed(12)
   }
 }

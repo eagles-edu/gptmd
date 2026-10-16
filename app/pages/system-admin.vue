@@ -6,6 +6,7 @@
         <h1 id="system-admin-title">GPTMD Systems</h1>
       </div>
       <div class="header-actions">
+        <NuxtLink class="text-button" to="/system-admin/patient-variants">Patient settings</NuxtLink>
         <span class="overall-status" :class="overallState" role="status">
           <span class="status-dot" aria-hidden="true" />{{ overallLabel }}
         </span>
@@ -95,6 +96,35 @@
           <p v-else class="catalog-note">No add-on packages configured.</p>
           <p class="catalog-note">Published means eligible for future storefront display only. No purchase or credit grant is enabled without verified ACB2Pay confirmation.</p>
         </form>
+      </section>
+
+      <section class="catalog-section" aria-labelledby="speech-policy-title">
+        <div class="section-heading">
+          <div>
+            <h2 id="speech-policy-title">Patient speech quota</h2>
+            <p class="catalog-note">Server-generated patient audio is metered separately from Responses tokens. Each learner has a UTC calendar-month character allowance.</p>
+          </div>
+          <button class="text-button" type="button" :disabled="speechState === 'loading' || speechState === 'saving' || !speechPolicy" @click="saveSpeechPolicy">
+            {{ speechState === 'saving' ? 'Saving…' : 'Save speech policy' }}
+          </button>
+        </div>
+        <p v-if="speechMessage" class="catalog-message" :class="{ error: speechState === 'error' }" role="status">{{ speechMessage }}</p>
+        <p v-if="speechState === 'loading'" class="empty-state">Loading speech policy…</p>
+        <div v-else-if="speechPolicy" class="catalog-fields speech-fields">
+          <label class="speech-enabled">
+            <input v-model="speechPolicy.enabled" type="checkbox">
+            <span>Enable patient-side server speech</span>
+          </label>
+          <label>
+            <span>Monthly characters per learner</span>
+            <input v-model.number="speechPolicy.monthlyCharactersPerLearner" type="number" min="0" max="2147483647" step="1" required>
+          </label>
+          <div class="speech-usage">
+            <span>This month</span>
+            <strong>{{ formatCount(speechUsage?.charactersUsed ?? 0) }} characters</strong>
+            <span>{{ formatCount(speechUsage?.activeLearners ?? 0) }} learners used speech</span>
+          </div>
+        </div>
       </section>
 
       <section class="service-section" aria-labelledby="service-title">
@@ -201,6 +231,8 @@ type ConsumerCatalog = {
     status: 'draft' | 'published'
   }>
 }
+type SpeechPolicy = { enabled: boolean; monthlyCharactersPerLearner: number; revision: number }
+type SpeechUsage = { monthStart: string; charactersUsed: number; activeLearners: number }
 
 useHead({ title: 'GPTMD Systems' })
 const config = useRuntimeConfig()
@@ -218,6 +250,10 @@ const logsMessage = ref('')
 const catalog = ref<ConsumerCatalog>(emptyCatalog())
 const catalogState = ref<'idle' | 'loading' | 'saving' | 'error'>('idle')
 const catalogMessage = ref('')
+const speechPolicy = ref<SpeechPolicy | null>(null)
+const speechUsage = ref<SpeechUsage | null>(null)
+const speechState = ref<'idle' | 'loading' | 'saving' | 'error'>('idle')
+const speechMessage = ref('')
 const tierMultipliers = { lunar: 1, solar: 2, stellar: 3 } as const
 let refreshTimer: ReturnType<typeof setInterval> | undefined
 
@@ -269,7 +305,7 @@ async function refresh(): Promise<void> {
   accessDenied.value = false
   try {
     overview.value = await request<Overview>('/overview')
-    await loadCatalog()
+    await Promise.all([loadCatalog(), loadSpeechPolicy()])
   } catch (error: unknown) {
     const statusCode = (error as { statusCode?: number; response?: { status?: number } })?.statusCode ??
       (error as { response?: { status?: number } })?.response?.status
@@ -277,6 +313,46 @@ async function refresh(): Promise<void> {
     else errorMessage.value = 'System status could not be loaded.'
   } finally {
     loading.value = false
+  }
+}
+
+async function loadSpeechPolicy(): Promise<void> {
+  speechState.value = 'loading'
+  speechMessage.value = ''
+  try {
+    const result = await request<{ policy: SpeechPolicy; usage: SpeechUsage }>('/speech-policy')
+    speechPolicy.value = result.policy
+    speechUsage.value = result.usage
+    speechState.value = 'idle'
+  } catch {
+    speechState.value = 'error'
+    speechMessage.value = 'Patient speech policy could not be loaded.'
+  }
+}
+
+async function saveSpeechPolicy(): Promise<void> {
+  if (!speechPolicy.value || speechState.value === 'saving') return
+  speechState.value = 'saving'
+  speechMessage.value = ''
+  try {
+    const result = await request<{ policy: SpeechPolicy; usage: SpeechUsage }>('/speech-policy', {
+      method: 'PUT',
+      body: {
+        enabled: speechPolicy.value.enabled,
+        monthlyCharactersPerLearner: speechPolicy.value.monthlyCharactersPerLearner,
+        expectedRevision: speechPolicy.value.revision
+      }
+    })
+    speechPolicy.value = result.policy
+    speechUsage.value = result.usage
+    speechState.value = 'idle'
+    speechMessage.value = 'Patient speech policy saved.'
+  } catch (error: unknown) {
+    const statusCode = (error as { statusCode?: number })?.statusCode
+    speechState.value = 'error'
+    speechMessage.value = statusCode === 409
+      ? 'Another operator changed the speech policy. Reload before saving.'
+      : 'Speech policy was not saved. Check the character limit and try again.'
   }
 }
 
@@ -550,7 +626,40 @@ h2 {
   max-width: 75ch;
 }
 
-.catalog-message { color: #16734b; }
+.catalog-message {
+  color: #16734b;
+}
+
+.catalog-message.error {
+  color: #a42a2a;
+}
+
+.speech-fields {
+  align-items: end;
+}
+
+.speech-enabled {
+  align-items: center;
+  display: flex !important;
+  gap: 0.6rem !important;
+  min-height: 2.3rem;
+}
+
+.speech-enabled input {
+  accent-color: #16734b;
+  height: 1rem;
+  width: 1rem;
+}
+
+.speech-usage {
+  display: grid;
+  gap: 0.15rem;
+}
+
+.speech-usage span {
+  color: #58686a;
+  font-size: 0.82rem;
+}
 
 .catalog-fields {
   display: grid;

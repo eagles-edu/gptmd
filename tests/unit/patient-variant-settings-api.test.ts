@@ -81,6 +81,25 @@ describe('patient variant settings contract', () => {
     }
   })
 
+  it('requires distinct voices across approved portrait variants and accepts supported server speech', () => {
+    const settings = approvedSettings()
+    const duplicateVoice = structuredClone(settings)
+    duplicateVoice.variants[1]!.voice.voiceId = duplicateVoice.variants[0]!.voice.voiceId
+    expect(PatientVariantSettingsSchema.safeParse(duplicateVoice).success).toBe(false)
+
+    const serverVoice = structuredClone(settings)
+    serverVoice.variants[0]!.voice = {
+      provider: 'openai-audio-speech', voiceId: 'coral', locale: 'en',
+      rate: null, pitch: null, volume: null, fallbackVoiceId: 'fallback-1019-average'
+    }
+    expect(PatientVariantSettingsSchema.safeParse(serverVoice).success).toBe(true)
+    serverVoice.variants[1]!.voice = {
+      provider: 'openai-audio-speech', voiceId: 'coral', locale: 'en',
+      rate: null, pitch: null, volume: null, fallbackVoiceId: 'fallback-1019-heavy'
+    }
+    expect(PatientVariantSettingsSchema.safeParse(serverVoice).success).toBe(false)
+  })
+
   it('applies only the selected approved variant and pins its voice snapshot deterministically', () => {
     const settings = approvedSettings()
     const profile = {

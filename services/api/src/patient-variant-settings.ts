@@ -15,12 +15,16 @@ const optionalRate = z.number().finite().min(0.5).max(2).nullable()
 const optionalPitch = z.number().finite().min(0).max(2).nullable()
 const optionalVolume = z.number().finite().min(0).max(1).nullable()
 const allowedValues = z.array(z.string().trim().min(1).max(120)).max(20)
+export const OPENAI_SPEECH_VOICES = [
+  'alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'nova', 'onyx',
+  'sage', 'shimmer', 'verse', 'marin', 'cedar'
+] as const
 
 const PatientVariantSettingSchema = z.object({
   variantKey: z.enum(PATIENT_VARIANT_KEYS),
   voiceProfileId: z.string().trim().min(1).max(120),
   voice: z.object({
-    provider: z.literal('browser-speech-synthesis').nullable(),
+    provider: z.enum(['browser-speech-synthesis', 'openai-audio-speech']).nullable(),
     voiceId: optionalText,
     locale: optionalText,
     rate: optionalRate,
@@ -57,13 +61,21 @@ export const PatientVariantSettingsSchema = z.object({
   }
 
   if (settings.status !== 'approved') return
+  const voiceAssignments = settings.variants.map((variant) => `${variant.voice.provider}:${variant.voice.voiceId}`)
+  if (new Set(voiceAssignments).size !== voiceAssignments.length) {
+    context.addIssue({ code: 'custom', path: ['variants'], message: 'Approved portrait variants require distinct voices' })
+  }
   settings.variants.forEach((variant, index) => {
     const voice = variant.voice
-    if (voice.provider !== 'browser-speech-synthesis' || !voice.voiceId || !voice.locale ||
-      voice.rate === null || voice.rate < 0.5 || voice.rate > 2 ||
-      voice.pitch === null || voice.pitch < 0 || voice.pitch > 2 ||
-      voice.volume === null || voice.volume < 0 || voice.volume > 1 ||
-      !voice.fallbackVoiceId) {
+    const browserVoice = voice.provider === 'browser-speech-synthesis' && Boolean(voice.voiceId) &&
+      Boolean(voice.locale) && voice.rate !== null && voice.pitch !== null && voice.volume !== null
+    const openAiVoice = voice.provider === 'openai-audio-speech' &&
+      OPENAI_SPEECH_VOICES.includes(voice.voiceId as typeof OPENAI_SPEECH_VOICES[number]) &&
+      voice.locale === 'en' && voice.rate === null && voice.pitch === null && voice.volume === null
+    if ((!browserVoice && !openAiVoice) ||
+      (voice.rate !== null && (voice.rate < 0.5 || voice.rate > 2)) ||
+      (voice.pitch !== null && (voice.pitch < 0 || voice.pitch > 2)) ||
+      (voice.volume !== null && (voice.volume < 0 || voice.volume > 1)) || !voice.fallbackVoiceId) {
       context.addIssue({ code: 'custom', path: ['variants', index, 'voice'], message: 'Approved settings require a supported voice and bounded playback values' })
     }
     for (const [trait, selection] of Object.entries(variant.variability)) {
@@ -81,14 +93,25 @@ export const PatientVariantPresentationSettingsSchema = z.object({
   variantKey: z.enum(PATIENT_VARIANT_KEYS),
   settingsRevision: z.number().int().positive(),
   voiceProfileId: z.string().trim().min(1).max(120),
-  provider: z.literal('browser-speech-synthesis'),
+  provider: z.enum(['browser-speech-synthesis', 'openai-audio-speech']),
   voiceId: z.string().trim().min(1).max(200),
   locale: z.string().trim().min(1).max(200),
-  rate: z.number().finite().min(0.5).max(2),
-  pitch: z.number().finite().min(0).max(2),
-  volume: z.number().finite().min(0).max(1),
+  rate: optionalRate,
+  pitch: optionalPitch,
+  volume: optionalVolume,
   fallbackVoiceId: z.string().trim().min(1).max(200)
-}).strict()
+}).strict().superRefine((voice, context) => {
+  if (voice.provider === 'browser-speech-synthesis') {
+    if (!voice.locale || voice.rate === null || voice.pitch === null || voice.volume === null) {
+      context.addIssue({ code: 'custom', message: 'Browser speech settings require locale, rate, pitch, and volume' })
+    }
+    return
+  }
+  if (!OPENAI_SPEECH_VOICES.includes(voice.voiceId as typeof OPENAI_SPEECH_VOICES[number]) ||
+    voice.locale !== 'en' || voice.rate !== null || voice.pitch !== null || voice.volume !== null) {
+    context.addIssue({ code: 'custom', message: 'OpenAI speech settings require a supported voice and English locale' })
+  }
+})
 
 export type PatientVariantPresentationSettings = z.infer<typeof PatientVariantPresentationSettingsSchema>
 
@@ -169,6 +192,7 @@ export function applyApprovedPatientVariantSettings<T extends VariantPersonaProf
 }
 
 export interface PatientVariantSettingsStore {
+  listTenants(): Promise<Array<{ tenantId: string; displayName: string }>>
   getSettings(tenantId: string): Promise<PatientVariantSettings | null>
   saveSettings(
     tenantId: string,
@@ -195,6 +219,16 @@ function parseSettingsRow(row: SettingsRow): PatientVariantSettings {
 
 export function createPostgresPatientVariantSettingsStore(pool: Pool): PatientVariantSettingsStore {
   return {
+    async listTenants() {
+      const result = await pool.query<{ tenant_id: string; display_name: string }>(
+        `SELECT t.tenant_id, COALESCE(b.display_name, t.tenant_id) AS display_name
+         FROM tenants t
+         LEFT JOIN tenant_branding b USING (tenant_id)
+         ORDER BY display_name, t.tenant_id`
+      )
+      return result.rows.map(({ tenant_id, display_name }) => ({ tenantId: tenant_id, displayName: display_name }))
+    },
+
     async getSettings(tenantId) {
       const result = await pool.query<SettingsRow>(
         `SELECT schema_version, status, revision, variants

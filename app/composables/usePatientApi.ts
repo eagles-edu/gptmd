@@ -133,6 +133,72 @@ export function usePatientApi() {
     return parsed.data
   }
 
+  async function getPatientSpeech(sessionId: string, turnId: string): Promise<{
+    body: ReadableStream<Uint8Array>
+    contentType: string
+  }> {
+    const response = await fetch(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/patient-speech`,
+      {
+        method: 'POST',
+        headers: { ...await auth.accessHeaders(), 'Content-Type': 'application/json' },
+        body: JSON.stringify({ turnId })
+      }
+    )
+    if (!response.ok) {
+      const error = new Error('Server-generated patient speech is unavailable.') as Error & { status?: number }
+      error.status = response.status
+      throw error
+    }
+    const contentType = response.headers.get('Content-Type')?.split(';', 1)[0]?.trim() ?? ''
+    if (contentType !== 'audio/mpeg' || !response.body) {
+      throw new Error('The speech service returned an invalid audio response.')
+    }
+    return { body: response.body, contentType }
+  }
+
+  async function recordAudioConsent(sessionId: string): Promise<void> {
+    await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/audio-recording/consent`,
+      {
+        method: 'POST', headers: await auth.accessHeaders(),
+        body: { consentVersion: 'gptmd-two-sided-audio-v1' }
+      }
+    )
+  }
+
+  async function getAudioRecordingConsent(sessionId: string): Promise<boolean> {
+    const result = await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/audio-recording/consent`,
+      { headers: await auth.accessHeaders() }
+    )
+    if (!result || typeof result !== 'object' || !('consented' in result) || typeof result.consented !== 'boolean') {
+      throw new Error('The recording-consent service returned an invalid response.')
+    }
+    return result.consented
+  }
+
+  async function uploadLearnerAudioSegment(
+    sessionId: string,
+    recordingPart: number,
+    sequence: number,
+    blob: Blob
+  ): Promise<void> {
+    const contentType = blob.type.split(';', 1)[0]
+    if (contentType !== 'audio/webm' && contentType !== 'audio/mp4') {
+      throw new Error('This browser recording format is not supported.')
+    }
+    const response = await fetch(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/audio-recording/${recordingPart}/${sequence}`,
+      {
+        method: 'PUT',
+        headers: { ...await auth.accessHeaders(), 'Content-Type': contentType },
+        body: blob
+      }
+    )
+    if (!response.ok) throw new Error('The microphone recording segment could not be stored.')
+  }
+
   async function acknowledgeAddonSpendNotice(sessionId: string): Promise<void> {
     await $fetch<unknown>(
       `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/addon-spend-notice/acknowledge`,
@@ -250,6 +316,10 @@ export function usePatientApi() {
     getCurrentEncounter,
     setupSession,
     sendTurn,
+    getPatientSpeech,
+    recordAudioConsent,
+    getAudioRecordingConsent,
+    uploadLearnerAudioSegment,
     acknowledgeAddonSpendNotice,
     recordLocalUtterance,
     recordEngagementPulse,

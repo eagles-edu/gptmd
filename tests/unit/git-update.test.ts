@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
@@ -33,14 +33,23 @@ describe('git update commit message', () => {
     output.destroy()
   })
 
-  it('appends typed description text after the incremented version', async () => {
+  it('ignores a buffered nvm use command and waits for an explicit message response', async () => {
     const input = new PassThrough()
     const output = new PassThrough()
+    let resolved = false
     const message = promptForCommitMessage('gptMD-dev_0.0.0.18', input, output)
+      .then((value) => {
+        resolved = true
+        return value
+      })
 
     input.write('nvm use\n')
 
-    await expect(message).resolves.toBe('gptMD-dev_0.0.0.18 nvm use')
+    await new Promise((resolve) => setImmediate(resolve))
+    expect(resolved).toBe(false)
+
+    input.write('\n')
+    await expect(message).resolves.toBe('gptMD-dev_0.0.0.18')
     input.destroy()
     output.destroy()
   })
@@ -56,7 +65,7 @@ describe('git update message validation', () => {
 })
 
 describe('git update Node initialization', () => {
-  it('waits for nvm use in a noninteractive shell before running the helper', () => {
+  it('waits for nvm use and verifies the project Node version before running the helper', () => {
     const nvmDir = mkdtempSync(resolve(tmpdir(), 'gptmd-nvm-test-'))
     mkdirSync(nvmDir, { recursive: true })
     writeFileSync(
@@ -75,9 +84,37 @@ describe('git update Node initialization', () => {
       expect(result.error).toBeUndefined()
       expect(result.stdout.indexOf('nvm-start')).toBeGreaterThanOrEqual(0)
       expect(result.stdout.indexOf('nvm-start')).toBeLessThan(result.stdout.indexOf('nvm-complete'))
-      expect(result.stdout.indexOf('nvm-complete')).toBeLessThan(result.stdout.indexOf('gptMD-dev_'))
+      expect(result.stdout.indexOf('nvm-complete')).toBeLessThan(result.stdout.indexOf('Verified Node'))
+      expect(result.stdout.indexOf('Verified Node')).toBeLessThan(result.stdout.indexOf('gptMD-dev_'))
     } finally {
       rmSync(nvmDir, { recursive: true, force: true })
+    }
+  })
+
+  it('retries once and refuses to run the helper when nvm selects the wrong Node version', () => {
+    const nvmDir = mkdtempSync(resolve(tmpdir(), 'gptmd-nvm-test-'))
+    mkdirSync(nvmDir, { recursive: true })
+    writeFileSync(resolve(nvmDir, 'nvm.sh'), 'nvm() { printf "nvm-complete\\n"; }\n')
+    const wrongNodeDir = mkdtempSync(resolve(tmpdir(), 'gptmd-node-test-'))
+    writeFileSync(resolve(wrongNodeDir, 'node'), '#!/usr/bin/env bash\nprintf "v0.0.0\\n"\n')
+    writeFileSync(resolve(wrongNodeDir, 'npm'), '#!/usr/bin/env bash\nexit 0\n')
+    chmodSync(resolve(wrongNodeDir, 'node'), 0o755)
+    chmodSync(resolve(wrongNodeDir, 'npm'), 0o755)
+
+    try {
+      const result = spawnSync('bash', ['scripts/git-update.sh', '--dry-run'], {
+        cwd: projectRoot,
+        encoding: 'utf8',
+        env: { ...process.env, NVM_DIR: nvmDir, PATH: `${wrongNodeDir}:${process.env.PATH}` },
+      })
+
+      expect(result.status).toBe(1)
+      expect(result.stdout.match(/nvm-complete/g)).toHaveLength(2)
+      expect(result.stderr).toContain('refusing to start git:update')
+      expect(result.stdout).not.toContain('gptMD-dev_')
+    } finally {
+      rmSync(nvmDir, { recursive: true, force: true })
+      rmSync(wrongNodeDir, { recursive: true, force: true })
     }
   })
 })

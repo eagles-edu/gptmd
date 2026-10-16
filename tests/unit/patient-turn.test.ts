@@ -64,8 +64,9 @@ describe('patient turn generation and validation', () => {
 
     expect(result).toEqual({
       responseId: 'resp-turn',
+      provider: 'openai',
       providerUsage: {
-        responseId: 'resp-turn', model: 'gpt-6-luna', serviceTier: 'default',
+        provider: 'openai', responseId: 'resp-turn', model: 'gpt-6-luna', serviceTier: 'default',
         inputTokens: 42, cachedInputTokens: 12, cacheWriteTokens: 0,
         outputTokens: 9, totalTokens: 51, durationMs: expect.any(Number),
         pricingVersion: 'openai-api-pricing-2026-10-06', estimatedCostUsd: '0.000007620000'

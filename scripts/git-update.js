@@ -55,9 +55,19 @@ export function promptForCommitMessage(suggestedMessage, input = stdin, output =
       prompt.close()
       reject(new Error('Commit cancelled.'))
     })
-    prompt.once('line', (answer) => {
+    prompt.on('line', (answer) => {
+      const message = answer.trim()
+      // A VS Code task can leave its setup command in the terminal input
+      // buffer. Do not turn that command into a commit-message suffix.
+      if (message.toLowerCase() === 'nvm use' || message === `${suggestedMessage} nvm use`) {
+        output.write('Node is already verified. Review or edit the message, then press Enter to continue.\n')
+        prompt.prompt()
+        prompt.write(`${suggestedMessage} `)
+        return
+      }
+
       prompt.close()
-      resolve(answer.trim() || suggestedMessage)
+      resolve(message || suggestedMessage)
     })
     prompt.prompt()
     prompt.write(`${suggestedMessage} `)

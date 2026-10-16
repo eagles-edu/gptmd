@@ -14,6 +14,7 @@ import type { OrganizationAiTimeBudgetStore, OrganizationAiTimeBudgetSettings } 
 import type { SessionArchiveStore } from '../../services/api/src/session-archives.ts'
 import type { ConsumerTokenCatalog, ConsumerTokenCatalogStore } from '../../services/api/src/consumer-token-catalog.ts'
 import type { TokenEntitlementStore } from '../../services/api/src/token-entitlements.ts'
+import type { SystemSpeechStore } from '../../services/api/src/system-speech.ts'
 import { createRedisRequestRateLimitStore, hashRateLimitKey } from '../../services/api/src/request-rate-limit.ts'
 import { ProviderTokenBudgetExceeded } from '../../services/api/src/provider-token-reservations.ts'
 import {
@@ -142,6 +143,60 @@ async function withApi(
 afterEach(() => vi.restoreAllMocks())
 
 describe('GPTMD API integrations', () => {
+  it('requires owner consent and stores bounded learner audio segments idempotently', async () => {
+    const sessionId = randomBytes(32).toString('base64url')
+    const ownedSession = { sessionId, status: 'ready', createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z', versions: sessionVersions } satisfies SessionRecord
+    const sessionStore = createSessionStore({
+      getOwnedSession: vi.fn().mockResolvedValue(ownedSession)
+    })
+    const recordAudioConsent = vi.fn().mockResolvedValue(true)
+    const hasAudioConsent = vi.fn().mockResolvedValue(true)
+    const saveAudioSegment = vi.fn()
+      .mockResolvedValueOnce('saved')
+      .mockResolvedValueOnce('duplicate')
+    const archiveStore = {
+      recordAudioConsent, hasAudioConsent, saveAudioSegment
+    } as unknown as SessionArchiveStore
+
+    await withApi(createDependencies({ sessionStore, sessionArchiveStore: archiveStore }), async (baseUrl) => {
+      const consent = await fetch(`${baseUrl}/api/sessions/${sessionId}/audio-recording/consent`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ consentVersion: 'gptmd-two-sided-audio-v1' })
+      })
+      expect(consent.status).toBe(201)
+      expect(await consent.json()).toMatchObject({ sessionId, consented: true })
+
+      const currentConsent = await fetch(`${baseUrl}/api/sessions/${sessionId}/audio-recording/consent`, {
+        headers: authHeaders()
+      })
+      expect(currentConsent.status).toBe(200)
+      expect(await currentConsent.json()).toEqual({ consented: true })
+
+      const segmentUrl = `${baseUrl}/api/sessions/${sessionId}/audio-recording/0/0`
+      const upload = () => fetch(segmentUrl, {
+        method: 'PUT', headers: { ...authHeaders(), 'content-type': 'audio/webm' },
+        body: Buffer.from('bounded-test-audio')
+      })
+      const saved = await upload()
+      expect(saved.status).toBe(201)
+      expect(await saved.json()).toEqual({ saved: true, duplicate: false })
+      const duplicate = await upload()
+      expect(duplicate.status).toBe(200)
+      expect(await duplicate.json()).toEqual({ saved: true, duplicate: true })
+    })
+
+    expect(recordAudioConsent).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', subjectId: 'learner-1', role: 'learner' }),
+      sessionId, 'gptmd-two-sided-audio-v1'
+    )
+    expect(hasAudioConsent).toHaveBeenCalledOnce()
+    expect(saveAudioSegment).toHaveBeenCalledTimes(2)
+    expect(saveAudioSegment).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', subjectId: 'learner-1', role: 'learner' }),
+      expect.objectContaining({ sessionId, speaker: 'learner', recordingPart: 0, sequence: 0, contentType: 'audio/webm', content: Buffer.from('bounded-test-audio') })
+    )
+  })
+
   it('lets only the owner learner acknowledge an add-on spend notice', async () => {
     const sessionId = randomBytes(32).toString('base64url')
     const acknowledgeAddonSpendNotice = vi.fn().mockResolvedValue(true)
@@ -915,7 +970,7 @@ describe('GPTMD API integrations', () => {
     })
   })
 
-  it('scopes patient variant settings to the instructor role and selected tenant', async () => {
+  it('restricts patient variant settings to the system-admin allowlist', async () => {
     const settings = {
       schemaVersion: 1 as const,
       status: 'draft' as const,
@@ -932,6 +987,7 @@ describe('GPTMD API integrations', () => {
       }))
     }
     const settingsStore: PatientVariantSettingsStore = {
+      listTenants: vi.fn().mockResolvedValue([{ tenantId: 'tenant-a', displayName: 'VinMed Hospital' }]),
       getSettings: vi.fn().mockResolvedValue(settings),
       saveSettings: vi.fn().mockResolvedValue(settings)
     }
@@ -945,21 +1001,43 @@ describe('GPTMD API integrations', () => {
       }])
     })
 
-    await withApi(createDependencies({ sessionStore, patientVariantSettingsStore: settingsStore }), async (baseUrl) => {
-      const instructor = makeToken({ sub: 'instructor-1' })
-      const read = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
-        headers: { authorization: `Bearer ${instructor}` }
+    await withApi(createDependencies({
+      sessionStore,
+      patientVariantSettingsStore: settingsStore,
+      systemAdminSubjectIds: new Set(['platform-operator'])
+    }), async (baseUrl) => {
+      const tenants = await fetch(`${baseUrl}/api/system-admin/patient-variant-settings/tenants`, {
+        headers: { authorization: `Bearer ${makeToken({ sub: 'platform-operator' })}` }
+      })
+      expect(tenants.status).toBe(200)
+      expect(await tenants.json()).toEqual({ tenants: [{ tenantId: 'tenant-a', displayName: 'VinMed Hospital' }] })
+
+      const read = await fetch(`${baseUrl}/api/system-admin/tenants/tenant-a/patient-variant-settings`, {
+        headers: { authorization: `Bearer ${makeToken({ sub: 'platform-operator' })}` }
       })
       expect(read.status).toBe(200)
       expect(await read.json()).toEqual({ settings })
 
-      const update = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
+      const update = await fetch(`${baseUrl}/api/system-admin/tenants/tenant-a/patient-variant-settings`, {
+        method: 'PUT',
+        headers: { authorization: `Bearer ${makeToken({ sub: 'platform-operator' })}`, 'content-type': 'application/json' },
+        body: JSON.stringify(settings)
+      })
+      expect(update.status).toBe(200)
+      expect(settingsStore.saveSettings).toHaveBeenCalledWith('tenant-a', 'platform-operator', settings)
+
+      const instructor = makeToken({ sub: 'instructor-1' })
+      const instructorRead = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
+        headers: { authorization: `Bearer ${instructor}` }
+      })
+      expect(instructorRead.status).toBe(403)
+
+      const instructorUpdate = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
         method: 'PUT',
         headers: { authorization: `Bearer ${instructor}`, 'content-type': 'application/json' },
         body: JSON.stringify(settings)
       })
-      expect(update.status).toBe(200)
-      expect(settingsStore.saveSettings).toHaveBeenCalledWith('tenant-a', 'instructor-1', settings)
+      expect(instructorUpdate.status).toBe(403)
 
       const learner = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
         headers: { authorization: `Bearer ${makeToken({ sub: 'learner-1' })}` }
@@ -969,12 +1047,170 @@ describe('GPTMD API integrations', () => {
         headers: { authorization: `Bearer ${makeToken({ sub: 'admin-1' })}` }
       })
       expect(administrator.status).toBe(403)
-      const wrongTenant = await fetch(`${baseUrl}/api/instructor/patient-variant-settings`, {
-        headers: { authorization: `Bearer ${instructor}`, 'x-gptmd-tenant-id': 'tenant-b' }
+      const notAllowlisted = await fetch(`${baseUrl}/api/system-admin/tenants/tenant-a/patient-variant-settings`, {
+        headers: { authorization: `Bearer ${instructor}` }
       })
-      expect(wrongTenant.status).toBe(403)
+      expect(notAllowlisted.status).toBe(403)
+      expect(settingsStore.listTenants).toHaveBeenCalledTimes(1)
       expect(settingsStore.getSettings).toHaveBeenCalledTimes(1)
       expect(settingsStore.saveSettings).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  it('synthesizes only the owner-accepted patient turn and enforces the separate speech quota', async () => {
+    const sessionId = randomBytes(32).toString('base64url')
+    const turnId = 'accepted-turn-123'
+    const getCurrentOwnedEncounter = vi.fn().mockResolvedValue({
+      sessionId,
+      transcript: [{ turnId, patientResponse: 'I have had pain since yesterday.' }],
+      patient: { presentationSettings: { provider: 'openai-audio-speech', voiceId: 'coral' } }
+    })
+    const sessionStore = createSessionStore({ getCurrentOwnedEncounter })
+    const chargeCharacters = vi.fn().mockResolvedValue('charged')
+    const systemSpeechStore: SystemSpeechStore = {
+      getPolicy: vi.fn(),
+      getUsageSummary: vi.fn(),
+      savePolicy: vi.fn(),
+      chargeCharacters
+    }
+    const saveAudioSegment = vi.fn().mockResolvedValue('saved')
+    const sessionArchiveStore = {
+      hasAudioConsent: vi.fn().mockResolvedValue(false),
+      saveAudioSegment
+    } as unknown as SessionArchiveStore
+    const synthesizePatientSpeech = vi.fn().mockResolvedValue((async function* () {
+      yield Uint8Array.from([0x49, 0x44])
+      yield Uint8Array.from([0x33])
+    })())
+
+    await withApi(createDependencies({ sessionStore, sessionArchiveStore, systemSpeechStore, synthesizePatientSpeech }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/patient-speech`, {
+        method: 'POST', headers: authHeaders(),
+        body: JSON.stringify({ turnId, text: 'attacker-controlled text must be ignored' })
+      })
+      expect(response.status).toBe(200)
+      expect(response.headers.get('content-type')).toBe('audio/mpeg')
+      expect(response.headers.get('cache-control')).toContain('no-store')
+      expect(Array.from(new Uint8Array(await response.arrayBuffer()))).toEqual([0x49, 0x44, 0x33])
+      expect(synthesizePatientSpeech).toHaveBeenCalledWith({ text: 'I have had pain since yesterday.', voice: 'coral' })
+      expect(chargeCharacters).toHaveBeenCalledWith(expect.objectContaining({
+        tenantId: 'tenant-a', subjectId: 'learner-1', characters: 32,
+        sessionIdHash: expect.stringMatching(/^[a-f0-9]{64}$/),
+        turnIdHash: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }))
+
+      chargeCharacters.mockResolvedValueOnce('quota_exceeded')
+      const exhausted = await fetch(`${baseUrl}/api/sessions/${sessionId}/patient-speech`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ turnId })
+      })
+      expect(exhausted.status).toBe(429)
+      expect(synthesizePatientSpeech).toHaveBeenCalledTimes(1)
+
+      const unknownTurn = await fetch(`${baseUrl}/api/sessions/${sessionId}/patient-speech`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ turnId: 'unknown-turn-123' })
+      })
+      expect(unknownTurn.status).toBe(409)
+      expect(chargeCharacters).toHaveBeenCalledTimes(2)
+    })
+    expect(saveAudioSegment).not.toHaveBeenCalled()
+  })
+
+  it('archives the generated patient audio under the accepted turn only after two-sided recording consent', async () => {
+    const sessionId = randomBytes(32).toString('base64url')
+    const turnId = 'accepted-turn-123'
+    const getCurrentOwnedEncounter = vi.fn().mockResolvedValue({
+      sessionId,
+      transcript: [{ turnId, sequence: 7, patientResponse: 'I have had pain since yesterday.' }],
+      patient: { presentationSettings: { provider: 'openai-audio-speech', voiceId: 'coral' } }
+    })
+    const sessionStore = createSessionStore({ getCurrentOwnedEncounter })
+    const systemSpeechStore: SystemSpeechStore = {
+      getPolicy: vi.fn(),
+      getUsageSummary: vi.fn(),
+      savePolicy: vi.fn(),
+      chargeCharacters: vi.fn().mockResolvedValue('charged')
+    }
+    const hasAudioConsent = vi.fn().mockResolvedValue(true)
+    const saveAudioSegment = vi.fn().mockResolvedValue('saved')
+    const sessionArchiveStore = { hasAudioConsent, saveAudioSegment } as unknown as SessionArchiveStore
+    const generatedAudio = Buffer.from([0x49, 0x44, 0x33])
+    const synthesizePatientSpeech = vi.fn().mockResolvedValue((async function* () {
+      yield generatedAudio.subarray(0, 2)
+      yield generatedAudio.subarray(2)
+    })())
+
+    await withApi(createDependencies({ sessionStore, sessionArchiveStore, systemSpeechStore, synthesizePatientSpeech }), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/sessions/${sessionId}/patient-speech`, {
+        method: 'POST', headers: authHeaders(), body: JSON.stringify({ turnId })
+      })
+      expect(response.status).toBe(200)
+      expect(Buffer.from(await response.arrayBuffer())).toEqual(generatedAudio)
+    })
+
+    expect(hasAudioConsent).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', subjectId: 'learner-1', role: 'learner' }),
+      sessionId
+    )
+    expect(saveAudioSegment).toHaveBeenCalledWith(
+      expect.objectContaining({ tenantId: 'tenant-a', subjectId: 'learner-1', role: 'learner' }),
+      {
+        sessionId,
+        speaker: 'patient',
+        recordingPart: 0,
+        sequence: 7,
+        turnId,
+        contentType: 'audio/mpeg',
+        content: generatedAudio
+      }
+    )
+  })
+
+  it('restricts speech policy reads and revisioned changes to the system-admin allowlist', async () => {
+    const policy = { enabled: false, monthlyCharactersPerLearner: 0, revision: 0 }
+    const systemSpeechStore: SystemSpeechStore = {
+      getPolicy: vi.fn().mockResolvedValue(policy),
+      getUsageSummary: vi.fn().mockResolvedValue({
+        monthStart: '2026-10-01T00:00:00.000Z', charactersUsed: 0, activeLearners: 0
+      }),
+      savePolicy: vi.fn()
+        .mockResolvedValueOnce({ enabled: true, monthlyCharactersPerLearner: 12_000, revision: 1 })
+        .mockResolvedValueOnce('conflict'),
+      chargeCharacters: vi.fn()
+    }
+    await withApi(createDependencies({
+      systemSpeechStore,
+      systemAdminSubjectIds: new Set(['platform-operator'])
+    }), async (baseUrl) => {
+      const denied = await fetch(`${baseUrl}/api/system-admin/speech-policy`, {
+        headers: { authorization: `Bearer ${makeToken({ sub: 'learner-1' })}` }
+      })
+      expect(denied.status).toBe(403)
+      expect(systemSpeechStore.getPolicy).not.toHaveBeenCalled()
+
+      const headers = { authorization: `Bearer ${makeToken({ sub: 'platform-operator' })}`, 'content-type': 'application/json' }
+      const read = await fetch(`${baseUrl}/api/system-admin/speech-policy`, { headers })
+      expect(read.status).toBe(200)
+      expect((await read.json()).policy).toEqual(policy)
+
+      const save = await fetch(`${baseUrl}/api/system-admin/speech-policy`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ enabled: true, monthlyCharactersPerLearner: 12_000, expectedRevision: 0 })
+      })
+      expect(save.status).toBe(200)
+      expect(systemSpeechStore.savePolicy).toHaveBeenCalledWith('platform-operator', {
+        enabled: true, monthlyCharactersPerLearner: 12_000, expectedRevision: 0
+      })
+
+      const conflict = await fetch(`${baseUrl}/api/system-admin/speech-policy`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ enabled: true, monthlyCharactersPerLearner: 12_000, expectedRevision: 0 })
+      })
+      expect(conflict.status).toBe(409)
+      const invalid = await fetch(`${baseUrl}/api/system-admin/speech-policy`, {
+        method: 'PUT', headers,
+        body: JSON.stringify({ enabled: true, monthlyCharactersPerLearner: 12_000, expectedRevision: 0, unexpected: true })
+      })
+      expect(invalid.status).toBe(400)
     })
   })
 
@@ -1830,6 +2066,7 @@ describe('GPTMD API integrations', () => {
       }))
     }
     const patientVariantSettingsStore: PatientVariantSettingsStore = {
+      listTenants: vi.fn().mockResolvedValue([]),
       getSettings: vi.fn().mockResolvedValue(approvedVariantSettings),
       saveSettings: vi.fn()
     }

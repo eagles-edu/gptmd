@@ -8,7 +8,7 @@ test('loads bundled font assets without failed requests', async ({ page }) => {
     }
   })
 
-  await page.goto('/')
+  await page.goto('/', { waitUntil: 'domcontentloaded' })
   await page.evaluate(() => document.fonts.ready)
 
   expect(fontResponses.length).toBeGreaterThan(0)

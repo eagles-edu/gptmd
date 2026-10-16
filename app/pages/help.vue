@@ -5,7 +5,7 @@
     <h2>The patient session does not start</h2>
     <p>Session creation and patient setup require the GPTMD API, authentication, PostgreSQL, Redis JSON, and configured patient generation. If setup is unavailable, check the API service and confirm that all database migrations are applied.</p>
     <h2>Microphone or audio is unavailable</h2>
-    <p>Voice conversation streams microphone audio to OpenAI for live transcription after you accept the visit consent. GPTpatient does not store raw audio. If microphone permission, WebRTC, the provider, or the tenant audio policy is unavailable, use Transcript mode. Never use real patient information.</p>
+    <p>Voice conversation streams microphone audio to OpenAI for live transcription after you accept the visit consent. When configured by a GPTMD system administrator, accepted fictional patient replies may also be sent to OpenAI to generate AI speech; that audio is streamed to your browser and not retained by this feature. GPTpatient does not store raw microphone audio. If microphone permission, WebRTC, the provider, or the tenant audio policy is unavailable, use Transcript mode. Never use real patient information.</p>
     <h2>Training data</h2>
     <p>Cases are fictional. Do not enter real patient identifiers, private health information, or other sensitive personal data.</p>
   </article>

@@ -1,4 +1,5 @@
 import type { Pool } from 'pg'
+import { unzipSync } from 'fflate'
 import { describe, expect, it, vi } from 'vitest'
 import {
   createPostgresSessionArchiveStore,
@@ -168,6 +169,7 @@ describe('session transcript archives', () => {
     ]
     const connect = vi.fn().mockImplementation(async () => clients.shift())
     const poolQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('DELETE FROM session_audio_segments')) return { rows: [], rowCount: 0 }
       if (sql.includes('DELETE FROM session_archive_artifacts')) return { rows: [], rowCount: 0 }
       if (sql.includes('SELECT session.tenant_id')) return { rows: [archiveSource], rowCount: 1 }
       if (sql.includes('FROM session_transcript')) {
@@ -178,6 +180,7 @@ describe('session transcript archives', () => {
           ], rowCount: 2
         }
       }
+      if (sql.includes('FROM session_audio_recording_consents')) return { rows: [], rowCount: 0 }
       throw new Error(`Unexpected pool query: ${sql}`)
     })
     const worker = createSessionArchiveWorker({ connect, query: poolQuery } as unknown as Pool)
@@ -192,13 +195,79 @@ describe('session transcript archives', () => {
       .toContain("speaker IN ('learner', 'patient')")
     const artifactInsert = artifactQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO session_archive_artifacts'))
     expect(artifactInsert?.[0]).toContain('terminal_at, created_at, expires_at')
-    expect(artifactInsert?.[1]?.[6]).toEqual(archiveSource.occurred_at)
-    expect(artifactInsert?.[1]?.[7]).toEqual(new Date(archiveSource.occurred_at.getTime() + 72 * 60 * 60 * 1000))
-    const persistedContent = artifactInsert?.[1]?.[5]
+    expect(artifactInsert?.[1]?.[7]).toEqual(archiveSource.occurred_at)
+    expect(artifactInsert?.[1]?.[8]).toEqual(new Date(archiveSource.occurred_at.getTime() + 72 * 60 * 60 * 1000))
+    const persistedContent = artifactInsert?.[1]?.[6]
     expect(Buffer.isBuffer(persistedContent)).toBe(true)
     expect((persistedContent as Buffer).toString('utf8')).toContain('Learner: Question')
     expect((persistedContent as Buffer).toString('utf8')).toContain('Patient: Answer')
     expect(artifactQuery.mock.calls.at(-2)?.[0]).toContain("SET status = 'completed'")
+  })
+
+  it('builds a two-sided ZIP with transcript, learner audio, patient audio, and a manifest', async () => {
+    const learnerAudio = Buffer.from('learner-audio')
+    const patientAudio = Buffer.from('patient-audio')
+    const claimQuery = vi.fn(async (sql: string) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [], rowCount: 0 }
+      if (sql.includes('SELECT session_id, terminal_event_id, attempt_count, claimed_at')) {
+        return { rows: [{ session_id: sessionId, terminal_event_id: 'terminal-1', attempt_count: 0, claimed_at: null }], rowCount: 1 }
+      }
+      if (sql.includes('UPDATE session_archive_jobs') && sql.includes('RETURNING session_id')) {
+        return { rows: [{ session_id: sessionId, terminal_event_id: 'terminal-1', attempt_count: 1, claimed_at: claimedAt }], rowCount: 1 }
+      }
+      throw new Error(`Unexpected claim query: ${sql}`)
+    })
+    const artifactQuery = vi.fn(async (sql: string) => {
+      if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [], rowCount: 0 }
+      if (sql.includes('INSERT INTO session_archive_artifacts')) {
+        return { rows: [{ expires_at: new Date('2026-10-18T10:00:00.000Z') }], rowCount: 1 }
+      }
+      if (sql.includes("SET status = 'completed'")) return { rows: [], rowCount: 1 }
+      throw new Error(`Unexpected artifact query: ${sql}`)
+    })
+    const clients = [
+      { query: claimQuery, release: vi.fn() },
+      { query: artifactQuery, release: vi.fn() }
+    ]
+    const poolQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('DELETE FROM session_audio_segments')) return { rows: [], rowCount: 0 }
+      if (sql.includes('DELETE FROM session_archive_artifacts')) return { rows: [], rowCount: 0 }
+      if (sql.includes('SELECT session.tenant_id')) return { rows: [archiveSource], rowCount: 1 }
+      if (sql.includes('GROUP BY turn_id')) return { rows: [{ turn_id: 'turn-00000001' }], rowCount: 1 }
+      if (sql.includes('FROM session_transcript')) {
+        return { rows: [{ speaker: 'patient', occurred_at: archiveSource.occurred_at, content: 'Patient answer' }], rowCount: 1 }
+      }
+      if (sql.includes('FROM session_audio_recording_consents')) return { rows: [{}], rowCount: 1 }
+      if (sql.includes('FROM session_audio_segments')) {
+        return { rows: [
+          { speaker: 'learner', recording_part: 0, sequence: 0, turn_id: null, content_type: 'audio/webm', content: learnerAudio },
+          { speaker: 'patient', recording_part: 0, sequence: 3, turn_id: 'turn-00000001', content_type: 'audio/mpeg', content: patientAudio }
+        ], rowCount: 2 }
+      }
+      throw new Error(`Unexpected pool query: ${sql}`)
+    })
+    const worker = createSessionArchiveWorker({
+      connect: vi.fn().mockImplementation(async () => clients.shift()), query: poolQuery
+    } as unknown as Pool)
+
+    await expect(worker.processOnce()).resolves.toBe(1)
+
+    const artifactInsert = artifactQuery.mock.calls.find(([sql]) => sql.includes('INSERT INTO session_archive_artifacts'))
+    expect(artifactInsert?.[1]?.[4]).toBe('application/zip')
+    const archive = unzipSync(artifactInsert?.[1]?.[6] as Uint8Array)
+    expect(Object.keys(archive)).toEqual(expect.arrayContaining([
+      'transcript.txt', 'manifest.json', 'audio/learner-part-000.webm', 'audio/patient-turn-00003.mp3'
+    ]))
+    expect(Buffer.from(archive['transcript.txt'] ?? []).toString()).toContain('Patient: Patient answer')
+    expect(Buffer.from(archive['audio/learner-part-000.webm'] ?? [])).toEqual(learnerAudio)
+    expect(Buffer.from(archive['audio/patient-turn-00003.mp3'] ?? [])).toEqual(patientAudio)
+    expect(JSON.parse(Buffer.from(archive['manifest.json'] ?? []).toString())).toMatchObject({
+      format: 'gptmd-two-sided-audio-v1',
+      recordings: expect.arrayContaining([
+        expect.objectContaining({ speaker: 'learner' }),
+        expect.objectContaining({ speaker: 'patient' })
+      ])
+    })
   })
 
   it('does not publish an archive when generation starts after the terminal-time retention window', async () => {
@@ -214,6 +283,7 @@ describe('session transcript archives', () => {
       throw new Error(`Unexpected claim query: ${sql}`)
     })
     const poolQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('DELETE FROM session_audio_segments')) return { rows: [], rowCount: 0 }
       if (sql.includes('DELETE FROM session_archive_artifacts')) return { rows: [], rowCount: 0 }
       if (sql.includes('SELECT session.tenant_id')) return { rows: [staleSource], rowCount: 1 }
       if (sql.includes('UPDATE session_archive_jobs')) return { rows: [], rowCount: 1 }
@@ -248,6 +318,7 @@ describe('session transcript archives', () => {
     })
     const client = { query: claimQuery, release: vi.fn() }
     const poolQuery = vi.fn(async (sql: string) => {
+      if (sql.includes('DELETE FROM session_audio_segments')) return { rows: [], rowCount: 0 }
       if (sql.includes('DELETE FROM session_archive_artifacts')) return { rows: [], rowCount: 0 }
       if (sql.includes('SELECT session.tenant_id')) throw new Error('database detail with transcript body')
       if (sql.includes('UPDATE session_archive_jobs')) return retryQuery(sql)

@@ -71,7 +71,10 @@
             },
             "provider": {
               "type": "string",
-              "const": "browser-speech-synthesis"
+              "enum": [
+                "browser-speech-synthesis",
+                "openai-audio-speech"
+              ]
             },
             "voiceId": {
               "type": "string",
@@ -84,19 +87,40 @@
               "maxLength": 200
             },
             "rate": {
-              "type": "number",
-              "minimum": 0.5,
-              "maximum": 2
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0.5,
+                  "maximum": 2
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "pitch": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 2
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 2
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "volume": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1
+              "anyOf": [
+                {
+                  "type": "number",
+                  "minimum": 0,
+                  "maximum": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
             },
             "fallbackVoiceId": {
               "type": "string",

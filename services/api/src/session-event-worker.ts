@@ -288,8 +288,8 @@ async function persistProviderUsageEvent(pool: Pool, event: SessionProviderUsage
       `SELECT session_id, operation, model_id, service_tier, input_tokens, cached_input_tokens,
               cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd,
               pricing_version, duration_ms, occurred_at
-       FROM provider_usage WHERE provider = 'openai' AND provider_response_id = $1`,
-      [event.usage.responseId]
+       FROM provider_usage WHERE provider = $1 AND provider_response_id = $2`,
+      [event.usage.provider, event.usage.responseId]
     )
     const stored = existing.rows[0]
     if (stored) {
@@ -310,15 +310,15 @@ async function persistProviderUsageEvent(pool: Pool, event: SessionProviderUsage
       return
     }
 
-    const usageId = createHash('sha256').update(`openai\0${event.usage.responseId}`).digest('hex')
+    const usageId = createHash('sha256').update(`${event.usage.provider}\0${event.usage.responseId}`).digest('hex')
     await client.query(
       `INSERT INTO provider_usage (
          usage_id, session_id, tenant_id, subject_id, event_id, provider, operation,
          provider_response_id, model_id, service_tier, input_tokens, cached_input_tokens,
          cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd, pricing_version,
          duration_ms, occurred_at
-       ) VALUES ($1, $2, $3, $4, NULL, 'openai', $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
-      [usageId, event.sessionId, owner.tenant_id, owner.subject_id, event.operation,
+       ) VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+      [usageId, event.sessionId, owner.tenant_id, owner.subject_id, event.usage.provider, event.operation,
         event.usage.responseId, event.usage.model, event.usage.serviceTier, event.usage.inputTokens,
         event.usage.cachedInputTokens, event.usage.cacheWriteTokens, event.usage.outputTokens,
         event.usage.totalTokens, event.usage.estimatedCostUsd, event.usage.pricingVersion,
@@ -364,6 +364,7 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
       if (event.eventType === 'terminal') await ensureArchiveJob(client, event)
       if (event.eventType === 'accepted_turn') {
         const usageRows = await client.query<{
+          provider: string
           provider_response_id: string
           model_id: string | null
           service_tier: string | null
@@ -376,7 +377,7 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
           pricing_version: string | null
           duration_ms: number | null
         }>(
-          `SELECT provider_response_id, model_id, service_tier, input_tokens, cached_input_tokens,
+          `SELECT provider, provider_response_id, model_id, service_tier, input_tokens, cached_input_tokens,
                   cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd,
                   pricing_version, duration_ms
            FROM provider_usage WHERE session_id = $1 AND event_id = $2 ORDER BY provider_response_id`,
@@ -384,6 +385,7 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
         )
         const expected = [...event.providerUsage].sort((a, b) => a.responseId < b.responseId ? -1 : a.responseId > b.responseId ? 1 : 0)
         const actual = usageRows.rows.map((row) => ({
+          provider: row.provider,
           responseId: row.provider_response_id,
           model: row.model_id,
           serviceTier: row.service_tier,
@@ -435,16 +437,16 @@ async function persistEvent(pool: Pool, event: SessionHistoryEvent): Promise<voi
 
     if (event.eventType === 'accepted_turn') {
       for (const usage of event.providerUsage) {
-        const usageId = createHash('sha256').update(`openai\0${usage.responseId}`).digest('hex')
+        const usageId = createHash('sha256').update(`${usage.provider}\0${usage.responseId}`).digest('hex')
         await client.query(
           `INSERT INTO provider_usage (
              usage_id, session_id, tenant_id, subject_id, event_id, provider, operation,
              provider_response_id, model_id, service_tier, input_tokens, cached_input_tokens,
              cache_write_tokens, output_tokens, total_tokens, estimated_cost_usd, pricing_version,
              duration_ms, occurred_at
-           ) VALUES ($1, $2, $3, $4, $5, 'openai', 'patient_turn', $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)`,
+           ) VALUES ($1, $2, $3, $4, $5, $6, 'patient_turn', $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
           [usageId, event.sessionId, session.rows[0].tenant_id, session.rows[0].subject_id,
-            event.eventId, usage.responseId, usage.model, usage.serviceTier, usage.inputTokens,
+            event.eventId, usage.provider, usage.responseId, usage.model, usage.serviceTier, usage.inputTokens,
             usage.cachedInputTokens, usage.cacheWriteTokens, usage.outputTokens, usage.totalTokens,
             usage.estimatedCostUsd, usage.pricingVersion, usage.durationMs, event.occurredAt]
         )

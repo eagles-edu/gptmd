@@ -55,9 +55,14 @@ outside private development.
 PostgreSQL uses a dedicated `gptmd_live` database and `gptmd_live_app` role on
 the existing loopback-only PostgreSQL service. The API's private connection
 settings live in `/home/eaglesvn/.config/gptmd-live/api.env` with mode `0600`.
-As of release `2026-10-16T110205011Z`, all 39 SQL migration files in this
+As of release `2026-10-16T180135773Z`, all 43 SQL migration files in this
 checkout are recorded in `gptmd_schema_migrations`; there are no pending or
-ledger-only migration entries.
+ledger-only migration entries. Migrations 043 and 044 add the disabled-by-
+default system speech quota and consent-gated two-sided audio archive schema.
+The API package declares every external source import as a production
+dependency; this is checked by `tests/unit/api-runtime-dependencies.test.ts` so
+the isolated production install used by deployment cannot rely on hoisted
+monorepo packages.
 
 Redis runs in a separate Redis Stack container on `127.0.0.1:6382`, protected
 with its own password, AOF enabled, and a dedicated named Docker volume. The
@@ -664,3 +669,70 @@ mismatches or group/other-writable files or directories; the release and
 educator catalog are owned by `eaglesvn:eaglesvn`, with the catalog mode 0644.
 No live learner pulse or report row has yet been verified, and no CEU evidence
 is claimed.
+
+**2026-10-16 system-admin-only patient variant settings:** The captured full
+`npm run check` passed before deploy (431 unit tests, 60 desktop browser tests,
+44 preflight tests, 10 mobile-viewer tests, and one viewer-tool test).
+`npm run deploy:live` activated release `2026-10-16T143141766Z`; no migration
+was required. All three services are active and API `/readyz` reports ready.
+`npm run verify:live-oauth` and `npm run verify:live-browser` passed, and the
+public `/system-admin/patient-variants` route returned HTTP 200. The active
+API bundle contains the system-admin tenant settings routes and explicit 403
+responses for the former instructor endpoints. The release contains 9,254
+paths, all owned by `eaglesvn:eaglesvn`, with no group/other-writable path. A
+read-only query as `gptmd_live_app` confirmed zero patient-variant settings and
+audit rows. Role-specific API/browser behavior passed authenticated local
+tests; no signed-in live instructor or system-admin session was exercised.
+The full-gate, deploy, and post-deploy verification logs are in `/tmp` under
+`gptmd-npm-check-20261016-complete.log`,
+`gptmd-deploy-20261016-system-admin-variants.log`,
+`gptmd-verify-oauth-20261016-1431.log`, and
+`gptmd-verify-browser-20261016-1431.log` respectively.
+
+**2026-10-17 Anthropic failover credential smoke:** The active mirror release
+`2026-10-16T180135773Z` contains the Anthropic patient-turn adapter and
+`claude-haiku-5-5` model ID. The guarded `npm run configure:live-anthropic`
+command installed the existing local credential into the private API
+environment, preserved owner `eaglesvn:eaglesvn` and mode 0600, restarted the
+API, and passed `/readyz`; no key material was printed. The three GPTMD
+application services report active. A direct non-PHI Messages request using
+the canonical lowercase model ID returned HTTP 200 with 17 input and 5 output
+tokens. An uppercase model identifier returned 404 and was not used by the
+application. This confirms the credential and upstream model are reachable,
+not that a real session falls back when OpenAI fails. No live learner signed
+in, and no clinical text was sent. VinMed's admin invitation remains pending
+and AI session/Responses entitlements remain disabled. The full check exited 0
+immediately before configuration: 456 unit tests, 63 desktop E2E cases, 44
+preflight cases, 10 mobile-viewer cases, one viewer-tool case, plus lint, type,
+API, schema, diagram, and production-build checks.
+
+**2026-10-17 incremental patient-speech playback:** `npm run check` passed with
+461 unit tests, 63 standard browser tests, 44 encounter-preflight cases, 10
+mobile-viewer cases, and one viewer-tool test, plus lint, type, API, schema,
+diagram, and production-build checks. The guarded `npm run deploy:live`
+activated release `2026-10-16T191137010Z`. The active web bundle contains the
+MediaSource streaming reader and transient request, first-byte, response-EOF,
+playback-start, and playback-end timing markers; all three GPTMD application services are active,
+API `/readyz` returned HTTP 200, public `/` returned HTTP 200, and
+`npm run verify:live-oauth` plus `npm run verify:live-browser` passed. The
+browser feature check showed `audio/mpeg` MediaSource support in Chromium and
+WebKit but not Firefox; Firefox retains the buffered compatibility path. A
+local regression verifies the first streamed chunk is appended before body
+EOF and that cancellation settles the pending read/completion. Live system
+speech remains disabled at zero monthly characters, so no signed-in live
+speech session, playback latency, or audio archive was exercised.
+
+**2026-10-17 isolated archive verification:** `npm run verify:phase2` passed
+after the configured shared Redis had no empty non-default logical database.
+Following the documented SOP recovery, the run used a disposable loopback-only
+Redis Stack container on port 16379 with `appendfsync=everysec`; it created and
+dropped its own PostgreSQL verification database and stopped/removed the Redis
+container. The real Express/PostgreSQL/Redis flow verified terminal archive-job
+idempotency, an injected artifact-write failure followed by successful retry,
+owner listing, pending-download denial, the exact terminal+72-hour expiry,
+authenticated text download, and denied/authorized/completed `download_engagement`
+rows with downloaded byte counts. This run exercised the text-only archive;
+live retention, two-sided audio uploads, and 72-hour cleanup remain unverified.
+The current full local check also passes with 462 unit tests, 63 desktop cases,
+44 preflight cases, 10 mobile cases, and one viewer-tool case. A route-level
+regression proves generated patient MP3 is stored only with recording consent.
