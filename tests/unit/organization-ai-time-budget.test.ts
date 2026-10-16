@@ -397,13 +397,67 @@ describe('organization AI-time budget settings', () => {
     expect(client.release).toHaveBeenCalledOnce()
   })
 
+  it('does not let a customer-admin invitation be overwritten through learner roster import', async () => {
+    const statements: Array<{ sql: string; values?: unknown[] }> = []
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        statements.push({ sql, values })
+        if (sql.includes('SELECT tenant_id FROM tenants')) return { rows: [{ tenant_id: 'tenant-a' }], rowCount: 1 }
+        if (sql.includes('FROM tenant_ai_time_budget_settings')) return { rows: [{ revision: 1, settings }], rowCount: 1 }
+        if (sql.includes('FROM tenant_member_roster_invitations')) {
+          return { rows: [{ status: 'pending', requested_role: 'customer_admin', group_codes: [], department_code: null }], rowCount: 1 }
+        }
+        return { rows: [], rowCount: 1 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const store = createPostgresOrganizationAiTimeBudgetStore({
+      connect: vi.fn().mockResolvedValue(client)
+    } as unknown as Pool)
+    const invitation = OrganizationAiMemberRosterInvitationSchema.parse({
+      email: 'admin@example.test', groupCodes: [], departmentCode: null
+    })
+
+    await expect(store.importMemberRosterInvitations('tenant-a', 'customer-admin', [invitation]))
+      .resolves.toBe('role_conflict')
+    expect(statements.some(({ sql }) => sql.includes('INSERT INTO tenant_member_roster_invitations'))).toBe(false)
+    expect(statements.at(-1)?.sql).toBe('ROLLBACK')
+  })
+
+  it('keeps a concurrently inserted customer-admin invite out of the learner roster upsert', async () => {
+    const statements: Array<{ sql: string; values?: unknown[] }> = []
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        statements.push({ sql, values })
+        if (sql.includes('SELECT tenant_id FROM tenants')) return { rows: [{ tenant_id: 'tenant-a' }], rowCount: 1 }
+        if (sql.includes('FROM tenant_ai_time_budget_settings')) return { rows: [{ revision: 1, settings }], rowCount: 1 }
+        if (sql.includes('FROM tenant_member_roster_invitations')) return { rows: [], rowCount: 0 }
+        if (sql.includes('INSERT INTO tenant_member_roster_invitations')) return { rows: [], rowCount: 0 }
+        return { rows: [], rowCount: 1 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const store = createPostgresOrganizationAiTimeBudgetStore({
+      connect: vi.fn().mockResolvedValue(client)
+    } as unknown as Pool)
+    const invitation = OrganizationAiMemberRosterInvitationSchema.parse({
+      email: 'admin@example.test', groupCodes: ['gptnursing'], departmentCode: 'obgyn'
+    })
+
+    await expect(store.importMemberRosterInvitations('tenant-a', 'customer-admin', [invitation]))
+      .resolves.toBe('role_conflict')
+    const upsert = statements.find(({ sql }) => sql.includes('INSERT INTO tenant_member_roster_invitations'))
+    expect(upsert?.sql).toContain("requested_role = 'learner'")
+    expect(statements.at(-1)?.sql).toBe('ROLLBACK')
+  })
+
   it('claims only learner invitations and atomically provisions admin-assigned groups and departments', async () => {
     const statements: Array<{ sql: string; values?: unknown[] }> = []
     const client = {
       query: vi.fn(async (sql: string, values?: unknown[]) => {
         statements.push({ sql, values })
         if (sql.includes('FROM tenant_member_roster_invitations') && sql.includes("status = 'pending'")) {
-          return { rows: [{ tenant_id: 'tenant-a', email: 'employee@example.test', group_codes: ['gptnursing'], department_code: 'obgyn', assigned_by: 'admin-1' }], rowCount: 1 }
+          return { rows: [{ tenant_id: 'tenant-a', email: 'employee@example.test', requested_role: 'learner', group_codes: ['gptnursing'], department_code: 'obgyn', assigned_by: 'admin-1' }], rowCount: 1 }
         }
         if (sql.includes('SELECT tenant_id FROM tenants')) return { rows: [{ tenant_id: 'tenant-a' }], rowCount: 1 }
         if (sql.includes('FROM tenant_ai_time_budget_settings')) return { rows: [{ revision: 1, settings }], rowCount: 1 }
@@ -419,7 +473,7 @@ describe('organization AI-time budget settings', () => {
 
     await store.claimPendingMemberRosterInvitations('employee-subject', 'Employee@Example.test')
     expect(statements.find(({ sql }) => sql.includes('INSERT INTO tenant_memberships'))?.values)
-      .toEqual(['tenant-a', 'employee-subject'])
+      .toEqual(['tenant-a', 'employee-subject', 'learner'])
     expect(statements.some(({ sql, values }) =>
       sql.includes('INSERT INTO tenant_member_ai_group_assignments') && values?.[2] === 'gptnursing'
     )).toBe(true)
@@ -431,13 +485,44 @@ describe('organization AI-time budget settings', () => {
     expect(statements.at(-1)?.sql).toBe('COMMIT')
   })
 
+  it('claims a customer-admin invitation as an isolated tenant role without learner assignments', async () => {
+    const statements: Array<{ sql: string; values?: unknown[] }> = []
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        statements.push({ sql, values })
+        if (sql.includes('FROM tenant_member_roster_invitations') && sql.includes("status = 'pending'")) {
+          return { rows: [{ tenant_id: 'tenant-vinmed', email: 'admin@example.test', requested_role: 'customer_admin', group_codes: [], department_code: null, assigned_by: 'gptmd-system-admin' }], rowCount: 1 }
+        }
+        if (sql.includes('SELECT tenant_id FROM tenants')) return { rows: [{ tenant_id: 'tenant-vinmed' }], rowCount: 1 }
+        if (sql.includes('SELECT role, status FROM tenant_memberships')) return { rows: [], rowCount: 0 }
+        if (sql.includes('SELECT group_code FROM tenant_member_ai_group_assignments')) return { rows: [], rowCount: 0 }
+        if (sql.includes('SELECT department_code FROM tenant_member_ai_department_assignments')) return { rows: [], rowCount: 0 }
+        return { rows: [], rowCount: 1 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const store = createPostgresOrganizationAiTimeBudgetStore({
+      connect: vi.fn().mockResolvedValue(client)
+    } as unknown as Pool)
+
+    await store.claimPendingMemberRosterInvitations('admin-subject', 'Admin@Example.test')
+    expect(statements.find(({ sql }) => sql.includes('INSERT INTO tenant_memberships'))?.values)
+      .toEqual(['tenant-vinmed', 'admin-subject', 'customer_admin'])
+    expect(statements.some(({ sql }) => sql.includes('FROM tenant_ai_time_budget_settings'))).toBe(false)
+    expect(statements.some(({ sql }) => sql.includes('INSERT INTO tenant_member_ai_group_assignments'))).toBe(false)
+    expect(statements.some(({ sql }) => sql.includes('INSERT INTO tenant_member_ai_department_assignments'))).toBe(false)
+    const claimAudit = statements.find(({ sql }) => sql.includes('INSERT INTO tenant_member_roster_invitation_audit'))
+    expect(claimAudit?.values?.[4]).toBe('customer_admin')
+    expect(statements.at(-1)?.sql).toBe('COMMIT')
+  })
+
   it('does not change an existing instructor or customer-admin role when an email invitation matches', async () => {
     const statements: string[] = []
     const client = {
       query: vi.fn(async (sql: string) => {
         statements.push(sql)
         if (sql.includes('FROM tenant_member_roster_invitations') && sql.includes("status = 'pending'")) {
-          return { rows: [{ tenant_id: 'tenant-a', email: 'admin@example.test', group_codes: [], department_code: null, assigned_by: 'admin-1' }], rowCount: 1 }
+          return { rows: [{ tenant_id: 'tenant-a', email: 'admin@example.test', requested_role: 'learner', group_codes: [], department_code: null, assigned_by: 'admin-1' }], rowCount: 1 }
         }
         if (sql.includes('SELECT tenant_id FROM tenants')) return { rows: [{ tenant_id: 'tenant-a' }], rowCount: 1 }
         if (sql.includes('FROM tenant_ai_time_budget_settings')) return { rows: [{ revision: 1, settings }], rowCount: 1 }

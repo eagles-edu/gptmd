@@ -78,4 +78,12 @@ describe('organization AI-time budget migration', () => {
     expect(sql).toContain('tenant_member_roster_invitation_audit_append_only')
     expect(sql).toContain('tenant_member_roster_invitation_audit_no_truncate')
   })
+
+  it('allows system-issued customer-admin email invitations without learner assignments', async () => {
+    const sql = await readFile(new URL('../../services/api/migrations/042_customer_admin_email_invitations.sql', import.meta.url), 'utf8')
+    expect(sql).toContain("requested_role IN ('learner', 'customer_admin')")
+    expect(sql).toContain('tenant_member_roster_admin_invitation_unassigned')
+    expect(sql).toContain("'customer_admin_invited'")
+    expect(sql).toContain('ADD COLUMN requested_role text NOT NULL DEFAULT')
+  })
 })

@@ -207,6 +207,11 @@ export function createServiceClients(
                to_regclass('public.tenant_member_roster_invitation_audit') IS NOT NULL AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'tenant_member_roster_invitations'
+                   AND column_name = 'requested_role'
+               ) AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'app_sessions'
                    AND column_name IN ('ai_budget_group_code', 'ai_budget_department_code', 'ai_budget_department_assigned_at')
                  GROUP BY table_name HAVING count(*) = 3

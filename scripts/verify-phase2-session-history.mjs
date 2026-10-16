@@ -2,7 +2,7 @@ import { createHash, randomBytes, randomUUID } from 'node:crypto'
 import { once } from 'node:events'
 import { createServer as createHttpsServer, request as httpsRequest } from 'node:https'
 import { createServer as createHttpServer } from 'node:http'
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { readFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { spawn } from 'node:child_process'
@@ -152,45 +152,10 @@ let subjectId
 try {
   await adminPool.query(`CREATE DATABASE "${temporaryDatabase}"`)
   testPool = new Pool({ connectionString: testUrl.toString(), max: 2 })
-  for (const file of [
-    '001_auth_sessions.sql',
-    '002_patient_scenario_setup.sql',
-    '003_patient_profile_binding.sql',
-    '004_durable_session_history.sql',
-    '005_setup_failure_status.sql',
-    '006_tenant_membership_roles.sql',
-    '007_user_and_session_quotas.sql',
-    '008_scope_session_usage_to_owner.sql',
-    '009_audio_transcription_policy.sql',
-    '010_disclosure_event_ordinals.sql',
-    '011_persist_scenario_seed.sql',
-    '013_assessment_events.sql',
-    '014_session_turn_audits.sql',
-    '015_session_transcript_view.sql',
-    '016_strict_session_transcript_view.sql',
-    '017_audio_transcription_expiry.sql',
-    '018_provider_usage_cost_attribution.sql',
-    '019_patient_scenario_conversation_cleanup.sql',
-    '020_session_identity_binding.sql',
-    '021_assessment_drafts.sql',
-    '022_session_local_utterances.sql',
-    '023_realtime_transcription_usage.sql',
-    '024_session_archive_jobs.sql',
-    '025_tenant_entitlement_audit.sql',
-    '026_patient_variant_settings.sql',
-    '027_organization_ai_time_budgets.sql',
-    '028_patient_scenario_source_context.sql',
-    '029_ai_budget_group_assignments.sql',
-    '030_provider_token_reservations.sql',
-    '031_ai_budget_enforcement.sql',
-    '032_session_transcript_archives.sql',
-    '033_consumer_token_catalog.sql',
-    '034_provider_usage_by_subject.sql',
-    '035_token_entitlement_buckets.sql',
-    '036_provider_reservation_session_lock.sql',
-    '037_addon_spend_notice.sql',
-    '038_organization_group_allocation_adjustments.sql'
-  ]) {
+  const migrationFiles = (await readdir(new URL('../services/api/migrations/', import.meta.url)))
+    .filter((file) => /^\d{3}_.+\.sql$/.test(file))
+    .sort()
+  for (const file of migrationFiles) {
     const sql = await readFile(new URL(`../services/api/migrations/${file}`, import.meta.url), 'utf8')
     await testPool.query(sql)
   }

@@ -921,6 +921,8 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         response.status(409).json({ error: 'Save organization groups and departments before importing learner invitations' })
       } else if (result === 'invalid') {
         response.status(400).json({ error: 'Invitation assignments must reference groups and departments in this workspace' })
+      } else if (result === 'role_conflict') {
+        response.status(409).json({ error: 'A customer-admin invitation cannot be changed through the learner roster import' })
       } else {
         response.json(result)
       }

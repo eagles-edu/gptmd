@@ -783,3 +783,27 @@ callback or broaden the CRS exclusion for that separate gate.
 **Future utility:** Keep platform operations behind exact Auth subject allowlisting, separate from tenant roles. Verify the protected page and controlled restart/log actions in the authorized browser profile; preserve the sanitized fixed-command operator boundary.
 
 **Project impact:** Observed: the live operator is installed and signed requests work; the selected system-admin subject is configured and API-ready. Expected: the separately allowlisted operator can manage only the GPTMD stack from the system-admin dashboard after browser authentication. No customer tenant or application data was modified.
+
+## 2026-10-16 - Approve opt-in two-sided session audio archive
+
+**Beginning - trigger and context:** The learner requested downloadable encounter audio, and the existing archive pipeline stores transcript text only. The current voice path sends learner microphone audio to Realtime transcription and speaks patient replies with browser `SpeechSynthesis`; the legacy implementation used server-generated patient TTS but did not establish retained learner microphone audio.
+
+**Middle - decisions and work:** Approved recording both learner-microphone and patient-reply audio only after explicit per-session opt-in. The resulting private audio archive is intended to be available for 72 hours from the terminal session event, matching the transcript archive retention boundary. Updated checklist item `v09` to supersede the previous prohibition on raw microphone retention and kept server TTS, consent persistence, authenticated audio storage/download, deletion, and expiry enforcement open until implemented and tested.
+
+**End - outcome and verification:** The existing roster-invitation flow's Chromium regression and full `npm run check` passed: 426 unit tests, 57 desktop E2E cases, 44 preflight cases, 10 mobile-viewer cases, and one viewer-tool case, along with lint, type, API, schema, diagram, and warning-free build gates. No audio-recording code, live migration, deployment, or audio retention behavior was verified; the user-approved audio feature remains unimplemented.
+
+**Future utility:** Implement microphone capture and server-generated patient audio as one consent-gated experience; bind consent to the durable session, enforce ownership and 72-hour expiry in storage and downloads, and add regression tests for opt-out, opt-in, and deletion.
+
+**Project impact:** Observed: the requirement is now explicit and supersedes the earlier no-recording rule. Expected: future learner archives can contain both speakers without implicit recording. No audio is currently captured or retained.
+
+## 2026-10-16 - Isolate VinMed customer-admin invitations and refresh phase verifier
+
+**Beginning - trigger and context:** The corporate customer needs a tenant-scoped administrator invitation without granting platform operations access or fabricating an authentication identity. Review also found that the phase-2 verifier stopped at migration 038, which omitted newer schema from disposable database testing.
+
+**Middle - decisions and work:** Added migration 042 for explicitly typed learner/customer-admin roster invitations, constrained admin invites to carry no learner assignments, and added an append-only invitation audit action. The existing verified-email account-claim flow activates a pending `customer_admin` membership; learner roster imports reject attempts to change an admin invitation. Updated the VinMed seed to create a pending invitation, branded tenant, and disabled AI entitlements in one guarded transaction. Changed the phase verifier to apply every numerically named migration in sorted order. The user separately decided that patient-side server speech uses a system-managed quota, separate from Responses token allowances; recorded this and the 72-hour, opt-in two-sided audio intent in the checklist without claiming it is implemented.
+
+**End - outcome and verification:** Four focused suites passed (98 tests). Captured `npm run check` exited 0 with 431 unit tests, 57 desktop browser tests, 44 preflight tests, 10 mobile-viewer tests, one viewer-tool test, and lint, type, API, schema, diagram, and production-build gates. The phase verifier first refused to use the populated shared Redis databases; rerunning with a throwaway loopback Redis instance passed against a disposable PostgreSQL database after applying migrations 001-042. The temporary Redis container was stopped and the verifier dropped its disposable PostgreSQL database. Migration 042 and the invitation seed have not been deployed or run against the live database; no invitation activation or live branding row is claimed.
+
+**Future utility:** After the migration is deployed, run the guarded seed only against its exact live database target; require the invited identity to authenticate with the matching verified provider email before customer-admin membership exists. Continue implementing and testing the consent-gated audio path and separate speech quota before revisiting `t36` or `v09`.
+
+**Project impact:** Observed: invitation elevation is represented by a durable system-issued role field and audit, learner roster management cannot rewrite that role, and the isolated verifier now exercises all current migrations. Expected: schema additions will be covered automatically by the phase verifier. Live corporate account activation and audio recording remain outstanding.

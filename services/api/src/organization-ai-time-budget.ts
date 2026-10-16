@@ -117,7 +117,7 @@ export interface OrganizationAiTimeBudgetStore {
     tenantId: string,
     changedBy: string,
     invitations: OrganizationAiMemberRosterInvitation[]
-  ): Promise<{ imported: number; alreadyAccepted: number } | 'invalid' | 'conflict'>
+  ): Promise<{ imported: number; alreadyAccepted: number } | 'invalid' | 'conflict' | 'role_conflict'>
   claimPendingMemberRosterInvitations?(subjectId: string, email: string): Promise<void>
 }
 
@@ -749,19 +749,24 @@ export function createPostgresOrganizationAiTimeBudgetStore(pool: Pool): Organiz
         for (const invitation of invitations) {
           const previous = await client.query<{
             status: 'pending' | 'accepted'
+            requested_role: 'learner' | 'customer_admin'
             group_codes: string[]
             department_code: string | null
           }>(
-            `SELECT status, group_codes, department_code
+            `SELECT status, requested_role, group_codes, department_code
              FROM tenant_member_roster_invitations
              WHERE tenant_id = $1 AND email = $2 FOR UPDATE`,
             [tenantId, invitation.email]
           )
+          if (previous.rows[0]?.requested_role === 'customer_admin') {
+            await client.query('ROLLBACK')
+            return 'role_conflict'
+          }
           if (previous.rows[0]?.status === 'accepted') {
             alreadyAccepted += 1
             continue
           }
-          await client.query(
+          const upsert = await client.query(
             `INSERT INTO tenant_member_roster_invitations
                (tenant_id, email, group_codes, department_code, assigned_by)
              VALUES ($1, $2, $3, $4, $5)
@@ -770,14 +775,19 @@ export function createPostgresOrganizationAiTimeBudgetStore(pool: Pool): Organiz
                department_code = EXCLUDED.department_code,
                assigned_by = EXCLUDED.assigned_by,
                updated_at = now()
-             WHERE tenant_member_roster_invitations.status = 'pending'`,
+             WHERE tenant_member_roster_invitations.status = 'pending'
+               AND tenant_member_roster_invitations.requested_role = 'learner'`,
             [tenantId, invitation.email, [...invitation.groupCodes].sort(), invitation.departmentCode, changedBy]
           )
+          if (upsert.rowCount !== 1) {
+            await client.query('ROLLBACK')
+            return 'role_conflict'
+          }
           await client.query(
             `INSERT INTO tenant_member_roster_invitation_audit (
-               tenant_id, email, changed_by, action, before_group_codes, after_group_codes,
+               tenant_id, email, changed_by, action, requested_role, before_group_codes, after_group_codes,
                before_department_code, after_department_code
-             ) VALUES ($1, $2, $3, 'roster_imported', $4, $5, $6, $7)`,
+             ) VALUES ($1, $2, $3, 'roster_imported', 'learner', $4, $5, $6, $7)`,
             [tenantId, invitation.email, changedBy,
               previous.rows[0]?.group_codes ?? [], [...invitation.groupCodes].sort(),
               previous.rows[0]?.department_code ?? null, invitation.departmentCode]
@@ -816,11 +826,12 @@ export function createPostgresOrganizationAiTimeBudgetStore(pool: Pool): Organiz
           const invitations = await client.query<{
             tenant_id: string
           email: string
+          requested_role: 'learner' | 'customer_admin'
           group_codes: string[]
           department_code: string | null
           assigned_by: string
           }>(
-            `SELECT tenant_id, email, group_codes, department_code, assigned_by
+            `SELECT tenant_id, email, requested_role, group_codes, department_code, assigned_by
              FROM tenant_member_roster_invitations
              WHERE tenant_id = $1 AND email = $2 AND status = 'pending'
              FOR UPDATE`,
@@ -828,27 +839,34 @@ export function createPostgresOrganizationAiTimeBudgetStore(pool: Pool): Organiz
           )
           const invitation = invitations.rows[0]
           if (!invitation) continue
-          const settingsResult = await client.query<SettingsRow>(
-            `SELECT revision, settings FROM tenant_ai_time_budget_settings
-             WHERE tenant_id = $1 FOR UPDATE`, [invitation.tenant_id]
-          )
-          const settings = settingsResult.rows[0] ? parseSettingsRow(settingsResult.rows[0]) : null
-          if (!settings || invitation.group_codes.some((code) => !settings.groups.some((group) => group.code === code)) ||
-              (invitation.department_code !== null &&
-                !settings.departments.some((department) => department.code === invitation.department_code))) {
-            throw new Error('Pending roster invitation references unavailable organization settings')
+          const requestedRole = invitation.requested_role
+          if (requestedRole === 'learner') {
+            const settingsResult = await client.query<SettingsRow>(
+              `SELECT revision, settings FROM tenant_ai_time_budget_settings
+               WHERE tenant_id = $1 FOR UPDATE`, [invitation.tenant_id]
+            )
+            const settings = settingsResult.rows[0] ? parseSettingsRow(settingsResult.rows[0]) : null
+            if (!settings || invitation.group_codes.some((code) => !settings.groups.some((group) => group.code === code)) ||
+                (invitation.department_code !== null &&
+                  !settings.departments.some((department) => department.code === invitation.department_code))) {
+              throw new Error('Pending roster invitation references unavailable organization settings')
+            }
+          } else if (invitation.group_codes.length > 0 || invitation.department_code !== null) {
+            throw new Error('Customer-admin invitation cannot carry learner group or department assignments')
           }
           const membership = await client.query<{ role: string; status: string }>(
             `SELECT role, status FROM tenant_memberships
              WHERE tenant_id = $1 AND subject_id = $2 FOR UPDATE`,
             [invitation.tenant_id, subjectId]
           )
-          if (membership.rows[0] && membership.rows[0].role !== 'learner') continue
+          if (membership.rows[0] && membership.rows[0].role !== 'learner' &&
+              !(requestedRole === 'customer_admin' && membership.rows[0].role === 'customer_admin')) continue
           await client.query(
             `INSERT INTO tenant_memberships (tenant_id, subject_id, status, role)
-             VALUES ($1, $2, 'active', 'learner')
-             ON CONFLICT (tenant_id, subject_id) DO UPDATE SET status = 'active'`,
-            [invitation.tenant_id, subjectId]
+             VALUES ($1, $2, 'active', $3)
+             ON CONFLICT (tenant_id, subject_id) DO UPDATE
+               SET status = 'active', role = EXCLUDED.role`,
+            [invitation.tenant_id, subjectId, requestedRole]
           )
           const beforeGroups = await client.query<{ group_code: string }>(
             `SELECT group_code FROM tenant_member_ai_group_assignments
@@ -864,7 +882,7 @@ export function createPostgresOrganizationAiTimeBudgetStore(pool: Pool): Organiz
             `DELETE FROM tenant_member_ai_group_assignments
              WHERE tenant_id = $1 AND subject_id = $2`, [invitation.tenant_id, subjectId]
           )
-          for (const groupCode of invitation.group_codes) {
+          for (const groupCode of requestedRole === 'learner' ? invitation.group_codes : []) {
             await client.query(
               `INSERT INTO tenant_member_ai_group_assignments
                  (tenant_id, subject_id, group_code, assigned_by)
@@ -872,7 +890,7 @@ export function createPostgresOrganizationAiTimeBudgetStore(pool: Pool): Organiz
               [invitation.tenant_id, subjectId, groupCode, invitation.assigned_by]
             )
           }
-          if (invitation.department_code === null) {
+          if (requestedRole === 'customer_admin' || invitation.department_code === null) {
             await client.query(
               `DELETE FROM tenant_member_ai_department_assignments
                WHERE tenant_id = $1 AND subject_id = $2`, [invitation.tenant_id, subjectId]
@@ -910,12 +928,14 @@ export function createPostgresOrganizationAiTimeBudgetStore(pool: Pool): Organiz
           )
           await client.query(
             `INSERT INTO tenant_member_roster_invitation_audit (
-               tenant_id, email, changed_by, action, subject_id, before_group_codes, after_group_codes,
+               tenant_id, email, changed_by, action, subject_id, requested_role, before_group_codes, after_group_codes,
                before_department_code, after_department_code
-             ) VALUES ($1, $2, $3, 'membership_claimed', $4, $5, $6, $7, $8)`,
+             ) VALUES ($1, $2, $3, 'membership_claimed', $4, $5, $6, $7, $8, $9)`,
             [invitation.tenant_id, invitation.email, invitation.assigned_by, subjectId,
+              requestedRole,
               beforeGroups.rows.map((row) => row.group_code), invitation.group_codes,
-              beforeDepartment.rows[0]?.department_code ?? null, invitation.department_code]
+              beforeDepartment.rows[0]?.department_code ?? null,
+              requestedRole === 'customer_admin' ? null : invitation.department_code]
           )
         }
         await client.query('COMMIT')
