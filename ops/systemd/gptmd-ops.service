@@ -1,0 +1,21 @@
+[Unit]
+Description=GPTMD restricted operations agent
+After=systemd-journald.service
+
+[Service]
+Type=simple
+User=root
+Group=root
+ExecStart=/usr/bin/node /usr/local/lib/gptmd/gptmd-ops-agent.mjs
+Restart=on-failure
+RestartSec=2s
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictSUIDSGID=true
+UMask=0077

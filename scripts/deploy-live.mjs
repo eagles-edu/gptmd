@@ -81,7 +81,7 @@ for (const job of batchJobs) await run(freeFileSync, [job])
 const apiStage = join(stageRoot, 'api')
 await mkdir(join(apiStage, 'catalog'), { recursive: true })
 await copyFile(
-  join(repoRoot, 'educator-input/obgyn-disorders.reference.json'),
+  join(repoRoot, 'educator-input/obgyn-disorders.reference.diagnostics-tests-cleaned.json'),
   join(apiStage, 'catalog/obgyn-disorders.reference.json')
 )
 const expected = [

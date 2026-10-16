@@ -24,8 +24,7 @@ import {
 } from './session-contracts.ts'
 import {
   PATIENT_SCENARIO_POLICY_VERSION,
-  PATIENT_SCENARIO_PROMPT_VERSION,
-  PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION,
+  SUPPORTED_PATIENT_SCENARIO_PROMPT_VERSIONS,
   PATIENT_SCENARIO_SCHEMA_VERSION,
   PatientScenarioProfileSchema,
   isPatientScenarioConsistent,
@@ -93,6 +92,7 @@ export type CurrentEncounterRecord = {
     fields: AssessmentFields
     submittedAt: string
   } | null
+  addonSpendNotice: boolean
 }
 
 export type PatientScenarioSetupResult = {
@@ -102,6 +102,7 @@ export type PatientScenarioSetupResult = {
   patient: ReturnType<typeof toLearnerPatientProfile>
   versions: PatientScenarioVersionPins
   readiness: { profile: true; redis: true; conversation: true }
+  addonSpendNotice: boolean
 }
 
 export type ScenarioSetupResult =
@@ -120,7 +121,7 @@ export type CreateSessionResult = SessionRecord | CreateSessionError | {
   availableGroups: Array<{ code: string; name: string }>
 }
 export type PatientTurnResult =
-  | { status: 'accepted' | 'duplicate'; turnId: string; sequence: number; patientResponse: string }
+  | { status: 'accepted' | 'duplicate'; turnId: string; sequence: number; patientResponse: string; addonSpendNotice: boolean }
   | 'not_found'
   | 'not_ready'
   | 'turn_in_progress'
@@ -162,6 +163,8 @@ export type LocalUtteranceResult = LocalTranscriptUtterance
   | 'turn_in_progress'
   | 'state_unavailable'
   | 'phase_conflict'
+
+export type EngagementPulseResult = 'recorded' | 'ignored' | 'not_found'
 
 export interface SessionStore {
   getActiveMemberships(subjectId: string): Promise<TenantMembership[]>
@@ -216,6 +219,7 @@ export interface SessionStore {
     sessionId: string,
     input: LocalUtteranceRequest
   ): Promise<LocalUtteranceResult>
+  recordEngagementPulse(principal: AuthenticatedPrincipal, sessionId: string, pulseId: string): Promise<EngagementPulseResult>
   submitAssessment(
     principal: AuthenticatedPrincipal,
     sessionId: string,
@@ -233,6 +237,7 @@ export interface SessionStore {
     sessionId: string
   ): Promise<SessionRecord | null>
   getCurrentOwnedEncounter(principal: AuthenticatedPrincipal): Promise<CurrentEncounterRecord | null>
+  acknowledgeAddonSpendNotice(principal: AuthenticatedPrincipal, sessionId: string): Promise<boolean>
   ensureLiveState?(principal: AuthenticatedPrincipal, sessionId: string): Promise<void>
 }
 
@@ -256,6 +261,8 @@ type SetupSessionRow = {
   schema_version: number
   policy_version: string
   sessions_enabled?: boolean | null
+  addon_tokens_used: boolean
+  addon_notice_acknowledged: boolean
 }
 
 type ScenarioRow = {
@@ -299,7 +306,8 @@ function toSetupResponse(
   sessionId: string,
   scenario: ReturnType<typeof ImmutablePatientScenarioSchema.parse>,
   versions: PatientScenarioVersionPins,
-  presentationSettings: PatientVariantPresentationSettings | null
+  presentationSettings: PatientVariantPresentationSettings | null,
+  addonSpendNotice: boolean
 ): PatientScenarioSetupResult {
   return {
     sessionId,
@@ -307,7 +315,8 @@ function toSetupResponse(
     createdAt: scenario.createdAt,
     patient: toLearnerPatientProfile(derivePatientSetup(scenario.profile, presentationSettings)),
     versions,
-    readiness: { profile: true, redis: true, conversation: true }
+    readiness: { profile: true, redis: true, conversation: true },
+    addonSpendNotice: Boolean(addonSpendNotice)
   }
 }
 
@@ -420,8 +429,11 @@ export function createPostgresSessionStore(
         sessions_enabled: boolean
         responses_enabled: boolean
         audio_transcription_available: boolean
+        brand_name: string | null
+        brand_logo_path: string | null
       }>(
         `SELECT m.tenant_id, m.role,
+                b.display_name AS brand_name, b.logo_path AS brand_logo_path,
                 COALESCE(e.sessions_enabled, false) AS sessions_enabled,
                 COALESCE(e.responses_enabled, false) AS responses_enabled,
                 COALESCE(
@@ -434,6 +446,7 @@ export function createPostgresSessionStore(
                 ) AS audio_transcription_available
          FROM tenant_memberships m
          LEFT JOIN tenant_entitlements e ON e.tenant_id = m.tenant_id
+         LEFT JOIN tenant_branding b ON b.tenant_id = m.tenant_id
          LEFT JOIN LATERAL (
            SELECT count(*)::integer AS used
            FROM app_audio_transcription_sessions a
@@ -449,7 +462,10 @@ export function createPostgresSessionStore(
         role: row.role,
         sessionsEnabled: row.sessions_enabled,
         responsesEnabled: row.responses_enabled,
-        audioTranscriptionAvailable: row.audio_transcription_available
+        audioTranscriptionAvailable: row.audio_transcription_available,
+        ...(row.brand_name && row.brand_logo_path
+          ? { branding: { displayName: row.brand_name, logoPath: row.brand_logo_path } }
+          : {})
       }))
     },
 
@@ -616,6 +632,14 @@ export function createPostgresSessionStore(
       const client = await pool.connect()
       try {
         await client.query('BEGIN')
+        const workspace = await client.query(
+          'SELECT tenant_id FROM tenants WHERE tenant_id = $1 FOR SHARE',
+          [principal.tenantId]
+        )
+        if (workspace.rowCount !== 1) {
+          await client.query('ROLLBACK')
+          return 'membership_missing'
+        }
         const entitlement = await client.query<EntitlementRow>(
           `SELECT sessions_enabled AS enabled, monthly_session_quota AS monthly_quota,
                   monthly_session_quota_per_user AS monthly_user_quota,
@@ -642,9 +666,10 @@ export function createPostgresSessionStore(
         )
         let budgetGroupCode: string | null = null
         let budgetDepartmentCode: string | null = null
+        let budgetDepartmentAssignedAt: Date | null = null
         if (budgetSettings.rows[0]) {
           const settings = OrganizationAiTimeBudgetSettingsSchema.parse(budgetSettings.rows[0].settings)
-          if (settings.groups.length > 0) {
+          if (settings.status === 'active') {
             const assigned = await client.query<{ group_code: string }>(
               `SELECT group_code FROM tenant_member_ai_group_assignments
                WHERE tenant_id = $1 AND subject_id = $2 ORDER BY group_code`,
@@ -672,13 +697,14 @@ export function createPostgresSessionStore(
                 availableGroups: eligibleGroups.map(({ code, name }) => ({ code, name }))
               }
             }
+            const department = await client.query<{ department_code: string; assigned_at: Date }>(
+              `SELECT department_code, assigned_at FROM tenant_member_ai_department_assignments
+               WHERE tenant_id = $1 AND subject_id = $2`,
+              [principal.tenantId, principal.subjectId]
+            )
+            budgetDepartmentCode = department.rows[0]?.department_code ?? null
+            budgetDepartmentAssignedAt = department.rows[0]?.assigned_at ?? null
           }
-          const department = await client.query<{ department_code: string }>(
-            `SELECT department_code FROM tenant_member_ai_department_assignments
-             WHERE tenant_id = $1 AND subject_id = $2`,
-            [principal.tenantId, principal.subjectId]
-          )
-          budgetDepartmentCode = department.rows[0]?.department_code ?? null
         }
         if (row.max_active_sessions !== null && row.max_active_sessions !== undefined) {
           const active = await client.query<{ count: string }>(
@@ -710,9 +736,9 @@ export function createPostgresSessionStore(
           `INSERT INTO app_sessions (
              session_id, patient_profile_id, scenario_seed, tenant_id, subject_id, status,
              prompt_version, model_version, schema_version, policy_version,
-             ai_budget_group_code, ai_budget_department_code
+             ai_budget_group_code, ai_budget_department_code, ai_budget_department_assigned_at
            )
-           VALUES ($1, $2, $3, $4, $5, 'initializing', $6, $7, $8, $9, $10, $11)
+           VALUES ($1, $2, $3, $4, $5, 'initializing', $6, $7, $8, $9, $10, $11, $12)
            RETURNING created_at, updated_at`,
           [
             sessionId,
@@ -725,7 +751,8 @@ export function createPostgresSessionStore(
             versions.schemaVersion,
             versions.policyVersion,
             budgetGroupCode,
-            budgetDepartmentCode
+            budgetDepartmentCode,
+            budgetDepartmentAssignedAt
           ]
         )
         await client.query('COMMIT')
@@ -755,6 +782,7 @@ export function createPostgresSessionStore(
         const selected = await client.query<SetupSessionRow>(
           `SELECT s.session_id, s.patient_profile_id, s.scenario_seed, s.status, s.created_at, s.setup_idempotency_key_hash,
                   s.prompt_version, s.model_version, s.schema_version, s.policy_version,
+                  s.addon_tokens_used, s.addon_notice_acknowledged,
                   e.sessions_enabled
            FROM app_sessions s
            LEFT JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id
@@ -794,7 +822,7 @@ export function createPostgresSessionStore(
 
         const versions = toVersionPins(session)
         if (
-          ![PATIENT_SCENARIO_PROMPT_VERSION, PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION].includes(versions.promptVersion) ||
+          !SUPPORTED_PATIENT_SCENARIO_PROMPT_VERSIONS.includes(versions.promptVersion as typeof SUPPORTED_PATIENT_SCENARIO_PROMPT_VERSIONS[number]) ||
           versions.policyVersion !== PATIENT_SCENARIO_POLICY_VERSION
         ) {
           await client.query('ROLLBACK')
@@ -860,7 +888,8 @@ export function createPostgresSessionStore(
             profileDigest: scenario.profileDigest,
             schemaVersion: scenario.schemaVersion
           })
-          return toSetupResponse(sessionId, scenario, versions, presentationSettings)
+          return toSetupResponse(sessionId, scenario, versions, presentationSettings,
+            session.addon_tokens_used && !session.addon_notice_acknowledged)
         }
 
         if (session.status !== 'initializing') {
@@ -889,6 +918,13 @@ export function createPostgresSessionStore(
           queuedProviderResponseIds.add(usage.responseId)
         }
         const generated = await generateScenario(versions, session.created_at, scenarioSeed, recordProviderUsage)
+        if (generated.addonTokensUsed) {
+          await client.query(
+            `UPDATE app_sessions SET addon_tokens_used = true
+             WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+            [sessionId, principal.tenantId, principal.subjectId]
+          )
+        }
         if (generated.usage && !queuedProviderResponseIds.has(generated.usage.responseId)) {
           await recordProviderUsage(generated.usage)
         }
@@ -959,7 +995,8 @@ export function createPostgresSessionStore(
           profileDigest: scenario.profileDigest,
           schemaVersion: scenario.schemaVersion
         })
-        return toSetupResponse(sessionId, scenario, versions, presentationSettings)
+        return toSetupResponse(sessionId, scenario, versions, presentationSettings,
+          (session.addon_tokens_used || generated.addonTokensUsed === true) && !session.addon_notice_acknowledged)
       } catch (error) {
         await rollback(client)
         try {
@@ -983,14 +1020,16 @@ export function createPostgresSessionStore(
       recordCommitTiming
     ) {
       const owner = await pool.query(
-        `SELECT s.status, s.prompt_version, s.model_version, s.schema_version, s.policy_version
+        `SELECT s.status, s.prompt_version, s.model_version, s.schema_version, s.policy_version,
+                s.addon_tokens_used, s.addon_notice_acknowledged
          FROM app_sessions s
          JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
          WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3`,
         [sessionId, principal.tenantId, principal.subjectId]
       )
       const ownerRow = owner.rows[0] as (Pick<SetupSessionRow,
-        'status' | 'prompt_version' | 'model_version' | 'schema_version' | 'policy_version'
+        'status' | 'prompt_version' | 'model_version' | 'schema_version' | 'policy_version' |
+        'addon_tokens_used' | 'addon_notice_acknowledged'
       >) | undefined
       if (!ownerRow) return 'not_found'
       if (!['ready', 'active'].includes(ownerRow.status ?? '')) return 'not_ready'
@@ -1019,7 +1058,8 @@ export function createPostgresSessionStore(
           return prior.learnerMessage === learnerMessage && prior.learnerModality === learnerModality
             ? {
                 status: 'duplicate', turnId: prior.turnId, sequence: prior.sequence,
-                patientResponse: prior.patientResponse
+                patientResponse: prior.patientResponse,
+                addonSpendNotice: Boolean(ownerRow.addon_tokens_used && !ownerRow.addon_notice_acknowledged)
               }
             : 'conflict'
         }
@@ -1108,7 +1148,18 @@ export function createPostgresSessionStore(
           queueTurnAudit(patientStateStore, 'patient_turn_recovered_after_validation_retry', sessionId, turnId, 2, options.recordHandoffTiming)
         }
         const committed = await patientStateStore.acceptTurn(turn, providerUsage, recordCommitTiming)
-        if (committed.status === 'accepted' || committed.status === 'duplicate') return committed
+        if (committed.status === 'accepted' || committed.status === 'duplicate') {
+          const notice = await pool.query<{ addon_tokens_used: boolean; addon_notice_acknowledged: boolean }>(
+            `SELECT addon_tokens_used, addon_notice_acknowledged FROM app_sessions
+             WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
+            [sessionId, principal.tenantId, principal.subjectId]
+          )
+          const noticeRow = notice.rows[0]
+          return {
+            ...committed,
+            addonSpendNotice: noticeRow?.addon_tokens_used === true && noticeRow.addon_notice_acknowledged !== true
+          }
+        }
         if (committed.status === 'terminal') return 'not_ready'
         if (committed.status === 'not_ready') return 'not_ready'
         if (committed.status === 'conflict') return 'conflict'
@@ -1332,6 +1383,46 @@ export function createPostgresSessionStore(
       }
     },
 
+    async recordEngagementPulse(principal, sessionId, pulseId) {
+      const client = await pool.connect()
+      try {
+        await client.query('BEGIN')
+        const owner = await client.query<{ session_id: string }>(
+          `SELECT s.session_id
+           FROM app_sessions s
+           JOIN tenant_memberships m ON m.tenant_id = s.tenant_id
+             AND m.subject_id = s.subject_id AND m.status = 'active'
+           JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
+           WHERE s.session_id = $1 AND s.tenant_id = $2 AND s.subject_id = $3
+             AND s.status = 'active'
+           FOR UPDATE OF s`,
+          [sessionId, principal.tenantId, principal.subjectId]
+        )
+        if (!owner.rows[0]) {
+          await client.query('ROLLBACK')
+          return 'not_found'
+        }
+        const inserted = await client.query(
+          `INSERT INTO session_engagement_pulses (session_id, tenant_id, subject_id, pulse_id)
+           SELECT $1, $2, $3, $4
+           WHERE NOT EXISTS (
+             SELECT 1 FROM session_engagement_pulses
+             WHERE session_id = $1 AND recorded_at > now() - interval '25 seconds'
+           )
+           ON CONFLICT (session_id, pulse_id) DO NOTHING
+           RETURNING pulse_id`,
+          [sessionId, principal.tenantId, principal.subjectId, pulseId]
+        )
+        await client.query('COMMIT')
+        return inserted.rowCount === 1 ? 'recorded' : 'ignored'
+      } catch (error) {
+        await client.query('ROLLBACK').catch(() => undefined)
+        throw error
+      } finally {
+        client.release()
+      }
+    },
+
     async submitAssessment(principal, sessionId, assessmentId, inputFields, recordCommitTiming) {
       if (!patientStateStore) return 'state_unavailable'
       const owner = await pool.query<{ status: SessionStatus }>(
@@ -1500,6 +1591,24 @@ export function createPostgresSessionStore(
       } : null
     },
 
+    async acknowledgeAddonSpendNotice(principal, sessionId) {
+      const result = await pool.query(
+        `UPDATE app_sessions SET addon_notice_acknowledged = true
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3
+           AND addon_tokens_used = true AND addon_notice_acknowledged = false
+         RETURNING session_id`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      if ((result.rowCount ?? 0) > 0) return true
+      const alreadyAcknowledged = await pool.query(
+        `SELECT 1 FROM app_sessions
+         WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3
+           AND addon_notice_acknowledged = true`,
+        [sessionId, principal.tenantId, principal.subjectId]
+      )
+      return (alreadyAcknowledged.rowCount ?? 0) > 0
+    },
+
     async getCurrentOwnedEncounter(principal) {
       let indexedSessionId: string | null = null
       try {
@@ -1516,9 +1625,12 @@ export function createPostgresSessionStore(
         model_version: string
         schema_version: number
         policy_version: string
+        addon_tokens_used: boolean
+        addon_notice_acknowledged: boolean
       }>(
         `SELECT s.session_id, s.status, s.created_at, s.updated_at,
-                s.prompt_version, s.model_version, s.schema_version, s.policy_version
+                s.prompt_version, s.model_version, s.schema_version, s.policy_version,
+                s.addon_tokens_used, s.addon_notice_acknowledged
          FROM app_sessions s
          JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
          JOIN tenant_memberships m ON m.tenant_id = s.tenant_id
@@ -1554,7 +1666,8 @@ export function createPostgresSessionStore(
         status: row.status,
         createdAt: row.created_at.toISOString(),
         updatedAt: row.updated_at.toISOString(),
-        versions: toVersionPins(row)
+        versions: toVersionPins(row),
+        addonSpendNotice: Boolean(row.addon_tokens_used && !row.addon_notice_acknowledged)
       } as const
       if (row.status === 'initializing') {
         return {

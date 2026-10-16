@@ -12,10 +12,13 @@
     "verify:live-browser": "node scripts/verify-live-browser.mjs",
     "provision:scsstx-test": "node scripts/provision-scsstx-entitlement-test.mjs",
     "provision:scsstx-learner": "node scripts/provision-scsstx-learner-test.mjs",
+    "provision:ai-budget-test-learner": "node scripts/provision-ai-budget-test-learner.mjs",
     "provision:onlineadmin-admin": "node scripts/provision-onlineadmin-admin-test.mjs",
     "configure:live-mic-policy": "sudo node scripts/configure-live-mic-policy.mjs",
     "configure:live-auth": "node scripts/live-auth-config.mjs",
     "configure:live-logging": "sudo node scripts/configure-live-logging.mjs",
+    "configure:live-ops": "sudo node scripts/configure-live-ops.mjs",
+    "configure:live-system-admin": "node scripts/configure-live-system-admin.mjs",
     "api:dev": "npm --prefix services/api run dev",
     "api:worker": "node scripts/gptmd-api-env.mjs worker",
     "api:worker:dev": "node scripts/gptmd-api-env.mjs worker:dev",
@@ -76,6 +79,7 @@
     "typescript": "^6.0.3",
     "vue": "^3.5.43",
     "vue-router": "^5.3.1",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.6.5"
   },
   "devDependencies": {

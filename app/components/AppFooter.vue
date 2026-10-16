@@ -74,7 +74,11 @@ const moitHref = moitConfirmationHref(merchantConfig)
 }
 
 .merchant-details a {
+  align-items: center;
   color: inherit;
+  display: inline-flex;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
   text-underline-offset: 0.2em;
 }
 
@@ -85,7 +89,16 @@ const moitHref = moitConfirmationHref(merchantConfig)
 }
 
 .policy-links a {
+  align-items: center;
   color: inherit;
+  display: inline-flex;
+  min-height: 2.75rem;
+  min-width: 2.75rem;
   text-underline-offset: 0.2em;
+}
+
+.site-footer a:focus-visible {
+  outline: 3px solid currentcolor;
+  outline-offset: 3px;
 }
 </style>

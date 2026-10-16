@@ -77,14 +77,16 @@ export const SetupResponseSchema = z.object({
     profile: z.literal(true),
     redis: z.literal(true),
     conversation: z.literal(true)
-  }).strict()
+  }).strict(),
+  addonSpendNotice: z.boolean().default(false)
 }).strict()
 
 export type PatientSetupResult = z.infer<typeof SetupResponseSchema>
 
 export const TurnResponseSchema = z.object({
   turnId: z.string().min(1),
-  text: z.string().min(1)
+  text: z.string().min(1),
+  addonSpendNotice: z.boolean().default(false)
 }).strict()
 
 export const AudioTranscriptionCallSchema = z.object({
@@ -124,6 +126,7 @@ export const CurrentEncounterResponseSchema = z.object({
     createdAt: z.iso.datetime({ offset: true }),
     updatedAt: z.iso.datetime({ offset: true }),
     versions: SessionVersionPinsSchema,
+    addonSpendNotice: z.boolean().default(false),
     patient: PatientProfileSchema.nullable(),
     phase: z.enum(['history', 'assessment', 'debrief']).nullable(),
     currentTurnSequence: z.number().int().nonnegative(),

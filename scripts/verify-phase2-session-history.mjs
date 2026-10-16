@@ -15,6 +15,10 @@ import { createRedisPatientStateStore } from '../services/api/src/patient-state-
 import { createRedisRequestRateLimitStore, hashRateLimitKey } from '../services/api/src/request-rate-limit.ts'
 import { createPostgresSessionStore } from '../services/api/src/session-store.ts'
 import { createPostgresOrganizationAiTimeBudgetStore } from '../services/api/src/organization-ai-time-budget.ts'
+import { createPostgresProviderTokenReservationStore } from '../services/api/src/provider-token-reservations.ts'
+import { createPostgresSessionArchiveStore, createSessionArchiveWorker } from '../services/api/src/session-archives.ts'
+import { createPostgresConsumerTokenCatalogStore } from '../services/api/src/consumer-token-catalog.ts'
+import { createPostgresTokenEntitlementStore } from '../services/api/src/token-entitlements.ts'
 import { createSessionEventWorker } from '../services/api/src/session-event-worker.ts'
 import { createSessionIdentityVerificationWorker } from '../services/api/src/session-identity-verification-worker.ts'
 import { PATIENT_TURN_SCHEMA_VERSION } from '../services/api/src/session-contracts.ts'
@@ -86,7 +90,7 @@ process.env.NUXT_PUBLIC_SUPABASE_URL = supabaseOrigin
 process.env.NUXT_PUBLIC_SUPABASE_KEY = 'phase-two-verification-test-key'
 await buildNuxtForVerifier()
 
-const redis = createClient({ url: env.REDIS_URL })
+const redis = createClient({ url: process.env.GPTMD_PHASE2_REDIS_URL ?? env.REDIS_URL })
 redis.on('error', () => undefined)
 await redis.connect()
 const databaseConfiguration = await redis.sendCommand(['CONFIG', 'GET', 'databases'])
@@ -175,11 +179,59 @@ try {
     '025_tenant_entitlement_audit.sql',
     '026_patient_variant_settings.sql',
     '027_organization_ai_time_budgets.sql',
-    '028_patient_scenario_source_context.sql'
+    '028_patient_scenario_source_context.sql',
+    '029_ai_budget_group_assignments.sql',
+    '030_provider_token_reservations.sql',
+    '031_ai_budget_enforcement.sql',
+    '032_session_transcript_archives.sql',
+    '033_consumer_token_catalog.sql',
+    '034_provider_usage_by_subject.sql',
+    '035_token_entitlement_buckets.sql',
+    '036_provider_reservation_session_lock.sql',
+    '037_addon_spend_notice.sql',
+    '038_organization_group_allocation_adjustments.sql'
   ]) {
     const sql = await readFile(new URL(`../services/api/migrations/${file}`, import.meta.url), 'utf8')
     await testPool.query(sql)
   }
+  const tokenLedgerSchema = await testPool.query(
+    `SELECT to_regclass('public.gptmd_token_entitlement_grants') IS NOT NULL AS grants,
+            to_regclass('public.gptmd_token_entitlement_entries') IS NOT NULL AS entries,
+            to_regclass('public.gptmd_token_reservation_allocations') IS NOT NULL AS holds,
+            EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'app_sessions' AND column_name = 'addon_tokens_used') AS addon_usage,
+            EXISTS (SELECT 1 FROM information_schema.columns
+                    WHERE table_name = 'app_sessions' AND column_name = 'addon_notice_acknowledged') AS addon_acknowledgment`
+  )
+  if (!tokenLedgerSchema.rows[0]?.grants || !tokenLedgerSchema.rows[0]?.entries || !tokenLedgerSchema.rows[0]?.holds ||
+      !tokenLedgerSchema.rows[0]?.addon_usage || !tokenLedgerSchema.rows[0]?.addon_acknowledgment) {
+    throw new Error('Token bucket or add-on-notice migration did not create all required schema')
+  }
+  const catalogStore = createPostgresConsumerTokenCatalogStore(testPool)
+  if (await catalogStore.get() !== null) throw new Error('New consumer catalog should start unconfigured')
+  const catalog = {
+    schemaVersion: 1, revision: 0, baseMonthlyTokens: 25_000, currency: 'USD',
+    tiers: [
+      { code: 'lunar', monthlyPriceMinor: 1000, status: 'draft' },
+      { code: 'solar', monthlyPriceMinor: 2000, status: 'draft' },
+      { code: 'stellar', monthlyPriceMinor: 3000, status: 'draft' }
+    ],
+    addOns: [{
+      code: 'addon-small', name: 'Small pack', description: 'Test product',
+      tokens: 5000, priceMinor: 500, status: 'draft'
+    }]
+  }
+  const savedCatalog = await catalogStore.save('phase2-system-admin', catalog)
+  if (savedCatalog === 'conflict' || savedCatalog.revision !== 1) {
+    throw new Error('Consumer catalog did not persist at revision 1')
+  }
+  if (await catalogStore.save('stale-system-admin', catalog) !== 'conflict') {
+    throw new Error('Stale consumer catalog write was not rejected')
+  }
+  const auditCount = await testPool.query(
+    'SELECT count(*)::int AS count FROM gptmd_consumer_token_catalog_audit'
+  )
+  if (auditCount.rows[0]?.count !== 1) throw new Error('Consumer catalog audit should contain one accepted revision')
   const cleanupConversationId = `conv-verify-${randomBytes(6).toString('hex')}`
   await testPool.query(
     `INSERT INTO app_patient_scenario_conversation_cleanup (provider_conversation_id)
@@ -234,9 +286,152 @@ try {
     `INSERT INTO tenant_memberships (tenant_id, subject_id, status, role) VALUES ($1, $2, 'active', 'learner')`,
     [tenantId, subjectId]
   )
+  const tokenEntitlementStore = createPostgresTokenEntitlementStore(testPool)
+  const bucketNow = new Date()
+  const grantId = `verify-grant-${randomBytes(6).toString('hex')}`
+  const addonGrantId = `verify-addon-${randomBytes(6).toString('hex')}`
+  const grantExpiry = new Date(bucketNow.getTime() + 30 * 86_400_000)
+  await testPool.query(
+    `INSERT INTO gptmd_token_entitlement_grants (
+       grant_id, account_scope, subject_id, bucket_kind, source_kind, source_reference,
+       granted_tokens, granted_at, valid_from, renewal_at, expires_at, granted_by
+     ) VALUES ($1, 'consumer', $2, 'included', 'subscription_renewal', $3,
+               1000, $4, $4, $5, $5, 'phase2-system-admin')`,
+    [grantId, subjectId, `verify-renewal-${grantId}`, bucketNow, grantExpiry]
+  )
+  await testPool.query(
+    `INSERT INTO gptmd_token_entitlement_grants (
+       grant_id, account_scope, subject_id, bucket_kind, source_kind, source_reference,
+       granted_tokens, granted_at, valid_from, renewal_at, expires_at, granted_by
+     ) VALUES ($1, 'consumer', $2, 'addon', 'verified_purchase', $3,
+               10000, $4::timestamptz, $4::timestamptz, NULL,
+               $4::timestamptz + interval '365 days', 'phase2-system-admin')`,
+    [addonGrantId, subjectId, `verify-addon-purchase-${addonGrantId}`, bucketNow]
+  )
+
+  const allocationTenantId = `allocation-${randomBytes(6).toString('hex')}`
+  const allocationAdminId = randomUUID()
+  const allocationLearnerId = randomUUID()
+  await testPool.query('INSERT INTO tenants (tenant_id) VALUES ($1)', [allocationTenantId])
+  await testPool.query(
+    `INSERT INTO tenant_memberships (tenant_id, subject_id, status, role)
+     VALUES ($1, $2, 'active', 'customer_admin'), ($1, $3, 'active', 'learner')`,
+    [allocationTenantId, allocationAdminId, allocationLearnerId]
+  )
+  const organizationBudgets = createPostgresOrganizationAiTimeBudgetStore(testPool)
+  const entitlementBuckets = createPostgresTokenEntitlementStore(testPool)
+  const renewalAnchor = new Date(Date.UTC(bucketNow.getUTCFullYear(), bucketNow.getUTCMonth(), 1))
+  const allocationSettings = {
+    schemaVersion: 1, revision: 0, status: 'active',
+    organizationPeriod: { months: 1, anchorDate: renewalAnchor.toISOString().slice(0, 10) },
+    organizationPool: { tokens: 12_000, estimatedMinutes: 120 },
+    groups: [{
+      code: 'gptnursing', name: 'GPT Nursing', tokenBudget: 12_000,
+      estimatedMinuteBudget: 120, monthlyTokensPerUser: null, monthlyEstimatedMinutesPerUser: null
+    }],
+    departments: []
+  }
+  const initialAllocationSettings = await organizationBudgets.saveSettings(
+    allocationTenantId, allocationAdminId, allocationSettings
+  )
+  if (!initialAllocationSettings || typeof initialAllocationSettings === 'string' || initialAllocationSettings.revision !== 1) {
+    throw new Error('Activating corporate group budgets did not atomically issue its initial allocation')
+  }
+  const learnerAssignment = await organizationBudgets.saveMemberAssignment(
+    allocationTenantId, allocationAdminId,
+    { subjectId: allocationLearnerId, groupCodes: ['gptnursing'], departmentCode: null }
+  )
+  if (!learnerAssignment) throw new Error('The corporate allocation test learner could not be assigned by the admin')
+  const initialBuckets = await entitlementBuckets.getSubjectBuckets(allocationTenantId, allocationLearnerId)
+  if (initialBuckets.length !== 1 || initialBuckets[0]?.grantedTokens !== '12000') {
+    throw new Error('The assigned learner did not see the initial organization group allowance')
+  }
+  const initialGrant = await testPool.query(
+    `SELECT grant_id, granted_tokens::text AS granted_tokens,
+            renewal_at, expires_at, source_reference
+     FROM gptmd_token_entitlement_grants
+     WHERE tenant_id = $1 AND group_code = 'gptnursing'
+       AND account_scope = 'organization' AND bucket_kind = 'included'`,
+    [allocationTenantId]
+  )
+  const initialGrantRow = initialGrant.rows[0]
+  if (!initialGrantRow || initialGrantRow.granted_tokens !== '12000' ||
+      initialGrantRow.expires_at.getTime() !== initialGrantRow.renewal_at.getTime() + 45 * 86_400_000) {
+    throw new Error('The organization group grant did not retain the configured budget and 45-day expiry')
+  }
+
+  const increasedSettings = await organizationBudgets.saveSettings(allocationTenantId, allocationAdminId, {
+    ...initialAllocationSettings,
+    organizationPool: { tokens: 15_000, estimatedMinutes: 150 },
+    groups: [{ ...initialAllocationSettings.groups[0], tokenBudget: 15_000, estimatedMinuteBudget: 150 }]
+  })
+  if (!increasedSettings || typeof increasedSettings === 'string') throw new Error('Increasing the active group allowance failed')
+  const reducedSettings = await organizationBudgets.saveSettings(allocationTenantId, allocationAdminId, {
+    ...increasedSettings,
+    organizationPool: { tokens: 10_000, estimatedMinutes: 100 },
+    groups: [{ ...increasedSettings.groups[0], tokenBudget: 10_000, estimatedMinuteBudget: 100 }]
+  })
+  if (!reducedSettings || typeof reducedSettings === 'string') throw new Error('Reducing unused group allowance failed')
+  const adjustedGrants = await testPool.query(
+    `SELECT grant_id, granted_tokens::text AS granted_tokens
+     FROM gptmd_token_entitlement_grants
+     WHERE tenant_id = $1 AND group_code = 'gptnursing' AND renewal_at = $2
+     ORDER BY granted_tokens DESC`,
+    [allocationTenantId, initialGrantRow.renewal_at]
+  )
+  const reductionEntries = await testPool.query(
+    `SELECT grant_id, token_delta::text AS token_delta
+     FROM gptmd_token_entitlement_entries
+     WHERE grant_id = ANY($1::text[]) AND entry_kind = 'allocation_adjustment'`,
+    [adjustedGrants.rows.map((row) => row.grant_id)]
+  )
+  if (adjustedGrants.rows.length !== 2 ||
+      adjustedGrants.rows.reduce((sum, row) => sum + BigInt(row.granted_tokens), 0n) !== 15_000n ||
+      reductionEntries.rows.reduce((sum, row) => sum + BigInt(row.token_delta), 0n) !== -5_000n) {
+    throw new Error('Active group allocation increase/reduction did not reconcile through append-only ledger entries')
+  }
+  const orderedGrantIds = adjustedGrants.rows.map((row) => row.grant_id)
+  await testPool.query(
+    `INSERT INTO gptmd_token_entitlement_entries (
+       entry_id, grant_id, entry_kind, token_delta, source_reference, occurred_at
+     ) VALUES ($1, $2, 'usage_debit', -7000, $3, $4),
+              ($5, $6, 'usage_debit', -2000, $7, $4)`,
+    [randomUUID(), orderedGrantIds[0], `allocation-usage-a-${randomUUID()}`, bucketNow,
+      randomUUID(), orderedGrantIds[1], `allocation-usage-b-${randomUUID()}`]
+  )
+  const refusedReduction = await organizationBudgets.saveSettings(allocationTenantId, allocationAdminId, {
+    ...reducedSettings,
+    organizationPool: { tokens: 8_000, estimatedMinutes: 80 },
+    groups: [{ ...reducedSettings.groups[0], tokenBudget: 8_000, estimatedMinuteBudget: 80 }]
+  })
+  if (refusedReduction !== 'allocation_below_usage') {
+    throw new Error('The organization budget accepted a reduction below already settled provider usage')
+  }
+
+  const nextRenewal = initialGrantRow.renewal_at
+  const nextPeriodEnd = new Date(Date.UTC(
+    nextRenewal.getUTCFullYear(), nextRenewal.getUTCMonth() + 1, 1
+  ))
+  const renewedBuckets = await entitlementBuckets.getSubjectBuckets(allocationTenantId, allocationLearnerId, nextRenewal)
+  const repeatedRenewedBuckets = await entitlementBuckets.getSubjectBuckets(allocationTenantId, allocationLearnerId, nextRenewal)
+  const renewedGrantCount = await testPool.query(
+    `SELECT count(*)::int AS count FROM gptmd_token_entitlement_grants
+     WHERE tenant_id = $1 AND group_code = 'gptnursing' AND renewal_at = $2`,
+    [allocationTenantId, nextPeriodEnd]
+  )
+  if (renewedBuckets.length !== 3 || repeatedRenewedBuckets.length !== 3 || renewedGrantCount.rows[0]?.count !== 1) {
+    throw new Error('The learner balance refresh did not issue one idempotent next-period group grant with 45-day carryover')
+  }
+
   const stateStore = createRedisPatientStateStore(redis)
   const principal = { tenantId, subjectId, role: 'learner' }
   const sessionStore = createPostgresSessionStore(testPool, stateStore)
+  const providerTokenReservations = createPostgresProviderTokenReservationStore(testPool)
+  const sessionArchiveStore = createPostgresSessionArchiveStore(testPool)
+  const sessionArchiveErrors = []
+  const sessionArchiveWorker = createSessionArchiveWorker(testPool, {
+    onError: (error) => sessionArchiveErrors.push(error instanceof Error ? error.message : 'unknown')
+  })
   const webPort = await getFreePort()
   const upstreamPort = await getFreePort()
   const webOrigin = `https://localhost:${webPort}`
@@ -293,7 +488,10 @@ try {
     postgres: { query: () => testPool.query('SELECT 1') },
     openaiConfigured: true,
     generateResponse: null,
-    generatePatientScenario: async (versions, asOf, scenarioSeed) => {
+    reserveProviderTokens: (input) => providerTokenReservations.reserve(input),
+    sessionArchiveStore,
+    tokenEntitlementStore,
+    generatePatientScenario: async (versions, asOf, scenarioSeed, _recordTiming, _recordUsage, reserveTokens) => {
       if (versions.promptVersion !== PATIENT_SCENARIO_PROMPT_VERSION ||
           versions.modelVersion !== 'gpt-6-luna' ||
           versions.schemaVersion !== PATIENT_SCENARIO_SCHEMA_VERSION ||
@@ -309,13 +507,15 @@ try {
       const usage = setupGeneration === 1
         ? setupUsage
         : { ...setupUsage, responseId: `${setupUsage.responseId}-${setupGeneration}` }
+      const reservation = await reserveTokens?.(900, 8_192)
+      const addonTokensUsed = await reservation?.settle(usage.responseId, usage.totalTokens) ?? false
       generatedScenarios.set(scenarioSeed, { conversationId, usage })
       return {
         profile, conversationId, responseId: usage.responseId,
-        usage, abandonedConversationIds: []
+        usage, addonTokensUsed, abandonedConversationIds: []
       }
     },
-    generatePatientTurn: async (context) => {
+    generatePatientTurn: async (context, _recordTiming, reserveTokens) => {
       if (context.versions.schemaVersion !== PATIENT_TURN_SCHEMA_VERSION ||
           !context.conversationId.startsWith('verification-conversation') ||
           context.learnerMessage !== 'What is your biggest concern?') {
@@ -326,6 +526,8 @@ try {
       const usage = context.conversationId === 'verification-conversation'
         ? patientTurnUsage
         : { ...patientTurnUsage, responseId: `${patientTurnUsage.responseId}-${context.scenarioId}` }
+      const reservation = await reserveTokens?.(120, 1_024)
+      await reservation?.settle(usage.responseId, usage.totalTokens)
       return {
         responseId: usage.responseId,
         output: {
@@ -401,6 +603,7 @@ try {
   if (setupResponse.status !== 200 || setup.status !== 'ready' || setup.sessionId !== sessionId ||
       setup.readiness?.profile !== true || setup.readiness?.redis !== true ||
       setup.readiness?.conversation !== true || setup.patient?.fullName !== profile.fullName ||
+      setup.addonSpendNotice !== true ||
       setup.patient?.dateOfBirth !== profile.dateOfBirth || setup.patient?.reasonForVisit !== profile.reasonForVisit ||
       Object.hasOwn(setup.patient ?? {}, 'diagnosis')) {
     throw new Error(`API setup did not return the learner-safe ready profile: ${JSON.stringify(setup)}`)
@@ -566,7 +769,8 @@ try {
   const acceptedTurnResponse = await submitTurn()
   const acceptedTurnResult = await acceptedTurnResponse.json()
   if (acceptedTurnResponse.status !== 200 || acceptedTurnResult.turnId !== turnId ||
-      acceptedTurnResult.text !== 'I am worried about what is causing the pain.') {
+      acceptedTurnResult.text !== 'I am worried about what is causing the pain.' ||
+      acceptedTurnResult.addonSpendNotice !== true) {
     throw new Error(`Authenticated Express turn route returned status ${acceptedTurnResponse.status}: ${JSON.stringify(acceptedTurnResult)}`)
   }
   const duplicateTurnResponse = await submitTurn()
@@ -578,6 +782,16 @@ try {
   const conflictingTurnResponse = await submitTurn('Tell me something different.')
   if (conflictingTurnResponse.status !== 409 || patientTurnGenerationCounts.get('verification-conversation') !== 1) {
     throw new Error('Reusing an API turn ID with different learner input was not rejected before generation')
+  }
+  const acknowledgedNoticeResponse = await fetch(
+    `${apiBase}/api/sessions/${sessionId}/addon-spend-notice/acknowledge`,
+    { method: 'POST', headers: authHeaders }
+  )
+  const afterAcknowledgmentResponse = await fetch(`${apiBase}/api/encounters/current`, { headers: authHeaders })
+  const afterAcknowledgment = await afterAcknowledgmentResponse.json()
+  if (acknowledgedNoticeResponse.status !== 204 || afterAcknowledgmentResponse.status !== 200 ||
+      afterAcknowledgment.encounter?.addonSpendNotice !== false) {
+    throw new Error('Learner acknowledgment did not persist against its owned session through encounter restore')
   }
   const live = await stateStore.read(sessionId)
   const turn = live?.acceptedTurns[0]
@@ -852,6 +1066,105 @@ try {
   )
   if (retryArchiveJobs.rows[0]?.count !== 1) throw new Error('Retrying a terminal event duplicated its archive job')
 
+  const earlyDownloadResponse = await fetch(`${apiBase}/api/sessions/${sessionId}/archive/download`, {
+    headers: authHeaders
+  })
+  if (earlyDownloadResponse.status !== 409) {
+    throw new Error('A learner download before archive generation was not denied as pending')
+  }
+  const pendingEngagement = await testPool.query(
+    `SELECT result FROM download_engagement WHERE session_id = $1 ORDER BY requested_at`, [sessionId]
+  )
+  if (pendingEngagement.rows.length !== 1 || pendingEngagement.rows[0]?.result !== 'denied') {
+    throw new Error('The pending archive denial was not persisted in download engagement')
+  }
+  await testPool.query(`
+    CREATE FUNCTION phase2_reject_archive_artifact() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+    BEGIN
+      RAISE EXCEPTION 'phase2_injected_archive_write_failure';
+    END;
+    $$;
+    CREATE TRIGGER phase2_reject_archive_artifact
+      BEFORE INSERT ON session_archive_artifacts
+      FOR EACH ROW EXECUTE FUNCTION phase2_reject_archive_artifact();
+  `)
+  const failedArchiveBuild = await sessionArchiveWorker.processOnce()
+  const archiveAfterFailure = await testPool.query(
+    `SELECT status, attempt_count, last_error_code FROM session_archive_jobs WHERE session_id = $1`,
+    [sessionId]
+  )
+  const artifactsAfterFailure = await testPool.query(
+    `SELECT count(*)::int AS count FROM session_archive_artifacts WHERE session_id = $1`, [sessionId]
+  )
+  if (failedArchiveBuild !== 0 || archiveAfterFailure.rows[0]?.status !== 'pending' ||
+      Number(archiveAfterFailure.rows[0]?.attempt_count) !== 1 ||
+      archiveAfterFailure.rows[0]?.last_error_code !== null || artifactsAfterFailure.rows[0]?.count !== 0 ||
+      !sessionArchiveErrors.includes('phase2_injected_archive_write_failure')) {
+    throw new Error('Failed archive generation did not persist a bounded, content-free retry state')
+  }
+  await testPool.query('DROP TRIGGER phase2_reject_archive_artifact ON session_archive_artifacts')
+  await testPool.query('DROP FUNCTION phase2_reject_archive_artifact()')
+  await testPool.query(
+    `UPDATE session_archive_jobs SET available_at = now() WHERE session_id = $1 AND status = 'pending'`,
+    [sessionId]
+  )
+  const archiveWorkerResult = await sessionArchiveWorker.processOnce()
+  if (archiveWorkerResult !== 1) {
+    const failedArchiveJob = await testPool.query(
+      `SELECT status, attempt_count, last_error_code, download_expires_at
+       FROM session_archive_jobs WHERE session_id = $1`, [sessionId]
+    )
+    throw new Error(
+      `The archive worker did not publish the terminal learner transcript ` +
+      `(result=${archiveWorkerResult}; job=${JSON.stringify(failedArchiveJob.rows[0])}; ` +
+      `terminalAt=${terminalRecord.occurred_at.toISOString()}; errors=${sessionArchiveErrors.join(',')})`
+    )
+  }
+  const retriedArchiveJob = await testPool.query(
+    `SELECT status, attempt_count FROM session_archive_jobs WHERE session_id = $1`, [sessionId]
+  )
+  if (retriedArchiveJob.rows[0]?.status !== 'completed' ||
+      Number(retriedArchiveJob.rows[0]?.attempt_count) !== 2) {
+    throw new Error('The retried archive job did not complete from its original PostgreSQL record')
+  }
+  const archiveListResponse = await fetch(`${apiBase}/api/account/archives`, { headers: authHeaders })
+  const archiveList = await archiveListResponse.json()
+  const readyArchive = archiveList.archives?.find((archive) => archive.sessionId === sessionId)
+  const expectedArchiveExpiry = new Date(new Date(terminalRecord.occurred_at).getTime() + 72 * 60 * 60 * 1000).toISOString()
+  if (archiveListResponse.status !== 200 || readyArchive?.status !== 'available' ||
+      readyArchive.downloadExpiresAt !== expectedArchiveExpiry) {
+    throw new Error('The owner-scoped archive list did not expose the private artifact through terminal time +72 hours')
+  }
+  const archiveDownloadResponse = await fetch(`${apiBase}/api/sessions/${sessionId}/archive/download`, {
+    headers: authHeaders
+  })
+  const archivedTranscript = await archiveDownloadResponse.text()
+  if (archiveDownloadResponse.status !== 200 ||
+      archiveDownloadResponse.headers.get('cache-control') !== 'no-store, private' ||
+      archiveDownloadResponse.headers.get('x-content-type-options') !== 'nosniff' ||
+      !archiveDownloadResponse.headers.get('content-disposition')?.includes('.txt') ||
+      !archivedTranscript.includes('Learner: What is your biggest concern?') ||
+      !archivedTranscript.includes('Patient: I am worried about what is causing the pain.')) {
+    throw new Error('The authenticated archive route did not return the learner-safe transcript with private download headers')
+  }
+  let completedEngagement
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    completedEngagement = await testPool.query(
+      `SELECT result, bytes_downloaded FROM download_engagement WHERE session_id = $1`, [sessionId]
+    )
+    if (completedEngagement.rows.length === 3) break
+    await new Promise((resolve) => setTimeout(resolve, 100))
+  }
+  if (completedEngagement?.rows.length !== 3 ||
+      ['denied', 'authorized', 'completed'].some((result) =>
+        completedEngagement.rows.filter((row) => row.result === result).length !== 1
+      ) ||
+      Number(completedEngagement.rows.find((row) => row.result === 'completed')?.bytes_downloaded) !==
+        Buffer.byteLength(archivedTranscript, 'utf8')) {
+    throw new Error('Pending denial, download authorization, and completed byte-count events were not all persisted')
+  }
+
   await redis.sendCommand(['DEL', `gptmd:session:${sessionId}`, `gptmd:patient:${patientProfileId}`, `gptmd:retries:${sessionId}`])
   await sessionStore.ensureLiveState?.(principal, sessionId)
   const recovered = await stateStore.read(sessionId)
@@ -982,6 +1295,12 @@ try {
   await preflight.getByRole('button', { name: 'Continue with transcript' }).click()
   await page.getByRole('button', { name: 'Enter Room' }).waitFor({ state: 'visible' })
   await page.getByRole('button', { name: 'Enter Room' }).click()
+  await page.getByRole('dialog', { name: 'Before you begin' }).waitFor({ state: 'hidden' })
+  const addonSpendNotice = page.getByRole('dialog', { name: 'Add-on tokens are now in use' })
+  await addonSpendNotice.waitFor({ state: 'visible' })
+  await addonSpendNotice.getByRole('button', { name: 'Got it' }).click()
+  await addonSpendNotice.waitFor({ state: 'hidden' })
+  await page.evaluate(() => window.scrollTo({ top: 0, behavior: 'instant' }))
   const chartTab = page.getByRole('tab', { name: 'Chart' })
   if (await chartTab.getAttribute('aria-selected') !== 'true') {
     throw new Error('The browser did not open the learner chart as the default Enter Room panel')
@@ -999,7 +1318,16 @@ try {
     const image = document.querySelector('.profile-image-wrap img')
     return image instanceof HTMLImageElement && image.naturalWidth > 0
   })
-  await page.getByRole('tab', { name: 'Interview' }).click()
+  const interviewTab = page.getByRole('tab', { name: 'Interview' })
+  await interviewTab.evaluate((element) => element.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' }))
+  const interviewTabBounds = await interviewTab.boundingBox()
+  const browserViewport = page.viewportSize()
+  if (!interviewTabBounds || !browserViewport || interviewTabBounds.x < 0 || interviewTabBounds.y < 0 ||
+      interviewTabBounds.x + interviewTabBounds.width > browserViewport.width ||
+      interviewTabBounds.y + interviewTabBounds.height > browserViewport.height) {
+    throw new Error(`Interview tab remained outside the browser viewport: ${JSON.stringify({ interviewTabBounds, browserViewport })}`)
+  }
+  await interviewTab.click()
   await page.getByLabel('Your next question').fill('What is your biggest concern?')
   await page.getByRole('button', { name: 'Send question' }).click()
   await page.getByText('I am worried about what is causing the pain.', { exact: true }).waitFor({ state: 'visible' })
@@ -1028,6 +1356,30 @@ try {
     throw new Error('Browser-created setup and patient-turn provider usage did not persist through the worker')
   }
   const aiTimeUsageStore = createPostgresOrganizationAiTimeBudgetStore(testPool)
+  const actualReservationUsage = await testPool.query(
+    `SELECT COALESCE(sum(actual_total_tokens), 0)::text AS used_tokens
+     FROM provider_token_reservations
+     WHERE tenant_id = $1 AND subject_id = $2 AND status = 'settled'`,
+    [tenantId, subjectId]
+  )
+  const actualUsedTokens = actualReservationUsage.rows[0]?.used_tokens
+  const populatedBuckets = await tokenEntitlementStore.getSubjectBuckets(tenantId, subjectId)
+  const includedBucket = populatedBuckets.find(({ bucketKind }) => bucketKind === 'included')
+  const addonBucket = populatedBuckets.find(({ bucketKind }) => bucketKind === 'addon')
+  const totalRemainingTokens = populatedBuckets.reduce((total, bucket) => total + BigInt(bucket.remainingTokens), 0n)
+  if (populatedBuckets.length !== 2 || includedBucket?.usedTokens !== '1000' ||
+      BigInt(addonBucket?.usedTokens ?? '0') + 1000n !== BigInt(actualUsedTokens ?? '0') ||
+      totalRemainingTokens + BigInt(actualUsedTokens ?? '0') !== 11_000n) {
+    throw new Error('Provider reservations did not consume included then add-on grants to actual total_tokens')
+  }
+  const bucketResponse = await fetch(`${apiBase}/api/account/token-buckets`, { headers: authHeaders })
+  const bucketResponseBody = await bucketResponse.json()
+  if (bucketResponse.status !== 200 ||
+      bucketResponseBody.buckets?.length !== 2 ||
+      bucketResponseBody.buckets.find((bucket) => bucket.bucketKind === 'included')?.usedTokens !== '1000' ||
+      bucketResponseBody.buckets.find((bucket) => bucket.bucketKind === 'addon')?.usedTokens !== addonBucket?.usedTokens) {
+    throw new Error('Learner token bucket API did not return reservation-reconciled usage')
+  }
   const usagePeriodStart = new Date('2000-01-01T00:00:00.000Z')
   const usagePeriodEnd = new Date('2100-01-01T00:00:00.000Z')
   const actualAiTimeUsage = await aiTimeUsageStore.getUsageSummary(tenantId, usagePeriodStart, usagePeriodEnd)
@@ -1086,9 +1438,13 @@ try {
     workerRetry: 'turn and disclosure persisted once; acknowledged and trimmed after commit',
     providerUsage: 'patient-turn and scenario-generation token counts, model/tier metadata, versioned public-rate estimates, and duration persisted through the worker',
     aiTimeUsage: `tenant-scoped organization-period summary matched provider usage: ${actualAiTimeUsage.totalTokens} tokens across ${actualAiTimeUsage.responseCount} responses`,
+    tokenBuckets: `provider reservations consumed included tokens first then add-on tokens, reconciling ${actualUsedTokens} actual tokens across both balances; the learner-scoped API returned both buckets`,
+    organizationAllocations: 'active corporate settings issued a group grant; increases and unused-token reductions reconciled append-only, over-consumption reductions rolled back, and account refresh issued one idempotent next-period grant with 45-day carryover',
+    addonSpendNotice: 'actual scenario-setup and patient-turn debit exposed the one-time notice; learner acknowledgment persisted and remained dismissed after owner-scoped encounter restore',
     turnFailureAudit: 'identifier-only failure metadata persisted through Redis and the PostgreSQL worker',
     assessmentOutcome: 'confirmed phase, unscored submission, and terminal events persisted in order',
     archiveJob: 'one pending archive job was committed with the terminal outcome and remained unique on event replay',
+    sessionArchive: 'real Express denied a premature download, the worker built a learner/patient-only 72-hour transcript, and the authenticated download persisted denial, authorization, and completion byte counts',
     terminalRedisExpiry: `terminal commit and PostgreSQL recovery both set session, patient, and retry keys to ${expectedRedisExpiry} (terminal event +20 minutes)`,
     browserCancellation: 'authenticated browser-created session cancellation persisted through Express, Redis, and PostgreSQL; repeat returned cancelled without duplicating terminal event or archive job',
     assessmentDraft: 'partial assessment fields survive owner-scoped restore; monotonically increasing revisions reject late stale saves',

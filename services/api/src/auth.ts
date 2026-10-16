@@ -14,11 +14,16 @@ export interface TenantMembership {
   sessionsEnabled: boolean
   responsesEnabled: boolean
   audioTranscriptionAvailable: boolean
+  branding?: {
+    displayName: string
+    logoPath: string
+  }
 }
 
 export interface AuthenticatedIdentity {
   subjectId: string
   tenantId?: string
+  email?: string
 }
 
 declare module 'express-serve-static-core' {
@@ -31,6 +36,8 @@ declare module 'express-serve-static-core' {
 export interface JwtClaims extends JWTPayload {
   sub?: string
   tenant_id?: unknown
+  email?: unknown
+  app_metadata?: unknown
 }
 
 export interface JwtConfiguration {
@@ -112,8 +119,18 @@ export async function verifyAccessToken(
   const tenantId = typeof claims.tenant_id === 'string' && claims.tenant_id.trim() && claims.tenant_id.length <= 200
     ? claims.tenant_id
     : undefined
+  const authProvider = claims.app_metadata && typeof claims.app_metadata === 'object' &&
+    'provider' in claims.app_metadata ? claims.app_metadata.provider : undefined
+  const email = authProvider === 'google' && typeof claims.email === 'string' && claims.email.length <= 254 &&
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(claims.email.trim())
+    ? claims.email.trim().toLowerCase()
+    : undefined
 
   // Supabase Auth does not issue a GPTMD tenant claim. A tenant claim from an
   // existing/custom issuer may guide selection, but membership is still checked.
-  return tenantId ? { subjectId: claims.sub, tenantId } : { subjectId: claims.sub }
+  return {
+    subjectId: claims.sub,
+    ...(tenantId ? { tenantId } : {}),
+    ...(email ? { email } : {})
+  }
 }

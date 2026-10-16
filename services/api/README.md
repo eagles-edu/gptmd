@@ -5,13 +5,27 @@ TypeScript-built and currently exposes:
 
 - `GET /healthz` — process health
 - `GET /readyz` — Redis, PostgreSQL, OpenAI, and authentication readiness
-- `POST /api/openai/responses` — authenticated, tenant-quota-limited Responses API integration
+- `POST /api/openai/responses` — retired with HTTP 410; unscoped Responses calls cannot bypass session budgets
 - `POST /api/sessions` — create an opaque initializing application session
 - `POST /api/sessions/:sessionId/setup` — idempotently generate and persist the immutable scenario
 - `POST /api/sessions/:sessionId/turns` — serialize, validate, and accept a patient turn
 - `POST /api/sessions/:sessionId/audio-transcription` — consent- and entitlement-gated Realtime STT credential
 - `GET /api/sessions/:sessionId` — read a session owned by the authenticated user and tenant
+- `GET /api/account/archives` — list the authenticated learner's text transcript archives
+- `GET /api/account/usage` — current UTC-month provider usage for the authenticated learner
+- `GET /api/store/consumer-tokens` — signed-in catalog preview for published TEAECL token offers; checkout stays disabled
+- `GET /api/sessions/:sessionId/archive/download` — authorize and deliver an owned transcript archive before its terminal-time 72-hour expiry
 - `GET /api/encounters/current` — find and restore the current owner-scoped encounter without browser storage; Redis locates the candidate from a tenant-and-subject hash, PostgreSQL verifies ownership and falls back to the latest open session if Redis has lost the lookup
+- `/api/system-admin/*` — restricted GPTMD-stack status, sanitized logs, service restart, and journal rotation for a separately allowlisted system-admin identity
+- `GET/PUT /api/system-admin/consumer-catalog` — TEAECL-only, revisioned catalog administration for fixed monthly token tiers and configurable add-on products; catalog publication does not enable checkout
+
+Transcript archives are text-only projections of ordered learner/patient rows
+from `session_transcript`; scenario seeds, answer keys, and raw audio are never
+included. The worker stores artifacts privately in PostgreSQL and expires them
+72 hours after the terminal event, not 72 hours after generation. A delayed
+worker marks an already-expired archive unavailable instead of publishing it.
+Migration 032 must be applied before enabling these routes and the worker in a
+deployment.
 
 The private patient-scenario generator in `src/patient-profile.ts` creates a
 Responses Conversation, requests a strict structured profile, validates it,
@@ -31,6 +45,62 @@ non-loopback `HOST` so it cannot accidentally become a public listener. The
 API launcher reads the ignored repository `.env` file and passes only the
 service's OpenAI, Redis, PostgreSQL, JWT verification, host, and port variables
 to the process.
+
+## GPTMD system operations
+
+The `/system-admin` page and its API routes are not enabled by tenant role.
+Configure exact verified JWT `sub` values in `GPTMD_SYSTEM_ADMIN_SUBJECTS` in
+the API environment. The API still requires normal bearer-token verification
+and request rate limits, but this explicit subject allowlist bypasses tenant
+membership only for `/api/system-admin/*`. Keep the list short; do not use an
+email address in place of the token subject.
+
+Service restarts and journal access are delegated through the root-owned,
+fixed-command operator in `ops/gptmd-ops-agent.mjs`. It exposes only the GPTMD
+web, API, and worker units. Logs are projected to approved operational fields;
+unstructured message bodies and unapproved JSON fields are omitted. The
+operator does not expose a shell, arbitrary unit name, path, or journal query.
+PostgreSQL, Redis, OpenAI, and auth are health-only dependencies. Journal
+rotation rotates the GPTMD namespace and does not delete retained logs.
+
+The consumer token catalog uses migration 033 and the same allowlisted system
+administrator identity. Its changes are revision-checked and append-only
+audited. It stores catalog configuration only; it does not grant tokens, accept
+payments, or expose model/provider controls to a learner or tenant admin.
+The read-only `/api/store/consumer-tokens` endpoint exposes published products
+to an authenticated user without requiring tenant membership; its response
+always reports checkout disabled.
+Migration 034 adds a covering index for learner-scoped monthly usage reporting
+in Account; the endpoint exposes recorded provider usage only, not purchased
+credits or an entitlement balance.
+
+Migration 039 adds append-only, fixed 30-second active-session pulses for the
+customer-admin member usage report. The browser sends a pulse only while the
+encounter page is visible and has recent interaction; the API verifies the
+authenticated owner and active session and accepts at most one pulse per 25
+seconds per session. The report labels this as estimated active minutes and
+the most recent activity time. It is not continuous monitoring or CEU evidence.
+Apply migration 039 before expecting these fields to include live data.
+
+Host setup is separate from application deployment. Run
+`npm run configure:live-ops` after reviewing the systemd units and installer.
+It creates a group-readable HMAC key without replacing an existing key,
+installs the root-owned restricted helper and systemd socket, adds the
+`gptmd-ops` supplementary group only to the API, restarts the API, and verifies
+readiness plus a signed status request. It does not configure a system-admin
+identity. Set `GPTMD_SYSTEM_ADMIN_SUBJECTS` only to the exact verified JWT
+subject of the separately provisioned system operator; customer-admin roles
+do not grant platform access. Until both host setup and that explicit identity
+configuration are complete, restart/log controls remain unavailable or
+denied. The installer preserves changed unit files in timestamped backups and
+does not print or store the HMAC key in the repository.
+
+To configure the approved live system operator, run
+`npm run configure:live-system-admin`. The command resolves the selected
+operator email against exactly one active local Supabase Auth user, adds only
+that UUID to the private API environment, preserves any existing operators,
+restarts the API, and waits for readiness. It does not print the subject or
+credentials.
 
 ## Authentication and tenant provisioning
 
@@ -393,9 +463,13 @@ curl http://127.0.0.1:4000/readyz
 ```
 
 The API uses pooled Redis and PostgreSQL clients. The OpenAI SDK key is only
-read by Express and is never sent to the browser. Send a JSON body containing
-`input` to `/api/openai/responses`; use fictional data only and never send
-patient identifiers or other protected health information.
+read by Express and is never sent to the browser. Provider generation is only
+available through session-scoped scenario setup and patient-turn routes, which
+reserve token capacity against the session's pinned budget group. The legacy
+generic `/api/openai/responses` endpoint returns HTTP 410; do not re-enable it
+without an explicit session funding context, bounded output cap, and usage
+reservation/reconciliation path. Use fictional data only and never send patient
+identifiers or other protected health information.
 
 ## Local PostgreSQL
 

@@ -2,6 +2,10 @@ import { defineConfig, devices } from '@playwright/test'
 import { existsSync } from 'node:fs'
 import { resolve } from 'node:path'
 
+const httpsPort = process.env.GPTMD_PREFLIGHT_HTTPS_PORT ?? '3002'
+const appPort = process.env.GPTMD_PREFLIGHT_APP_PORT ?? '3012'
+const supabasePort = process.env.GPTMD_PREFLIGHT_SUPABASE_PORT ?? '3003'
+const appOrigin = `https://localhost:${httpsPort}`
 const operaExecutablePath = process.env.OPERA_EXECUTABLE_PATH
   ? resolve(process.env.OPERA_EXECUTABLE_PATH)
   : '/usr/bin/opera'
@@ -23,7 +27,7 @@ export default defineConfig({
   workers: 1,
   reporter: 'list',
   use: {
-    baseURL: 'https://localhost:3002',
+    baseURL: appOrigin,
     ignoreHTTPSErrors: true,
     trace: 'on-first-retry'
   },
@@ -59,9 +63,9 @@ export default defineConfig({
     }] : [])
   ],
   webServer: {
-    command: 'env -u NO_COLOR NUXT_PUBLIC_SUPABASE_URL=https://localhost:3003 NUXT_PUBLIC_SUPABASE_KEY=preflight-test-anon-key node scripts/playwright-https-server.mjs 3002 3012',
+    command: `env -u NO_COLOR NUXT_PUBLIC_SUPABASE_URL=https://localhost:${supabasePort} NUXT_PUBLIC_SUPABASE_KEY=preflight-test-anon-key node scripts/playwright-https-server.mjs ${httpsPort} ${appPort}`,
     reuseExistingServer: false,
     ignoreHTTPSErrors: true,
-    url: 'https://localhost:3002'
+    url: appOrigin
   }
 })

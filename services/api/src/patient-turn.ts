@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto'
 import type OpenAI from 'openai'
+import type { ProviderTokenReservation } from './provider-token-reservations.ts'
 import { zodTextFormat } from 'openai/helpers/zod'
 import { z } from 'zod'
 import { canonicalJsonStringify } from './canonical-json.ts'
@@ -37,6 +38,7 @@ import {
 
 export const PATIENT_TURN_PROMPT_VERSION = 'patient-turn-prompt-v10'
 export const PATIENT_TURN_POLICY_VERSION = 'patient-turn-policy-v10'
+export const PATIENT_TURN_MAX_OUTPUT_TOKENS = 1_024
 
 const ProposedFactSchema = z.object({
   field: PatientReportedFactExpansionSchema.shape.field,
@@ -244,7 +246,8 @@ export async function generatePatientTurn(
   client: OpenAI,
   model: string,
   context: PatientTurnGenerationContext,
-  recordTiming?: ResponsesTimingRecorder
+  recordTiming?: ResponsesTimingRecorder,
+  reserveProviderTokens?: (inputTokens: number, outputTokenCap: number) => Promise<ProviderTokenReservation>
 ): Promise<{ responseId: string; output: unknown; providerUsage: ProviderUsageSample | null }> {
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
   const matchedPainFields = new Set(matchPainCueFields(context.learnerMessage))
@@ -282,7 +285,7 @@ export async function generatePatientTurn(
     : []
   const startedAt = performance.now()
   let firstTokenReported = false
-  const stream = client.responses.stream({
+  const request = {
     model,
     conversation: context.conversationId,
     input: [
@@ -332,8 +335,22 @@ export async function generatePatientTurn(
         })
       }
     ],
-    text: { format: zodTextFormat(PatientTurnModelOutputSchema, 'patient_turn') }
+    text: { format: zodTextFormat(PatientTurnModelOutputSchema, 'patient_turn') },
+    max_output_tokens: PATIENT_TURN_MAX_OUTPUT_TOKENS
+  } satisfies Parameters<typeof client.responses.stream>[0]
+  const inputTokenCount = await client.responses.inputTokens.count({
+    model: request.model,
+    conversation: request.conversation,
+    input: request.input,
+    text: request.text
   })
+  if (!Number.isSafeInteger(inputTokenCount.input_tokens) || inputTokenCount.input_tokens < 0) {
+    throw new Error('Provider input token count is invalid')
+  }
+  const tokenReservation = await reserveProviderTokens?.(
+    inputTokenCount.input_tokens, PATIENT_TURN_MAX_OUTPUT_TOKENS
+  )
+  const stream = client.responses.stream(request, { maxRetries: 0 })
   const reportFirstToken = () => {
     if (firstTokenReported) return
     firstTokenReported = true
@@ -342,9 +359,12 @@ export async function generatePatientTurn(
   stream.on('response.output_text.delta', reportFirstToken)
   stream.on('response.refusal.delta', reportFirstToken)
   stream.on('response.completed', () => reportResponsesTiming(recordTiming, 'completed', startedAt))
-  const response = await stream.finalResponse()
-  if (response.status !== 'completed' || !response.output_parsed) {
-    throw new Error('Patient turn response was incomplete or refused')
+  let response: OpenAI.Responses.Response
+  try {
+    response = await stream.finalResponse()
+  } catch (error) {
+    await tokenReservation?.hold().catch(() => undefined)
+    throw error
   }
   const usage = response.usage
   const providerUsage: ProviderUsageSample | null = usage ? (() => {
@@ -370,9 +390,15 @@ export async function generatePatientTurn(
       estimatedCostUsd: cost?.estimatedCostUsd ?? null
     }
   })() : null
+  if (providerUsage) await tokenReservation?.settle(providerUsage.responseId, providerUsage.totalTokens)
+  else await tokenReservation?.hold()
+  const parsedOutput = (response as OpenAI.Responses.Response & { output_parsed?: unknown }).output_parsed
+  if (response.status !== 'completed' || !parsedOutput) {
+    throw new Error('Patient turn response was incomplete or refused')
+  }
   return {
     responseId: response.id,
-    output: response.output_parsed,
+    output: parsedOutput,
     providerUsage
   }
 }

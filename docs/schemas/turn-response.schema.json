@@ -10,11 +10,16 @@
     "text": {
       "type": "string",
       "minLength": 1
+    },
+    "addonSpendNotice": {
+      "default": false,
+      "type": "boolean"
     }
   },
   "required": [
     "turnId",
-    "text"
+    "text",
+    "addonSpendNotice"
   ],
   "additionalProperties": false
 }

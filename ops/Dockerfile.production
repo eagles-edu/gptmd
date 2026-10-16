@@ -35,7 +35,7 @@ COPY --from=api-runtime-dependencies --chown=node:node /workspace/services/api/n
 COPY --from=api-build --chown=node:node /workspace/services/api/package.json ./package.json
 COPY --from=api-build --chown=node:node /workspace/services/api/dist ./dist
 COPY --from=api-build --chown=node:node /workspace/services/api/catalog ./catalog
-COPY --chown=node:node educator-input/obgyn-disorders.reference.json ./catalog/obgyn-disorders.reference.json
+COPY --chown=node:node educator-input/obgyn-disorders.reference.diagnostics-tests-cleaned.json ./catalog/obgyn-disorders.reference.json
 USER node
 EXPOSE 4000
 CMD ["node", "dist/server.js"]

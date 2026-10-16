@@ -1,0 +1,29 @@
+{
+  "mcpServers": {
+    "filesystem": {
+      "type": "local",
+      "command": "/usr/bin/npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem@2026.8.31", "/home/eaglesvn/dockerz/gptmd"],
+      "tools": ["*"]
+    },
+    "redis": {
+      "type": "local",
+      "command": "/usr/bin/node",
+      "args": ["/home/eaglesvn/dockerz/gptmd/scripts/gptmd-mcp-launcher.mjs", "redis"],
+      "cwd": "/home/eaglesvn/dockerz/gptmd",
+      "tools": ["*"]
+    },
+    "postgres": {
+      "type": "local",
+      "command": "/usr/bin/node",
+      "args": ["/home/eaglesvn/dockerz/gptmd/scripts/gptmd-mcp-launcher.mjs", "postgres"],
+      "cwd": "/home/eaglesvn/dockerz/gptmd",
+      "tools": ["*"]
+    },
+    "icepanel": {
+      "type": "http",
+      "url": "https://mcp.icepanel.io/mcp",
+      "tools": ["*"]
+    }
+  }
+}

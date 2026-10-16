@@ -55,8 +55,9 @@ outside private development.
 PostgreSQL uses a dedicated `gptmd_live` database and `gptmd_live_app` role on
 the existing loopback-only PostgreSQL service. The API's private connection
 settings live in `/home/eaglesvn/.config/gptmd-live/api.env` with mode `0600`.
-The setup populated all 22 current migrations and records applied migrations
-in `gptmd_schema_migrations`.
+As of release `2026-10-16T110205011Z`, all 39 SQL migration files in this
+checkout are recorded in `gptmd_schema_migrations`; there are no pending or
+ledger-only migration entries.
 
 Redis runs in a separate Redis Stack container on `127.0.0.1:6382`, protected
 with its own password, AOF enabled, and a dedicated named Docker volume. The
@@ -448,3 +449,218 @@ both contain zero rows. No educator values were seeded or approved, and no
 live instructor-account workflow was exercised. The deployment enables the
 controls in the live schema; it does not establish educator approval or learner
 use of configured settings.
+
+**2026-10-15 organization AI-time enforcement deployment:** After the full
+`npm run check` passed, `npm run deploy:live` synchronized the tested web/API
+release and applied `029_ai_budget_group_assignments.sql`,
+`030_provider_token_reservations.sql`, and
+`031_ai_budget_enforcement.sql`. Initial release
+`2026-10-15T135257737Z` activated successfully. `gptmd-live-web`, `gptmd-live-api`, and
+`gptmd-live-worker` are active as `eaglesvn:eaglesvn`; the release tree has no
+group/other-writable paths. API `/readyz` reports Redis, PostgreSQL, OpenAI,
+and auth ready. Public `/` returns HTTP 200 and `/auth/v1/authorize?provider=google`
+returns HTTP 302 to Google with the configured callback URI.
+
+A read-only query confirmed `gptmd_live` / `gptmd_live_app`, migration 031 as
+the latest applied migration, and all three budget migrations recorded. The
+reservation ledger and budget-settings table currently contain zero rows.
+Onlineadmin's customer-admin membership is in
+`gptmd-entitlement-test-onlineadmin`; scsstx retains its original bounded
+learner workspace `gptmd-learner-test-scsstx`. The 2026-10-15 budget-test seed
+below adds a second scsstx learner membership in the admin-controlled test
+workspace without changing the original learner tenant.
+
+**2026-10-15 draft-budget inertness follow-up:** Review before learner testing
+found that session creation treated saved draft group catalogs as active
+assignments, despite draft settings being documented as inert. The local fix
+now resolves and pins group/department assignments only when budget settings
+are explicitly active; regression coverage verifies that a saved draft with
+groups and departments allows session creation without assignments and stores
+null budget snapshots, while active multi-group settings still require an
+explicit selection. The full `npm run check` passed with 331 unit tests, 45
+cross-browser tests, 44 preflight tests, 10 mobile-viewer tests, and 1 viewer
+tool test. Release `2026-10-15T140535206Z` replaced
+`2026-10-15T135257737Z`; no new database migration was needed. Post-deploy,
+all three services remained active as `eaglesvn:eaglesvn`, the API reported
+all dependencies ready, public `/` returned HTTP 200, and OAuth start returned
+HTTP 302. The release tree has no group/other-writable files. Budget settings
+and reservation tables remain empty, so this fixes inert draft behavior but
+does not prove live budget enforcement with scsstx.
+
+**2026-10-15 budget test learner provisioning:** Added the existing scsstx
+Auth identity as an active `learner` in `gptmd-entitlement-test-onlineadmin`,
+the existing all-off workspace owned by the onlineadmin `customer_admin`. The
+guarded `npm run provision:ai-budget-test-learner` verified both unique Auth
+identities, the `gptmd_live` / `gptmd_live_app` target, migrations 024, 025,
+027, and 029-031, the onlineadmin active admin role, and the original scsstx
+bounded text-only learner policy. It refused any target policy other than the
+exact all-off baseline and inserted only the learner membership. Read-back
+confirms both roles are active, the shared policy remains disabled with finite
+text quotas and zero audio allowance, and there are no budget settings, group
+or department assignments, or reservations. The seed establishes an
+admin-managed test roster only; it does not activate visits, create token
+budgets, or prove learner UI/session behavior. Verify in Chrome Profile 1 that
+the scsstx Account page shows the second workspace and requires explicit
+selection; retain the original standalone learner workspace.
+
+**2026-10-15 session assignment snapshot serialization:** Added a tenant-row
+`FOR SHARE` lock at the start of session creation, before entitlement,
+budget-setting, group-assignment, and department-assignment reads. Customer
+admin settings and assignment transactions take `FOR UPDATE` on that tenant
+row first, so a newly created session sees a consistent before-or-after
+assignment snapshot instead of racing an admin change. Regression tests assert
+the lock order and that a missing tenant rolls back before entitlement lookup
+or session insertion. A rollback-only probe against live PostgreSQL held
+`FOR SHARE` on one existing tenant and confirmed that an admin-style
+`FOR UPDATE NOWAIT` received PostgreSQL lock-not-available; both transactions
+were rolled back without changing data. The full `npm run check` passed: 337 unit tests, 45
+cross-browser tests, 44 preflight tests, 10 mobile-viewer tests, and one viewer
+tool test; API build, schema/diagram checks, typechecks, and warning-free
+production build also passed. `npm run deploy:live` activated release
+`2026-10-15T142641634Z`; web, API, and worker are active as `eaglesvn:eaglesvn`,
+API readiness reports Redis/PostgreSQL/OpenAI/auth ready, and the post-deploy
+browser home/OAuth checks passed. Public home returned HTTP 200 and OAuth start
+HTTP 302. A read-only query confirmed migrations 029-031 and zero budget
+settings, assignments, or token reservations. This proves the code and
+deployment path only; no live budget enforcement or learner-funded session was
+exercised.
+
+**2026-10-15 text transcript archive deployment:** Read-only preflight confirmed
+the target database was `gptmd_live` as `gptmd_live_app`, migration 031 was
+latest, the append-only `download_engagement` trigger existed, and both archive
+jobs and engagement tables were empty. `npm run deploy:live` applied
+`032_session_transcript_archives.sql` and activated release
+`2026-10-15T150625442Z`. All three live services are active with zero restarts;
+API readiness reports Redis, PostgreSQL, OpenAI, and auth ready. Public `/`
+returned HTTP 200 and OAuth start returned HTTP 302 to Google. The release
+tree is owned by `eaglesvn:eaglesvn` with no group/other-writable files. A
+read-only post-deploy query confirmed migration 032, the artifact table with
+RLS enabled, the queue and engagement columns, and the append-only trigger.
+Archive-job and download-engagement counts remain zero. This deploy verifies
+schema and service readiness only; no live session has yet generated or
+downloaded an archive, and b03-b05/b07-b09 remain open pending owned-session
+generation, authorization, expiry, engagement, retry, and cleanup evidence.
+
+**2026-10-15 archive worker claim precision fix:** `npm run verify:phase2`
+initially exposed that PostgreSQL's microsecond `claimed_at` value was rounded
+to milliseconds by the Node `Date` parser, causing the archive worker's exact
+claim comparison to report `archive_source_missing`. Claim timestamps are now
+truncated to millisecond precision before persistence, matching the value
+round-tripped through `pg`. A regression assertion covers the precision rule;
+the isolated verifier now exercises real Express archive routes, PostgreSQL,
+Redis, worker generation, private owner-scoped download, and denied / authorized
+/ completed engagement with exact byte counts. `npm run check` passed with 356
+unit tests, 48 cross-browser tests, 44 encounter-preflight tests, 10
+mobile-viewer tests, and one viewer-tool test, along with typechecks, API build,
+schema/diagram checks, and production build. `npm run deploy:live` activated
+release `2026-10-15T152031051Z`; web, API, and worker are active with zero
+restarts, API readiness reports Redis/PostgreSQL/OpenAI/auth ready, public `/`
+returns HTTP 200, and OAuth start returns HTTP 302. The release tree has no
+group/other-writable files. Live archive-job and engagement counts remain zero:
+the successful E2E flow used only the disposable verifier database and does
+not establish live learner generation, download, expiry, retry, or cleanup.
+
+**2026-10-15 organization-admin reservation visibility:** The customer-admin
+AI-time budget endpoint and account control now report settled provider usage
+separately from the current configured organization period's in-flight reserved
+token ceilings/counts and held-for-reconciliation ceilings/counts. Held values
+remain informational and continue consuming active limits; this does not add a
+client-admin settlement or release path. Regression coverage verifies tenant
+scope, period bounds, summary fields, and rendered controls. `npm run check`
+passed with 357 unit tests, 48 cross-browser tests, 44 encounter-preflight
+tests, 10 mobile-viewer tests, and one viewer-tool test, along with lint,
+typechecks, API build, schema/diagram checks, and warning-free production
+build. `npm run deploy:live` activated release `2026-10-15T153442115Z` with no
+new migration. All services are active with zero restarts; API readiness
+reports Redis/PostgreSQL/OpenAI/auth ready; public `/` returns HTTP 200 and
+OAuth start returns HTTP 302. The release tree has no group/other-writable
+files. A read-only query against `gptmd_live` / `gptmd_live_app` confirmed zero
+reservation ledger rows (zero reserved and held calls/tokens). Therefore the
+live endpoint is deployed, but the displayed nonzero controls are verified only
+in local browser tests; live budget enforcement remains unexercised.
+
+**2026-10-16 token-bucket release:** After the full `npm run check` passed
+(392 unit tests; 48 cross-browser, 44 preflight, 10 mobile-viewer, and one
+viewer-tool case), `npm run deploy:live` activated release
+`2026-10-16T072730705Z`. The deployment applied migrations 033-037, including
+the consumer catalog, provider-usage index, token grant/debit ledger,
+lock-safe reservation allocation, and persistent add-on notice. All three
+systemd services are active with zero restarts; API readiness reports
+Redis/PostgreSQL/OpenAI/auth ready. Post-deploy origin/public OAuth checks and
+the real Chromium home/OAuth browser checks passed. The source catalog is in
+the release as `api/catalog/obgyn-disorders.reference.json`, owned by
+`eaglesvn:eaglesvn` mode 0644; release API directories are mode 0755. A
+read-only query confirmed migrations 033-037 and zero token grants,
+reservations, consumer offer-catalog entries, budget settings, group
+assignments, archive jobs, or download-engagement rows. Checkout remains
+disabled, and no live learner session exercised token settlement or add-on
+notice. This deployment proves migration application, service readiness, and
+public route availability only; trusted grant issuance, renewals, payment
+confirmation, checkout, and live learner funding remain open.
+
+**2026-10-16 organization-allocation reconciliation and cleaned educator catalog:**
+After `npm run check` passed (60 unit files / 399 tests, 48 desktop browser
+cases, 44 encounter-preflight cases, 10 mobile-viewer cases, and one viewer
+tool case), `npm run deploy:live` applied migration
+`038_organization_group_allocation_adjustments.sql` and activated release
+`2026-10-16T081212459Z`. The deploy packages
+`obgyn-disorders.reference.diagnostics-tests-cleaned.json` as
+`api/catalog/obgyn-disorders.reference.json`; local and release SHA-256 both
+equal `83811a34d27c3ae05381c1e2e52ec6f6acbffecb37719d1032e225d355acd32b`.
+The catalog contains 130 disorders, eight routine-care services, 260 attributed
+disorder sections, and 138 structured diagnostic profiles. Scenario selection
+uses the supplied modeled encounter-relevance values as seed-pinned sampling
+weights; the source explicitly states these are not measured population
+incidence. Origin/public OAuth checks and post-deploy Chromium home/OAuth checks
+passed. All three services are active; API `/readyz` reports Redis,
+PostgreSQL, OpenAI, and auth ready. The release catalog file is owned by
+`eaglesvn:eaglesvn` mode 0644. Read-only post-deploy queries confirmed migration
+038 and zero token grants/entries, provider reservations, consumer catalog
+entries, group/department assignments, organization budget settings, archive
+jobs, and download-engagement rows. No live learner grant or generated scenario
+was created; live scenario-generation evidence, budget funding, and checkout
+remain open.
+
+**2026-10-16 GPTMD system operations deployment:** After a full local gate passed
+(401 unit tests, 48 cross-browser tests, 44 encounter-preflight tests, 10
+mobile-viewer tests, and one viewer-tool test),
+`npm run deploy:live` activated release `2026-10-16T083125601Z`.
+`npm run configure:live-ops` installed the fixed-command root operator, socket
+activation, HMAC key, and API supplementary group; its signed overview returned
+all three GPTMD services. The operator is constrained to the GPTMD web/API/
+worker units and sanitized logs. A separate command,
+`npm run configure:live-system-admin`, resolved exactly one active Supabase
+Auth identity for `onlineadmin@eaglesvn.online`, added only its verified UUID to
+`GPTMD_SYSTEM_ADMIN_SUBJECTS` in the mode-0600 API environment, restarted the
+API, and verified readiness without printing credentials or the UUID. Direct
+post-configuration probes returned HTTP 200 for public `/` and `/readyz`; the
+three application units and both ops units report active. The ops socket is
+`root:gptmd-ops` mode 0660; the private API environment remains
+`eaglesvn:eaglesvn` mode 0600. The protected admin page and authenticated
+restart/log actions have not yet been exercised in a live onlineadmin browser
+session. Subsequent aggregate `npm run check` reruns passed lint, typechecks,
+session. `npm run check` now passes with 404 unit tests, 54 desktop browser
+cases, 44 encounter-preflight cases, 10 mobile-viewer cases, and one viewer
+tool case. The desktop cross-browser suite is configured for one worker because
+parallel browser jobs exceeded per-test timeouts on the host; no tests were
+skipped or weakened. New system-admin E2E coverage in Chromium, Firefox, and
+WebKit verifies non-operator denial and the operator status/log/fixed-action
+flows with mocked authentication/API responses. This is local UI coverage, not
+a live onlineadmin browser-session check. No application data or tenant state
+was changed by this operator setup.
+
+**2026-10-16 estimated engagement report deployment:** After the full local
+`npm run check` passed (407 unit tests, 54 standard browser tests, 44
+encounter-preflight cases, 10 mobile-viewer cases, and one viewer-tool case),
+the focused migration/report suite passed 126 tests and the updated preflight
+disclosure passed Chromium E2E. `npm run deploy:live` applied
+`039_session_engagement_pulses.sql` and activated release
+`2026-10-16T100519284Z`. A read-only query confirmed both the migration ledger
+entry and `public.session_engagement_pulses` exist. All three application
+services are active; loopback `/readyz` and public `/`, `/privacy`, origin and
+public OAuth, and real-browser home/OAuth checks returned their expected
+success responses. The 9,249-path active release tree has no owner/group
+mismatches or group/other-writable files or directories; the release and
+educator catalog are owned by `eaglesvn:eaglesvn`, with the catalog mode 0644.
+No live learner pulse or report row has yet been verified, and no CEU evidence
+is claimed.

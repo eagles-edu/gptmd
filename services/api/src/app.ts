@@ -44,6 +44,13 @@ import type { PatientTurnGenerationContext } from './patient-turn.ts'
 import type { ResponsesTimingRecorder } from './response-timing.ts'
 import type { SessionCommitTimingRecorder } from './patient-state-store.ts'
 import type { PatientTurnResult, ScenarioSetupResult, SessionStore, StoreResult } from './session-store.ts'
+import type { SessionArchiveStore } from './session-archives.ts'
+import type { TokenEntitlementStore } from './token-entitlements.ts'
+import {
+  parseConsumerTokenCatalog,
+  projectConsumerStoreCatalog,
+  type ConsumerTokenCatalogStore
+} from './consumer-token-catalog.ts'
 import type { TenantEntitlementAdminStore, TenantEntitlementPolicy } from './tenant-entitlements.ts'
 import {
   applyApprovedPatientVariantSettings,
@@ -55,9 +62,22 @@ import {
   getOrganizationAiTimePeriodBounds,
   OrganizationAiMemberAssignmentInputSchema,
   OrganizationAiMemberAssignmentImportSchema,
+  OrganizationAiMemberRosterInvitationImportSchema,
   OrganizationAiTimeBudgetSettingsSchema,
+  getProratedMonthlyDepartmentTokens,
+  type OrganizationAiTimeBudgetSettings,
   type OrganizationAiTimeBudgetStore
 } from './organization-ai-time-budget.ts'
+import {
+  ProviderTokenBudgetExceeded,
+  type ProviderTokenOperation,
+  type ProviderTokenReservation
+} from './provider-token-reservations.ts'
+import {
+  SYSTEM_SERVICES,
+  type SystemOperationsClient,
+  type SystemService
+} from './system-operations.ts'
 
 export interface RedisProbe {
   readonly isOpen: boolean
@@ -73,19 +93,31 @@ export interface ApiDependencies {
   redis: RedisProbe | null
   postgres: PostgresProbe | null
   openaiConfigured: boolean
-  generateResponse: ((input: string, recordTiming?: ResponsesTimingRecorder) => Promise<{ id: string; outputText: string }>) | null
   generatePatientScenario: ((
     versions: PatientScenarioVersionPins,
     asOf: Date,
     scenarioSeed: string,
     recordTiming?: ResponsesTimingRecorder,
-    recordProviderUsage?: (usage: ProviderUsageSample) => Promise<void>
+    recordProviderUsage?: (usage: ProviderUsageSample) => Promise<void>,
+    reserveProviderTokens?: (inputTokens: number, outputTokenCap: number) => Promise<ProviderTokenReservation>
   ) => Promise<GeneratedPatientScenario>) | null
-  generatePatientTurn: ((context: PatientTurnGenerationContext, recordTiming?: ResponsesTimingRecorder) => Promise<{
+  generatePatientTurn: ((
+    context: PatientTurnGenerationContext,
+    recordTiming?: ResponsesTimingRecorder,
+    reserveProviderTokens?: (inputTokens: number, outputTokenCap: number) => Promise<ProviderTokenReservation>
+  ) => Promise<{
     responseId: string
     output: unknown
     providerUsage: ProviderUsageSample | null
   }>) | null
+  reserveProviderTokens: ((input: {
+    tenantId: string
+    subjectId: string
+    sessionId: string
+    operation: ProviderTokenOperation
+    inputTokens: number
+    outputTokenCap: number
+  }) => Promise<ProviderTokenReservation>) | null
   createTranscriptionCall: ((sdpOffer: string) => Promise<{
     answerSdp: string
     providerCallId: string
@@ -103,6 +135,12 @@ export interface ApiDependencies {
   tenantEntitlementAdminStore?: TenantEntitlementAdminStore | null
   patientVariantSettingsStore?: PatientVariantSettingsStore | null
   organizationAiTimeBudgetStore?: OrganizationAiTimeBudgetStore | null
+  sessionArchiveStore?: SessionArchiveStore | null
+  consumerTokenCatalogStore?: ConsumerTokenCatalogStore | null
+  tokenEntitlementStore?: TokenEntitlementStore | null
+  systemAdminSubjectIds?: ReadonlySet<string>
+  systemOperations?: SystemOperationsClient | null
+  sampleSystemResources?: () => unknown
   setupQueueLimits?: SetupQueueLimits
   providerCapacityLimits?: ProviderCapacityLimits
   recordSessionCommitTiming?: SessionCommitTimingRecorder
@@ -161,7 +199,7 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.setHeader('Access-Control-Allow-Origin', origin)
       response.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, OPTIONS')
       response.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type, Idempotency-Key, X-GPTMD-Tenant-ID')
-      response.setHeader('Access-Control-Expose-Headers', 'Server-Timing, X-Request-ID, X-GPTMD-Turn-ID')
+      response.setHeader('Access-Control-Expose-Headers', 'Server-Timing, X-Request-ID, X-GPTMD-Turn-ID, Content-Disposition')
       response.setHeader('Vary', 'Origin')
     }
     next()
@@ -212,16 +250,29 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       }
       const allowed = await applyRequestRateLimit(
         rateLimitStore,
-        hashRateLimitKey(
-          'identity',
-          `${request.header('x-gptmd-tenant-id') ?? identity.tenantId ?? ''}\u0000${identity.subjectId}`
-        ),
+        hashRateLimitKey('identity', request.path.startsWith('/system-admin')
+          ? `system-admin\u0000${identity.subjectId}`
+          : `${request.header('x-gptmd-tenant-id') ?? identity.tenantId ?? ''}\u0000${identity.subjectId}`),
         requestRateLimits.perIdentity,
         requestRateLimits,
         response
       )
       if (!allowed) return
+      if (request.path.startsWith('/system-admin')) {
+        if (!dependencies.systemAdminSubjectIds?.has(identity.subjectId)) {
+          response.status(403).json({ error: 'GPTMD system administrator access is required' })
+          return
+        }
+        request.identity = identity
+        next()
+        return
+      }
       if (request.method === 'GET' && request.path === '/account/tenants') {
+        request.identity = identity
+        next()
+        return
+      }
+      if (request.method === 'GET' && request.path === '/store/consumer-tokens') {
         request.identity = identity
         next()
         return
@@ -280,9 +331,268 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       return
     }
     try {
+      if (identity.email) {
+        await dependencies.organizationAiTimeBudgetStore?.claimPendingMemberRosterInvitations?.(
+          identity.subjectId, identity.email
+        )
+      }
       response.json({ memberships: await dependencies.sessionStore.getActiveMemberships(identity.subjectId) })
     } catch {
       response.status(503).json({ error: 'Account service is unavailable' })
+    }
+  })
+
+  app.get('/api/system-admin/overview', async (request, response) => {
+    const identity = request.identity
+    if (!identity) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    const [redisResult, postgresResult] = await Promise.allSettled([
+      dependencies.redis ? (async () => {
+        if (!dependencies.redis?.isOpen) await dependencies.redis?.connect()
+        await dependencies.redis?.ping()
+      })() : Promise.reject(new Error('Redis is not configured')),
+      dependencies.postgres?.query() ?? Promise.reject(new Error('PostgreSQL is not configured'))
+    ])
+    const operations = dependencies.systemOperations
+      ? await dependencies.systemOperations.execute({
+        action: 'overview', actor: identity.subjectId, requestId: randomUUID()
+      })
+      : { ok: false as const, error: 'unavailable' as const }
+    const systemdUnits = operations.ok ? operations.units : []
+    response.setHeader('Cache-Control', 'no-store, private')
+    response.json({
+      observedAt: new Date().toISOString(),
+      operatorAvailable: operations.ok,
+      systemdUnits,
+      apiProcess: dependencies.sampleSystemResources?.() ?? null,
+      dependencies: {
+        postgres: postgresResult.status === 'fulfilled' ? 'ready' : 'unavailable',
+        redis: redisResult.status === 'fulfilled' ? 'ready' : 'unavailable',
+        openai: dependencies.openaiConfigured ? 'configured' : 'missing',
+        authentication: isJwtConfigurationReady(dependencies.jwt) ? 'configured' : 'missing'
+      }
+    })
+  })
+
+  app.get('/api/system-admin/logs', async (request, response) => {
+    const identity = request.identity
+    const service = request.query.service
+    const limit = Number(request.query.limit ?? 100)
+    if (!identity) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!SYSTEM_SERVICES.includes(service as SystemService) || !Number.isInteger(limit) || limit < 1 || limit > 200) {
+      response.status(400).json({ error: 'A supported service and bounded log limit are required' })
+      return
+    }
+    const result = await dependencies.systemOperations?.execute({
+      action: 'logs', actor: identity.subjectId, requestId: randomUUID(),
+      service: service as SystemService, limit
+    })
+    if (!result?.ok) {
+      response.status(503).json({ error: 'System logs are unavailable' })
+      return
+    }
+    response.setHeader('Cache-Control', 'no-store, private')
+    response.json({ service, logs: result.logs ?? [] })
+  })
+
+  app.post('/api/system-admin/restart', async (request, response) => {
+    const identity = request.identity
+    const service = request.body?.service
+    if (!identity) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!SYSTEM_SERVICES.includes(service as SystemService) || request.body?.confirmation !== service) {
+      response.status(400).json({ error: 'Select a supported GPTMD service and confirm its name' })
+      return
+    }
+    const result = await dependencies.systemOperations?.execute({
+      action: 'restart', actor: identity.subjectId, requestId: randomUUID(), service: service as SystemService
+    })
+    if (!result?.ok) {
+      response.status(result?.error === 'rate_limited' ? 429 : 503)
+        .json({ error: 'The GPTMD service could not be restarted', code: result?.error ?? 'unavailable' })
+      return
+    }
+    response.setHeader('Cache-Control', 'no-store, private')
+    response.json({ status: 'restarted', service, units: result.units })
+  })
+
+  app.post('/api/system-admin/rotate-logs', async (request, response) => {
+    const identity = request.identity
+    if (!identity) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (request.body?.confirmation !== 'ROTATE GPTMD LOGS') {
+      response.status(400).json({ error: 'Explicit log rotation confirmation is required' })
+      return
+    }
+    const result = await dependencies.systemOperations?.execute({
+      action: 'rotate-logs', actor: identity.subjectId, requestId: randomUUID()
+    })
+    if (!result?.ok) {
+      response.status(result?.error === 'rate_limited' ? 429 : 503)
+        .json({ error: 'GPTMD log rotation is unavailable', code: result?.error ?? 'unavailable' })
+      return
+    }
+    response.setHeader('Cache-Control', 'no-store, private')
+    response.json({ status: 'rotated', completedAt: result.completedAt })
+  })
+
+  app.get('/api/system-admin/consumer-catalog', async (request, response) => {
+    const identity = request.identity
+    const store = dependencies.consumerTokenCatalogStore
+    if (!identity) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Consumer catalog administration is unavailable' })
+      return
+    }
+    try {
+      const catalog = await store.get()
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ catalog, storefront: projectConsumerStoreCatalog(catalog) })
+    } catch {
+      response.status(503).json({ error: 'Consumer catalog could not be loaded' })
+    }
+  })
+
+  app.get('/api/store/consumer-tokens', async (request, response) => {
+    const identity = request.identity
+    const store = dependencies.consumerTokenCatalogStore
+    if (!identity) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Token plans are unavailable' })
+      return
+    }
+    try {
+      const storefront = projectConsumerStoreCatalog(await store.get())
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ storefront })
+    } catch {
+      response.status(503).json({ error: 'Token plans could not be loaded' })
+    }
+  })
+
+  app.put('/api/system-admin/consumer-catalog', async (request, response) => {
+    const identity = request.identity
+    const store = dependencies.consumerTokenCatalogStore
+    if (!identity) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Consumer catalog administration is unavailable' })
+      return
+    }
+    const catalog = parseConsumerTokenCatalog(request.body)
+    if (!catalog) {
+      response.status(400).json({ error: 'Provide a base token amount, currency, fixed monthly tiers, and valid unique add-on products' })
+      return
+    }
+    try {
+      const saved = await store.save(identity.subjectId, catalog)
+      if (saved === 'conflict') {
+        response.status(409).json({ error: 'The consumer catalog changed in another session. Reload before saving.' })
+        return
+      }
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ catalog: saved, storefront: projectConsumerStoreCatalog(saved) })
+    } catch {
+      response.status(503).json({ error: 'Consumer catalog could not be saved' })
+    }
+  })
+
+  app.get('/api/account/archives', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionArchiveStore
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for encounter archives' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Transcript archives are unavailable' })
+      return
+    }
+    try {
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ archives: await store.listOwnedArchives(principal) })
+    } catch {
+      response.status(503).json({ error: 'Transcript archives could not be loaded' })
+    }
+  })
+
+  app.get('/api/account/usage', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for personal usage' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Personal usage reporting is unavailable' })
+      return
+    }
+    try {
+      const now = new Date()
+      const startAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1))
+      const endAt = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+      const usage = await store.getSubjectUsageSummary(principal.tenantId, principal.subjectId, startAt, endAt)
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ periodStart: startAt.toISOString(), periodEnd: endAt.toISOString(), usage })
+    } catch {
+      response.status(503).json({ error: 'Personal usage could not be loaded' })
+    }
+  })
+
+  app.get('/api/account/usage-ledger', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for personal usage history' })
+      return
+    }
+    if (!store?.getSubjectUsageLedger) {
+      response.status(503).json({ error: 'Personal usage history is unavailable' })
+      return
+    }
+    try {
+      const entries = await store.getSubjectUsageLedger(principal.tenantId, principal.subjectId, 100)
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ entries })
+    } catch {
+      response.status(503).json({ error: 'Personal usage history could not be loaded' })
+    }
+  })
+
+  app.get('/api/account/token-buckets', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.tokenEntitlementStore
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for token balance details' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Token balance reporting is unavailable' })
+      return
+    }
+    try {
+      const buckets = await store.getSubjectBuckets(principal.tenantId, principal.subjectId)
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ buckets })
+    } catch {
+      response.status(503).json({ error: 'Token balances could not be loaded' })
     }
   })
 
@@ -345,14 +655,18 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     try {
       const settings = await store.getSettings(principal.tenantId)
       let usage = null
+      let reservationSummary = null
       if (settings) {
         const period = getOrganizationAiTimePeriodBounds(
           settings.organizationPeriod.anchorDate,
           settings.organizationPeriod.months
         )
-        usage = await store.getUsageSummary(principal.tenantId, period.startAt, period.endAt)
+        ;[usage, reservationSummary] = await Promise.all([
+          store.getUsageSummary(principal.tenantId, period.startAt, period.endAt),
+          store.getReservationSummary(principal.tenantId, period.startAt, period.endAt)
+        ])
       }
-      response.json({ settings, usage })
+      response.json({ settings, usage, reservationSummary })
     } catch {
       response.status(503).json({ error: 'AI-time budget settings could not be loaded' })
     }
@@ -380,14 +694,23 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       else if (settings === 'assignments_exist') {
         response.status(409).json({ error: 'Move member assignments before deleting an assigned group or department' })
       }
+      else if (settings === 'allocation_below_usage') {
+        response.status(409).json({ error: 'A group allocation cannot be reduced below settled and reserved tokens in this period' })
+      }
+      else if (settings === 'period_locked') {
+        response.status(409).json({ error: 'The organization renewal period cannot change while included tokens remain valid' })
+      }
       else if (!settings) response.status(404).json({ error: 'Workspace not found' })
       else {
         const period = getOrganizationAiTimePeriodBounds(
           settings.organizationPeriod.anchorDate,
           settings.organizationPeriod.months
         )
-        const usage = await store.getUsageSummary(principal.tenantId, period.startAt, period.endAt)
-        response.json({ settings, usage })
+        const [usage, reservationSummary] = await Promise.all([
+          store.getUsageSummary(principal.tenantId, period.startAt, period.endAt),
+          store.getReservationSummary(principal.tenantId, period.startAt, period.endAt)
+        ])
+        response.json({ settings, usage, reservationSummary })
       }
     } catch {
       response.status(503).json({ error: 'AI-time budget settings could not be saved' })
@@ -418,6 +741,80 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
   })
 
+  app.get('/api/admin/ai-time-budget/member-usage', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Member usage reporting is unavailable' })
+      return
+    }
+    const now = new Date()
+    let settings: OrganizationAiTimeBudgetSettings | null
+    try {
+      settings = await store.getSettings(principal.tenantId)
+    } catch {
+      response.status(503).json({ error: 'Member usage reporting is unavailable' })
+      return
+    }
+    const period = settings
+      ? getOrganizationAiTimePeriodBounds(settings.organizationPeriod.anchorDate, settings.organizationPeriod.months, now)
+      : {
+          startAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+          endAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+        }
+    try {
+      const members = await store.getMemberUsageSummary(principal.tenantId, period.startAt, period.endAt)
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({ periodStart: period.startAt.toISOString(), periodEnd: period.endAt.toISOString(), members })
+    } catch {
+      response.status(503).json({ error: 'Member usage report could not be loaded' })
+    }
+  })
+
+  app.get('/api/admin/ai-time-budget/completed-sessions', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Completion records are unavailable' })
+      return
+    }
+    const now = new Date()
+    let settings: OrganizationAiTimeBudgetSettings | null
+    try {
+      settings = await store.getSettings(principal.tenantId)
+    } catch {
+      response.status(503).json({ error: 'Completion records are unavailable' })
+      return
+    }
+    const period = settings
+      ? getOrganizationAiTimePeriodBounds(settings.organizationPeriod.anchorDate, settings.organizationPeriod.months, now)
+      : {
+          startAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1)),
+          endAt: new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() + 1, 1))
+        }
+    try {
+      const result = await store.getCompletedSessionRecords(principal.tenantId, period.startAt, period.endAt)
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.json({
+        periodStart: period.startAt.toISOString(),
+        periodEnd: period.endAt.toISOString(),
+        records: result.records,
+        hasMore: result.hasMore,
+        certificateBasis: 'completed_simulation_no_ceu_credit'
+      })
+    } catch {
+      response.status(503).json({ error: 'Completion records could not be loaded' })
+    }
+  })
+
   app.put('/api/admin/ai-time-budget/assignments', async (request, response) => {
     const principal = request.principal
     const store = dependencies.organizationAiTimeBudgetStore
@@ -444,7 +841,17 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         response.status(400).json({ error: 'Assignments must reference groups and departments in this workspace' })
       } else if (!assignment) {
         response.status(404).json({ error: 'Active workspace member not found' })
-      } else response.json({ assignment })
+      } else {
+        const settings = await store.getSettings(principal.tenantId)
+        const department = settings?.departments.find((item) => item.code === assignment.departmentCode)
+        const departmentAllocation = department
+          ? getProratedMonthlyDepartmentTokens(
+            department.monthlyTokensPerUser,
+            assignment.departmentAssignedAt ? new Date(assignment.departmentAssignedAt) : new Date()
+          )
+          : null
+        response.json({ assignment, departmentAllocation })
+      }
     } catch {
       response.status(503).json({ error: 'AI-time member assignment could not be saved' })
     }
@@ -483,6 +890,42 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.json({ imported: saved.length, failures })
     } catch {
       response.status(503).json({ error: 'Spreadsheet assignments could not be imported' })
+    }
+  })
+
+  app.post('/api/admin/member-roster/invitations/import', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.organizationAiTimeBudgetStore
+    if (!principal || principal.role !== 'customer_admin') {
+      response.status(403).json({ error: 'Customer administrator role is required' })
+      return
+    }
+    if (!store?.importMemberRosterInvitations) {
+      response.status(503).json({ error: 'Member roster invitations are unavailable' })
+      return
+    }
+    const parsed = OrganizationAiMemberRosterInvitationImportSchema.safeParse(request.body?.invitations)
+    if (!parsed.success) {
+      response.status(400).json({ error: 'Provide 1 to 500 valid email roster rows' })
+      return
+    }
+    if (new Set(parsed.data.map(({ email }) => email)).size !== parsed.data.length) {
+      response.status(400).json({ error: 'Email roster rows must not repeat an address' })
+      return
+    }
+    try {
+      const result = await store.importMemberRosterInvitations(
+        principal.tenantId, principal.subjectId, parsed.data
+      )
+      if (result === 'conflict') {
+        response.status(409).json({ error: 'Save organization groups and departments before importing learner invitations' })
+      } else if (result === 'invalid') {
+        response.status(400).json({ error: 'Invitation assignments must reference groups and departments in this workspace' })
+      } else {
+        response.json(result)
+      }
+    } catch {
+      response.status(503).json({ error: 'Email roster could not be imported' })
     }
   })
 
@@ -627,54 +1070,9 @@ export function createApiApp(dependencies: ApiDependencies): Express {
   })
 
   app.post('/api/openai/responses', async (request, response) => {
-    if (!validInput(request.body?.input)) {
-      response.status(400).json({ error: 'input must be a non-empty string of at most 12000 characters' })
-      return
-    }
-
-    if (!dependencies.generateResponse) {
-      response.status(503).json({ error: 'OpenAI is not configured' })
-      return
-    }
-
-    const principal = request.principal
-    if (!principal || !dependencies.sessionStore) {
-      response.status(401).json({ error: 'Valid bearer authentication is required' })
-      return
-    }
-
-    try {
-      let usageResult: StoreResult = 'allowed'
-      const result = await providerCapacity.run('interactive', async () => {
-        try {
-          usageResult = await dependencies.sessionStore!.consumeQuota(principal, 'responses')
-        } catch {
-          throw new Error('usage_authorization_failed')
-        }
-        if (usageResult !== 'allowed') return null
-        return dependencies.generateResponse!(
-          request.body.input,
-          (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs)
-        )
-      },
-        (waitMs) => appendServerTiming(response, 'interactive_capacity_wait', waitMs))
-      if (usageResult !== 'allowed') {
-        quotaResponse(usageResult, response)
-        return
-      }
-      if (!result) return
-      response.json({ id: result.id, outputText: result.outputText })
-    } catch (error) {
-      if (isProviderCapacityError(error)) {
-        providerCapacityResponse(response, 'Interactive response capacity is unavailable; retry the request.')
-        return
-      }
-      if (error instanceof Error && error.message === 'usage_authorization_failed') {
-        response.status(503).json({ error: 'Usage authorization is unavailable' })
-        return
-      }
-      response.status(502).json({ error: 'OpenAI request failed' })
-    }
+    response.status(410).json({
+      error: 'Generic Responses are retired; use a session-scoped setup or patient-turn endpoint'
+    })
   })
 
   app.post('/api/sessions', async (request, response) => {
@@ -740,6 +1138,33 @@ export function createApiApp(dependencies: ApiDependencies): Express {
     }
   })
 
+  app.post('/api/sessions/:sessionId/addon-spend-notice/acknowledge', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (principal.role !== 'learner') {
+      response.status(403).json({ error: 'Only the session learner can acknowledge this notice' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    try {
+      if (!await store.acknowledgeAddonSpendNotice(principal, sessionId)) {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      response.status(204).end()
+    } catch {
+      response.status(503).json({ error: 'Add-on notice could not be acknowledged' })
+    }
+  })
+
   app.post('/api/sessions/:sessionId/setup', async (request, response) => {
     const principal = request.principal
     const store = dependencies.sessionStore
@@ -757,8 +1182,8 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.status(400).json({ error: 'A printable Idempotency-Key of 8 to 200 characters is required' })
       return
     }
-    if (!dependencies.generatePatientScenario) {
-      response.status(503).json({ error: 'Patient scenario generation is not configured' })
+    if (!dependencies.generatePatientScenario || !dependencies.reserveProviderTokens) {
+      response.status(503).json({ error: 'Patient scenario generation or token reservation is not configured' })
       return
     }
 
@@ -776,7 +1201,17 @@ export function createApiApp(dependencies: ApiDependencies): Express {
               asOf,
               scenarioSeed,
               (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs),
-              recordProviderUsage
+              recordProviderUsage,
+              dependencies.reserveProviderTokens
+                ? (inputTokens, outputTokenCap) => dependencies.reserveProviderTokens!({
+                    tenantId: principal.tenantId,
+                    subjectId: principal.subjectId,
+                    sessionId,
+                    operation: 'scenario_setup',
+                    inputTokens,
+                    outputTokenCap
+                  })
+                : undefined
             )
             if (settings?.status !== 'approved') return generated
             return {
@@ -801,6 +1236,10 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       }
       response.json(PatientScenarioSetupResponseSchema.parse(result))
     } catch (error) {
+      if (error instanceof ProviderTokenBudgetExceeded) {
+        response.status(429).json({ error: 'Selected AI token allowance is exhausted' })
+        return
+      }
       if (isProviderCapacityError(error)) {
         providerCapacityResponse(response, 'Patient setup provider capacity is unavailable; retry with the same Idempotency-Key.')
         return
@@ -850,8 +1289,8 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.status(400).json({ error: 'modality must be typed or realtime_transcription' })
       return
     }
-    if (!dependencies.generatePatientTurn) {
-      response.status(503).json({ error: 'Patient turn generation is not configured' })
+    if (!dependencies.generatePatientTurn || !dependencies.reserveProviderTokens) {
+      response.status(503).json({ error: 'Patient turn generation or token reservation is not configured' })
       return
     }
 
@@ -864,7 +1303,17 @@ export function createApiApp(dependencies: ApiDependencies): Express {
           learnerMessage.trim(),
           (context) => dependencies.generatePatientTurn!(
             context,
-            (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs)
+            (stage, elapsedMs) => appendResponseTiming(response, stage, elapsedMs),
+            dependencies.reserveProviderTokens
+              ? (inputTokens, outputTokenCap) => dependencies.reserveProviderTokens!({
+                  tenantId: principal.tenantId,
+                  subjectId: principal.subjectId,
+                  sessionId,
+                  operation: 'patient_turn',
+                  inputTokens,
+                  outputTokenCap
+                })
+              : undefined
           ),
           parsedModality.data,
           (waitMs) => appendServerTiming(response, 'session_lock_attempt', waitMs),
@@ -872,11 +1321,19 @@ export function createApiApp(dependencies: ApiDependencies): Express {
         ),
         (waitMs) => appendServerTiming(response, 'interactive_capacity_wait', waitMs))
       if (typeof result === 'object') {
-        response.json({ turnId: result.turnId, text: result.patientResponse })
+        response.json({
+          turnId: result.turnId,
+          text: result.patientResponse,
+          addonSpendNotice: result.addonSpendNotice
+        })
         return
       }
       turnResultResponse(result, response)
     } catch (error) {
+      if (error instanceof ProviderTokenBudgetExceeded) {
+        response.status(429).json({ error: 'Selected AI token allowance is exhausted' })
+        return
+      }
       if (isProviderCapacityError(error)) {
         providerCapacityResponse(response, 'Interactive response capacity is unavailable; retry with the same turnId.')
         return
@@ -955,6 +1412,35 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       }
     } catch {
       response.status(503).json({ error: 'Local transcript utterance could not be saved' })
+    }
+  })
+
+  app.post('/api/sessions/:sessionId/engagement-pulses', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionStore
+    const sessionId = request.params.sessionId ?? ''
+    const pulseId = request.body?.pulseId
+    if (!principal || !store) {
+      response.status(401).json({ error: 'Valid bearer authentication is required' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+    if (typeof pulseId !== 'string' || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(pulseId)) {
+      response.status(400).json({ error: 'A valid pulse ID is required' })
+      return
+    }
+    try {
+      const result = await store.recordEngagementPulse(principal, sessionId, pulseId)
+      if (result === 'not_found') {
+        response.status(404).json({ error: 'Active session not found' })
+        return
+      }
+      response.status(204).end()
+    } catch {
+      response.status(503).json({ error: 'Session engagement could not be recorded' })
     }
   })
 
@@ -1125,6 +1611,78 @@ export function createApiApp(dependencies: ApiDependencies): Express {
       response.json(session)
     } catch {
       response.status(503).json({ error: 'Session service is unavailable' })
+    }
+  })
+
+  app.get('/api/sessions/:sessionId/archive/download', async (request, response) => {
+    const principal = request.principal
+    const store = dependencies.sessionArchiveStore
+    const sessionId = request.params.sessionId ?? ''
+    if (!principal || principal.role !== 'learner') {
+      response.status(403).json({ error: 'Learner role is required for encounter archives' })
+      return
+    }
+    if (!store) {
+      response.status(503).json({ error: 'Transcript archives are unavailable' })
+      return
+    }
+    if (!/^[A-Za-z0-9_-]{43}$/.test(sessionId)) {
+      response.status(404).json({ error: 'Session not found' })
+      return
+    }
+
+    const downloadId = randomUUID()
+    try {
+      const archive = await store.resolveDownload(principal, sessionId, downloadId, new Date())
+      if (archive.status === 'not_found') {
+        response.status(404).json({ error: 'Session not found' })
+        return
+      }
+      if (archive.status === 'pending') {
+        response.status(409).json({ error: 'Transcript archive is not ready' })
+        return
+      }
+      if (archive.status === 'expired') {
+        response.status(410).json({ error: 'Transcript archive has expired' })
+        return
+      }
+      if (archive.status === 'failed') {
+        response.status(503).json({ error: 'Transcript archive could not be created' })
+        return
+      }
+
+      response.setHeader('Cache-Control', 'no-store, private')
+      response.setHeader('X-Content-Type-Options', 'nosniff')
+      response.setHeader('Content-Type', archive.contentType)
+      response.setHeader('Content-Disposition', `attachment; filename="${archive.filename}"`)
+      const delivery = await new Promise<'completed' | 'failed'>((resolve) => {
+        let settled = false
+        const finish = (result: 'completed' | 'failed') => {
+          if (settled) return
+          settled = true
+          resolve(result)
+        }
+        response.once('finish', () => finish('completed'))
+        response.once('close', () => finish(response.writableFinished ? 'completed' : 'failed'))
+        response.once('error', () => finish('failed'))
+        response.status(200).send(archive.content)
+      })
+      try {
+        await store.recordDownloadOutcome({
+          sessionId,
+          tenantId: principal.tenantId,
+          subjectId: principal.subjectId,
+          artifactId: archive.artifactId,
+          downloadId: archive.downloadId,
+          result: delivery,
+          occurredAt: new Date(),
+          bytesDownloaded: delivery === 'completed' ? archive.content.byteLength : null
+        })
+      } catch {
+        process.stderr.write('Transcript download outcome could not be recorded.\n')
+      }
+    } catch {
+      if (!response.headersSent) response.status(503).json({ error: 'Transcript archive could not be downloaded' })
     }
   })
 

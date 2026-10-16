@@ -584,6 +584,52 @@ Account selector; it must begin blank and require an explicit workspace choice.
 To revoke only admin access, set that tenant membership to `status='revoked'`
 without deleting its row or changing the learner tenant/session.
 
+For organization AI-budget integration testing, when onlineadmin must exercise
+the customer-admin controls against the selected scsstx learner, run
+`npm run provision:ai-budget-test-learner`. It adds scsstx as the sole learner
+in the existing `gptmd-entitlement-test-onlineadmin` workspace and preserves
+the original `gptmd-learner-test-scsstx` membership. The provisioner requires
+exactly one Auth identity for each test email, `gptmd_live` / `gptmd_live_app`,
+migrations 024, 025, 027, and 029-031, an active onlineadmin admin membership,
+the exact all-off admin-tenant feature policy and quotas, and scsstx's existing
+bounded text-only learner policy. It changes only the learner membership; it
+does not create or activate AI-budget settings or change the shared tenant
+feature flags. After provisioning, verify both roles and the all-off policy in
+the database, then use Chrome Profile 1 for scsstx and Chrome Default for
+onlineadmin to inspect each Account workspace. Do not use TinyFish for these
+test-account browser checks. The scsstx account will have another workspace
+and must explicitly select it. Before any learner visit, onlineadmin must
+configure and activate the agreed token budgets and enable only the intended
+coarse text entitlements; do not invent token allocations or enable voice.
+
+Token bucket schema, lock-safe reservation accounting, and persistent add-on
+notice state use migrations `035_token_entitlement_buckets.sql`,
+`036_provider_reservation_session_lock.sql`, and `037_addon_spend_notice.sql`.
+Apply all three before deploying code
+whose API readiness requires the grant/debit/hold tables and lock-safe session
+reservation contract. Migration 036 removes the session foreign key that would
+deadlock a provider reservation while setup owns the session lock; the API
+validates the session owner and state before reserving. The migrations define
+append-only grants and usage entries; migration 037 separately records
+confirmed add-on spending and learner acknowledgment. These migrations do not
+issue credits or confirm
+payment. Never insert live consumer grants, corporate add-on grants, or debit
+entries by hand. Reservation holds and atomic actual-usage debits are implemented
+and must pass the disposable verifier and `npm run check`; the verifier must
+exercise both included-first/add-on settlement and the notice acknowledgment
+through authenticated routes. `npm run verify:phase2` creates a disposable
+PostgreSQL database and selects an empty non-default Redis database. If the
+shared Redis instance has no empty non-default database, do not flush or reuse
+its populated databases; run the verifier with
+`GPTMD_PHASE2_REDIS_URL=redis://127.0.0.1:<port>/0` against a disposable
+loopback-only Redis instance, then stop and remove that instance. This does not
+issue grants. Do not deploy checkout or issue live balances until a verified
+payment/renewal issuer has passed those checks. Private included grants expire at
+their plan renewal; corporate included grants expire no later than 45 days
+after renewal; add-on grants expire within 365 days. The learner Account is
+read-only and may show only grants for the authenticated subject and selected
+workspace. Empty balances are expected until a trusted issuer exists.
+
 ## Make git:update wait for NVM and pause on the editable commit message
 
 **Added:** 2026-10-14

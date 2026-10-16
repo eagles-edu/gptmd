@@ -1,6 +1,9 @@
 import { expect, test } from '@playwright/test'
 import { Buffer } from 'node:buffer'
+import * as XLSX from 'xlsx'
 import { TEST_LEARNER_CHART_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
+
+const appOrigin = `https://localhost:${process.env.GPTMD_E2E_HTTPS_PORT ?? '3001'}`
 
 function makeAuthCookie(subjectId = 'a18f0de1-7b60-49b6-8eaf-19ac1e6b1c0d', email = 'learner@example.test'): string {
   const encode = (value: object): string => Buffer.from(JSON.stringify(value)).toString('base64url')
@@ -74,6 +77,121 @@ test('account requires sign-in when Supabase is configured', async ({ page }) =>
   await expect(page.getByRole('heading', { name: 'Sign in to continue' })).toBeVisible()
 })
 
+test('learner can download an available transcript archive from Account', async ({ page }) => {
+  const sessionId = 't'.repeat(43)
+  let downloadHeaders: Record<string, string> = {}
+  await page.route('**/auth/v1/user', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      id: 'a18f0de1-7b60-49b6-8eaf-19ac1e6b1c0d', aud: 'authenticated', role: 'authenticated',
+      email: 'learner@example.test', app_metadata: { provider: 'google', providers: ['google'] },
+      user_metadata: { full_name: 'Test Learner' }, created_at: '2026-01-01T00:00:00.000Z'
+    })
+  }))
+  await page.route('**/api/account/tenants', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ memberships: [{
+      tenantId: 'tenant-one', role: 'learner', sessionsEnabled: true, responsesEnabled: true,
+      audioTranscriptionAvailable: false
+    }] })
+  }))
+  await page.route('**/api/account/archives', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ archives: [{
+      archiveId: sessionId, sessionId, updatedAt: '2026-10-15T10:00:00.000Z',
+      status: 'available', artifactId: 'artifact-1', downloadExpiresAt: '2027-10-15T10:00:00.000Z',
+      errorCode: null
+    }] })
+  }))
+  await page.route('**/api/account/usage', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      periodStart: '2026-10-01T00:00:00.000Z', periodEnd: '2026-11-01T00:00:00.000Z',
+      usage: { totalTokens: '12345', responseCount: 8 }
+    })
+  }))
+  await page.route('**/api/account/usage-ledger', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ entries: [{
+      occurredAt: '2026-10-08T12:00:00.000Z', sessionId: 'session-usage-1',
+      provider: 'openai', operation: 'patient_turn', inputTokens: 100,
+      outputTokens: 20, totalTokens: '120'
+    }] })
+  }))
+  await page.route('**/api/account/token-buckets', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ buckets: [{
+      accountScope: 'consumer', bucketKind: 'included', groupCode: null,
+      grantedTokens: '10000', usedTokens: '2500', reservedTokens: '500',
+      remainingTokens: '7000', renewalAt: '2026-11-01T00:00:00.000Z',
+      expiresAt: '2026-11-01T00:00:00.000Z', daysRemaining: 16
+    }, {
+      accountScope: 'consumer', bucketKind: 'addon', groupCode: null,
+      grantedTokens: '5000', usedTokens: '0', reservedTokens: '0',
+      remainingTokens: '5000', renewalAt: null,
+      expiresAt: '2027-10-10T12:00:00.000Z', daysRemaining: 359
+    }] })
+  }))
+  await page.route('**/api/store/consumer-tokens', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ storefront: {
+      revision: 3, currency: 'USD', checkoutEnabled: false,
+      products: [
+        { code: 'lunar', kind: 'monthly_tier', tokens: 25_000, priceMinor: 900, currency: 'USD' },
+        { code: 'solar', kind: 'monthly_tier', tokens: 50_000, priceMinor: 1700, currency: 'USD' },
+        { code: 'extra-small', name: 'Extra Small', description: 'Expires 365 days after purchase', kind: 'token_addon', tokens: 10_000, priceMinor: 300, currency: 'USD' }
+      ]
+    } })
+  }))
+  await page.route(`**/api/sessions/${sessionId}/archive/download`, async (route) => {
+    downloadHeaders = route.request().headers()
+    await route.fulfill({
+      status: 200,
+      contentType: 'text/plain; charset=utf-8',
+      headers: { 'content-disposition': 'attachment; filename="gptmd-transcript-test.txt"' },
+      body: 'GPTMD simulated encounter transcript\nLearner: hello\nPatient: hello\n'
+    })
+  })
+  await page.context().addCookies([{
+    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: appOrigin, sameSite: 'Lax'
+  }])
+
+  const identityResolved = page.waitForResponse((response) => response.url().includes('/auth/v1/user'))
+  const membershipsResolved = page.waitForResponse((response) => response.url().includes('/api/account/tenants'))
+  await page.goto('/')
+  await Promise.all([identityResolved, membershipsResolved])
+  const navigation = page.getByRole('navigation', { name: 'Main navigation' })
+  await expect(navigation.getByRole('link', { name: 'Begin Visit' })).toBeVisible()
+  await navigation.getByRole('link', { name: 'Account' }).click()
+  await expect(page.getByRole('heading', { name: 'Downloads' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Usage ledger' })).toBeVisible()
+  await expect(page.getByRole('row', { name: /session-.*Patient response.*openai.*120/ })).toBeVisible()
+  await expect(page.getByText('12,345 provider tokens this UTC month')).toBeVisible()
+  await expect(page.getByText('8 recorded provider responses')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Token balances' })).toBeVisible()
+  await expect(page.getByText('Monthly included allowance', { exact: true })).toBeVisible()
+  await expect(page.getByText('Personal add-on tokens', { exact: true })).toBeVisible()
+  await expect(page.getByText('7,000 remaining')).toBeVisible()
+  await expect(page.getByText('359 days left.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Plans and add-ons' })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Lunar.*25,000.*Checkout unavailable/ })).toBeVisible()
+  await expect(page.getByRole('row', { name: /Extra Small.*10,000.*Checkout unavailable/ })).toBeVisible()
+  await expect(page.getByText('Viewing an offer does not grant token credit.')).toBeVisible()
+  await expect(page.getByText(`Encounter ${sessionId.slice(0, 8)}`)).toBeVisible()
+  await expect(page.getByText('Ready to download')).toBeVisible()
+
+  const download = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download transcript' }).click()
+  expect((await download).suggestedFilename()).toBe(`gptmd-transcript-${sessionId.slice(0, 8)}.txt`)
+  await expect(page.getByRole('status').filter({ hasText: 'Transcript download started.' })).toBeVisible()
+  expect(downloadHeaders.authorization).toMatch(/^Bearer /)
+  expect(downloadHeaders['x-gptmd-tenant-id']).toBe('tenant-one')
+})
+
 test('login navigates to Supabase to start Google OAuth', async ({ page }) => {
   let authorizationUrl = ''
   await page.route('**/auth/v1/authorize**', async (route) => {
@@ -97,7 +215,7 @@ test('login navigates to Supabase to start Google OAuth', async ({ page }) => {
   await expect(page).toHaveTitle('Supabase OAuth endpoint reached')
   expect(authorizationUrl).toContain('/auth/v1/authorize?')
   expect(new URL(authorizationUrl).searchParams.get('provider')).toBe('google')
-  expect(new URL(authorizationUrl).searchParams.get('redirect_to')).toBe('https://localhost:3001/confirm')
+  expect(new URL(authorizationUrl).searchParams.get('redirect_to')).toBe(`${appOrigin}/confirm`)
 })
 
 test('signed-in account workspace context carries through the home into Begin Visit', async ({ page }) => {
@@ -131,6 +249,33 @@ test('signed-in account workspace context carries through the home into Begin Vi
       { tenantId: 'tenant-four', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: false }
     ] })
   }))
+  await page.route('**/api/account/archives', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ archives: [] })
+  }))
+  await page.route('**/api/account/usage', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      periodStart: '2026-10-01T00:00:00.000Z', periodEnd: '2026-11-01T00:00:00.000Z',
+      usage: { totalTokens: '0', responseCount: 0 }
+    })
+  }))
+  await page.route('**/api/account/usage-ledger', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ entries: [{
+      occurredAt: '2026-10-08T12:00:00.000Z', sessionId: 'session-one',
+      provider: 'openai', operation: 'patient_turn', inputTokens: 100,
+      outputTokens: 20, totalTokens: '120'
+    }] })
+  }))
+  await page.route('**/api/account/token-buckets', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json', body: JSON.stringify({ buckets: [] })
+  }))
+  await page.route('**/api/store/consumer-tokens', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ storefront: { revision: 0, currency: null, products: [], checkoutEnabled: false } })
+  }))
   await page.route('**/api/admin/entitlements', async (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
@@ -146,11 +291,22 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await page.route('**/api/admin/ai-time-budget', async (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ settings: null, usage: null })
+    body: JSON.stringify({ settings: null, usage: null, reservationSummary: null })
   }))
   await page.route('**/api/admin/ai-time-budget/assignments', async (route) => route.fulfill({
     status: 200, contentType: 'application/json',
     body: JSON.stringify({ members: [], groups: [], departments: [] })
+  }))
+  await page.route('**/api/admin/ai-time-budget/member-usage', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({ periodStart: '2026-10-01T00:00:00.000Z', periodEnd: '2026-11-01T00:00:00.000Z', members: [] })
+  }))
+  await page.route('**/api/admin/ai-time-budget/completed-sessions', async (route) => route.fulfill({
+    status: 200, contentType: 'application/json',
+    body: JSON.stringify({
+      periodStart: '2026-10-01T00:00:00.000Z', periodEnd: '2026-11-01T00:00:00.000Z',
+      records: [], hasMore: false, certificateBasis: 'completed_simulation_no_ceu_credit'
+    })
   }))
   await page.route('**/api/encounters/current', async (route) => route.fulfill({
     status: 200,
@@ -199,7 +355,7 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await page.context().addCookies([{
     name: 'sb-localhost-auth-token',
     value: makeAuthCookie(),
-    url: 'https://localhost:3001',
+    url: appOrigin,
     sameSite: 'Lax'
   }])
 
@@ -316,7 +472,7 @@ test('a single customer-admin workspace is auto-selected without a workspace dro
   await page.context().addCookies([{
     name: 'sb-localhost-auth-token',
     value: makeAuthCookie('single-admin-subject', 'single-admin@example.test'),
-    url: 'https://localhost:3001',
+    url: appOrigin,
     sameSite: 'Lax'
   }])
 
@@ -327,6 +483,42 @@ test('a single customer-admin workspace is auto-selected without a workspace dro
   await expect(page.getByRole('combobox', { name: 'GPTpatient workspace' })).toHaveCount(0)
   await expect(page.getByText('Your role in this workspace: Customer administrator. Visit setup is available to learners only.')).toBeVisible()
   await expect(page.getByRole('heading', { name: 'Entitlements and limits' })).toBeVisible()
+})
+
+test('selected corporate workspace shows its own tenant logo and name in the header', async ({ page }) => {
+  await page.route('**/auth/v1/user', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      id: 'vinmed-admin-subject', aud: 'authenticated', role: 'authenticated',
+      email: 'ayeyamsam@gmail.com', app_metadata: { provider: 'google', providers: ['google'] },
+      user_metadata: { full_name: 'VinMed Admin' }, created_at: '2026-01-01T00:00:00.000Z'
+    })
+  }))
+  await page.route('**/api/account/tenants', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({ memberships: [{
+      tenantId: 'vinmed-hospital-demo', role: 'customer_admin', sessionsEnabled: false,
+      responsesEnabled: false, audioTranscriptionAvailable: false,
+      branding: { displayName: 'VinMed Hospital', logoPath: '/assets/images/vinmed-logo.svg' }
+    }] })
+  }))
+  await page.context().addCookies([{
+    name: 'sb-localhost-auth-token',
+    value: makeAuthCookie('vinmed-admin-subject', 'ayeyamsam@gmail.com'),
+    url: appOrigin,
+    sameSite: 'Lax'
+  }])
+
+  await page.goto('/')
+
+  const brand = page.getByRole('link', { name: 'GPTpatient home' })
+  const logo = brand.getByRole('img', { name: 'VinMed Hospital' })
+  await expect(logo).toHaveAttribute('src', '/assets/images/vinmed-logo.svg')
+  await expect.poll(() => logo.evaluate((image) => (image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  await expect(brand.getByText('VinMed Hospital')).toBeVisible()
+  await expect(brand.getByRole('img', { name: 'GPTpatient' })).toHaveCount(0)
 })
 
 test('customer administrator can change workspace entitlements with bounded controls', async ({ page }) => {
@@ -368,6 +560,13 @@ test('customer administrator can change workspace entitlements with bounded cont
     audioTranscriptionPrivacyApproved: false,
     monthlyAudioTranscriptionSessionQuota: 0
   }
+  let savedAssignment = {
+    subjectId: 'learner-subject',
+    role: 'learner',
+    groupCodes: [] as string[],
+    departmentCode: null as string | null,
+    departmentAssignedAt: null as string | null
+  }
   await page.route('**/api/admin/entitlements', async (route) => {
     if (route.request().method() === 'PUT') {
       currentPolicy = route.request().postDataJSON() as typeof currentPolicy
@@ -384,23 +583,74 @@ test('customer administrator can change workspace entitlements with bounded cont
         contentType: 'application/json',
         body: JSON.stringify({
           settings: { ...settings, revision: Number(settings.revision) + 1 },
-          usage: { totalTokens: '3210', responseCount: 7 }
+          usage: { totalTokens: '3210', responseCount: 7 },
+          reservationSummary: { reservedTokens: '9216', reservedCount: 2, heldTokens: '4096', heldCount: 1 }
         })
       })
     } else {
       await route.fulfill({
         status: 200,
         contentType: 'application/json',
-        body: JSON.stringify({ settings: null, usage: null })
+        body: JSON.stringify({ settings: null, usage: null, reservationSummary: null })
       })
     }
   })
-  await page.route('**/api/admin/ai-time-budget/assignments', async (route) => route.fulfill({
+  await page.route('**/api/admin/ai-time-budget/assignments', async (route) => {
+    if (route.request().method() === 'PUT') {
+      const assignment = route.request().postDataJSON() as typeof savedAssignment
+      savedAssignment = { ...assignment, role: 'learner', departmentAssignedAt: '2026-10-15T00:00:00.000Z' }
+      await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ assignment: savedAssignment }) })
+    } else {
+      await route.fulfill({
+        status: 200,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          members: [savedAssignment],
+          groups: savedAssignment.groupCodes.map((code) => ({ code, name: 'GPT Nursing' })),
+          departments: []
+        })
+      })
+    }
+  })
+  await page.route('**/api/admin/ai-time-budget/member-usage', async (route) => route.fulfill({
     status: 200,
     contentType: 'application/json',
-    body: JSON.stringify({ members: [], groups: [], departments: [] })
+    body: JSON.stringify({
+      periodStart: '2026-10-01T00:00:00.000Z',
+      periodEnd: '2026-11-01T00:00:00.000Z',
+      members: [{
+        subjectId: 'learner-subject', role: 'learner', sessionsStarted: 4, sessionsCompleted: 2,
+        providerResponseCount: 7, totalTokens: '3210', lastAiActivityAt: '2026-10-15T12:00:00.000Z',
+        estimatedEngagementSeconds: 930, lastEngagementAt: '2026-10-15T12:15:00.000Z'
+      }]
+    })
   }))
-  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie('test-admin-subject', 'scsstx@gmail.com'), url: 'https://localhost:3001', sameSite: 'Lax' }])
+  await page.route('**/api/admin/ai-time-budget/completed-sessions', async (route) => route.fulfill({
+    status: 200,
+    contentType: 'application/json',
+    body: JSON.stringify({
+      periodStart: '2026-10-01T00:00:00.000Z',
+      periodEnd: '2026-11-01T00:00:00.000Z',
+      records: [{
+        sessionId: 'completed-session-ref', subjectId: 'learner-subject',
+        startedAt: '2026-10-15T12:00:00.000Z', completedAt: '2026-10-15T12:20:00.000Z',
+        estimatedEngagementSeconds: 930
+      }],
+      hasMore: false,
+      certificateBasis: 'completed_simulation_no_ceu_credit'
+    })
+  }))
+  await page.route('**/api/admin/ai-time-budget/assignments/import', async (route) => {
+    const body = route.request().postDataJSON() as { assignments: typeof savedAssignment[] }
+    savedAssignment = { ...body.assignments[0]!, role: 'learner', departmentAssignedAt: savedAssignment.departmentAssignedAt }
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ imported: 1, failures: [] }) })
+  })
+  let importedInvitation: unknown
+  await page.route('**/api/admin/member-roster/invitations/import', async (route) => {
+    importedInvitation = route.request().postDataJSON()
+    await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ imported: 1, alreadyAccepted: 0 }) })
+  })
+  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie('test-admin-subject', 'scsstx@gmail.com'), url: appOrigin, sameSite: 'Lax' }])
 
   await page.goto('/')
   await expect(page.getByRole('heading', { name: 'scsstx@gmail.com' })).toBeVisible()
@@ -422,19 +672,114 @@ test('customer administrator can change workspace entitlements with bounded cont
   await accountWorkspace.selectOption(learnerTenantId)
   await expect(page.getByRole('status').filter({ hasText: 'Your role in this workspace: Learner' })).toBeVisible()
   await expect(page.getByText('Visit setup is included in this workspace. Remaining quota is checked when you begin.')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Entitlements and limits' })).toHaveCount(0)
+  await expect(page.getByRole('heading', { name: 'AI time pool' })).toHaveCount(0)
   await accountWorkspace.selectOption(controlTenantId)
   await expect(page.getByRole('heading', { name: 'Entitlements and limits' })).toBeVisible()
   await expect(page.getByRole('heading', { name: 'AI time pool' })).toBeVisible()
+  const memberUsage = page.getByRole('group', { name: 'Member usage report' })
+  await expect(page.getByText(/not continuous monitoring or CEU evidence/)).toBeVisible()
+  await expect(memberUsage.getByRole('cell', { name: 'learner-subject' })).toBeVisible()
+  await expect(memberUsage.getByRole('cell', { name: '3,210' })).toBeVisible()
+  await expect(memberUsage.getByRole('cell', { name: '15.5' })).toBeVisible()
+  await expect(memberUsage.getByRole('columnheader', { name: 'Estimated active min' })).toBeVisible()
+  for (const extension of ['csv', 'xlsx', 'ods']) {
+    const usageDownload = page.waitForEvent('download')
+    await memberUsage.getByRole('group', { name: 'Export member usage report' })
+      .getByRole('button', { name: `Download ${extension.toUpperCase()}` }).click()
+    expect((await usageDownload).suggestedFilename()).toBe(`gptmd-member-usage.${extension}`)
+  }
+  const completionRecords = page.getByRole('group', { name: 'Completed-session records' })
+  await expect(completionRecords.getByRole('cell', { name: 'learner-subject' })).toBeVisible()
+  await expect(completionRecords.getByRole('cell', { name: '15.5' })).toBeVisible()
+  const completionPopupPromise = page.waitForEvent('popup')
+  await completionRecords.getByRole('button', { name: 'Print record' }).click()
+  const completionPopup = await completionPopupPromise
+  await expect(completionPopup.getByRole('heading', { name: 'Simulation completion record' })).toBeVisible()
+  await expect(completionPopup.getByText('learner-subject')).toBeVisible()
+  await expect(completionPopup.getByText('15.5 minutes')).toBeVisible()
+  await expect(completionPopup.getByText(/No CEU credit is awarded or represented/)).toBeVisible()
   await expect(page.getByText(/Minute values are estimates/)).toBeVisible()
   await page.getByRole('button', { name: 'Add group' }).click()
   await page.getByLabel('Group code').fill('gptnursing')
   await page.getByLabel('Group name').fill('GPT Nursing')
   await page.getByLabel('Token pool').fill('100000')
   await page.getByRole('spinbutton', { name: 'Estimated minutes', exact: true }).fill('600')
+  await page.getByRole('button', { name: 'Add department' }).click()
+  const departmentRow = page.locator('.department-row')
+  await departmentRow.getByLabel('Department code').fill('obgyn')
+  await departmentRow.getByLabel('Department name').fill('OBGYN')
+  await departmentRow.getByLabel('Monthly tokens per user').fill('10000')
   await page.getByLabel('First period start date').fill('2026-10-01')
   await page.getByRole('button', { name: 'Save draft' }).click()
   await expect(page.getByRole('status').filter({ hasText: 'Draft saved. AI usage remains unenforced.' })).toBeVisible()
   await expect(page.getByRole('status').filter({ hasText: /tokens across 7 responses/ })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /In-flight: 9,216 reserved tokens \(2 calls\)/ })).toBeVisible()
+  await expect(page.getByRole('status').filter({ hasText: /Held for reconciliation: 4,096 tokens \(1 call\)/ })).toBeVisible()
+  page.once('dialog', (dialog) => dialog.accept())
+  await page.getByRole('button', { name: 'Activate limits' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Token enforcement settings saved.' })).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Pause enforcement' })).toBeVisible()
+  await page.getByRole('checkbox', { name: 'GPT Nursing' }).check()
+  await page.getByRole('combobox', { name: 'Department' }).selectOption('obgyn')
+  await expect(page.getByRole('status').filter({ hasText: /Department allowance preview: .* of 10,000 monthly tokens/ })).toBeVisible()
+  await page.getByRole('button', { name: 'Save member assignment' }).click()
+  await expect(page.getByRole('status').filter({ hasText: 'Member assignment saved.' })).toBeVisible()
+  const rosterDownloads = page.getByRole('group', { name: 'Download roster' })
+  for (const [label, extension] of [['Download CSV', 'csv'], ['Download Excel', 'xlsx'], ['Download ODS', 'ods']]) {
+    const rosterDownload = page.waitForEvent('download')
+    await rosterDownloads.getByRole('button', { name: label }).click()
+    expect((await rosterDownload).suggestedFilename()).toBe(`gptmd-member-department-roster.${extension}`)
+  }
+  const rosterInput = page.getByLabel('Import CSV, XLSX, or ODS')
+  await rosterInput.setInputFiles({
+    name: 'roster.csv',
+    mimeType: 'text/csv',
+    buffer: Buffer.from('subjectId,groupCodes,departmentCode\n"learner-subject","gptnursing",obgyn\n')
+  })
+  await expect(page.getByRole('status').filter({ hasText: 'Imported 1 member assignments.' })).toBeVisible()
+  const rosterWorkbook = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(rosterWorkbook, XLSX.utils.aoa_to_sheet([
+    ['subjectId', 'groupCodes', 'departmentCode'], ['learner-subject', 'gptnursing', 'obgyn']
+  ]), 'Roster')
+  for (const extension of ['xlsx', 'ods'] as const) {
+    const buffer = XLSX.write(rosterWorkbook, { bookType: extension, type: 'buffer' })
+    await rosterInput.setInputFiles({
+      name: `roster.${extension}`,
+      mimeType: extension === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.oasis.opendocument.spreadsheet',
+      buffer: Buffer.from(buffer)
+    })
+    await expect(page.getByRole('status').filter({ hasText: 'Imported 1 member assignments.' })).toBeVisible()
+  }
+  const invitationTemplate = page.waitForEvent('download')
+  await page.getByRole('button', { name: 'Download learner roster template' }).click()
+  expect((await invitationTemplate).suggestedFilename()).toBe('gptmd-learner-email-roster.xlsx')
+  const invitationInput = page.getByLabel('Import learners by email')
+  await invitationInput.setInputFiles({
+    name: 'learners.csv', mimeType: 'text/csv',
+    buffer: Buffer.from('email,groupCodes,departmentCode\nEmployee@Example.test,gptnursing,obgyn\n')
+  })
+  await expect(page.getByRole('status').filter({ hasText: 'Imported 1 learner invitations; 0 already active.' })).toBeVisible()
+  expect(importedInvitation).toEqual({ invitations: [{
+    email: 'employee@example.test', groupCodes: ['gptnursing'], departmentCode: 'obgyn'
+  }] })
+  const learnerRoster = XLSX.utils.book_new()
+  XLSX.utils.book_append_sheet(learnerRoster, XLSX.utils.aoa_to_sheet([
+    ['email', 'groupCodes', 'departmentCode'], ['employee@example.test', 'gptnursing', 'obgyn']
+  ]), 'Learners')
+  for (const extension of ['xlsx', 'ods'] as const) {
+    const buffer = XLSX.write(learnerRoster, { bookType: extension, type: 'buffer' })
+    await invitationInput.setInputFiles({
+      name: `learners.${extension}`,
+      mimeType: extension === 'xlsx'
+        ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+        : 'application/vnd.oasis.opendocument.spreadsheet',
+      buffer: Buffer.from(buffer)
+    })
+    await expect(page.getByRole('status').filter({ hasText: 'Imported 1 learner invitations; 0 already active.' })).toBeVisible()
+  }
   const allowVisits = page.getByLabel('Allow visit setup')
   await allowVisits.check()
   await page.getByRole('button', { name: 'Save changes' }).click()

@@ -3,6 +3,8 @@ import { Buffer } from 'node:buffer'
 import { readFile } from 'node:fs/promises'
 import { TEST_LEARNER_CHART_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
 
+const preflightOrigin = `https://localhost:${process.env.GPTMD_PREFLIGHT_HTTPS_PORT ?? '3002'}`
+
 test.beforeEach(async ({ page }) => {
   await page.route('**/api/encounters/current', (route) => route.fulfill({
     status: 200,
@@ -58,6 +60,7 @@ test('resumes a saved encounter and sends the next turn through its existing ses
           status: 'active',
           createdAt: '2026-10-01T00:00:00.000Z',
           updatedAt: '2026-10-01T00:05:00.000Z',
+          addonSpendNotice: true,
           versions: { promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna', schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3' },
           patient: { fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average', reasonForVisit: 'Pelvic pain', vitalSigns: TEST_LEARNER_CHART_VITAL_SIGNS },
           phase: 'history',
@@ -94,13 +97,18 @@ test('resumes a saved encounter and sends the next turn through its existing ses
     setupRequests += 1
     await route.fulfill({ status: 500, contentType: 'application/json', body: JSON.stringify({ error: 'Resume must not rerun setup' }) })
   })
+  let addonNoticeAcknowledgements = 0
+  await page.route(`**/api/sessions/${sessionId}/addon-spend-notice/acknowledge`, async (route) => {
+    addonNoticeAcknowledgements += 1
+    await route.fulfill({ status: 204 })
+  })
   await page.route('**/api/sessions/*/turns', async (route) => {
     const body = route.request().postDataJSON() as { turnId: string; text: string; modality: string }
     submittedTurns.push({ pathname: new URL(route.request().url()).pathname, body })
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ turnId: body.turnId, text: 'It feels like a dull ache.' }) })
   })
   await page.context().addCookies([{
-    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax'
+    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax'
   }])
 
   await page.goto('/encounter', { waitUntil: 'domcontentloaded' })
@@ -114,6 +122,13 @@ test('resumes a saved encounter and sends the next turn through its existing ses
   await preflightDialog.getByRole('checkbox', { name: /use fictional details only/i }).check()
   await preflightDialog.getByRole('button', { name: 'Continue with transcript' }).click()
   await page.getByRole('button', { name: 'Enter Room' }).click()
+
+  const addonNotice = page.getByRole('dialog', { name: 'Add-on tokens are now in use' })
+  await expect(addonNotice).toBeVisible()
+  await expect(addonNotice).toContainText('expire 365 days after they are granted')
+  await addonNotice.getByRole('button', { name: 'Got it' }).click()
+  await expect(addonNotice).toBeHidden()
+  expect(addonNoticeAcknowledgements).toBe(1)
 
   await expect(page.getByRole('tab', { name: 'Chart' })).toHaveAttribute('aria-selected', 'true')
   const chart = page.getByRole('tabpanel', { name: 'Chart' })
@@ -178,7 +193,7 @@ test('transient setup retry reuses the same owned session and idempotency key', 
     })
   })
   await page.context().addCookies([{
-    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax'
+    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax'
   }])
   await page.goto('/encounter', { waitUntil: 'domcontentloaded' })
   const retryButton = page.getByRole('button', { name: 'Retry patient setup' })
@@ -242,7 +257,7 @@ test('terminal setup retry creates a fresh session and setup idempotency key', a
     })
   })
   await page.context().addCookies([{
-    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax'
+    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax'
   }])
 
   await page.goto('/encounter', { waitUntil: 'domcontentloaded' })
@@ -293,7 +308,7 @@ test('preflight explains voice privacy and lets the learner choose transcript or
   await page.context().addCookies([{
     name: 'sb-localhost-auth-token',
     value: makeAuthCookie(),
-    url: 'https://localhost:3002',
+    url: preflightOrigin,
     sameSite: 'Lax'
   }])
   await page.goto('/encounter', { waitUntil: 'domcontentloaded' })
@@ -302,6 +317,7 @@ test('preflight explains voice privacy and lets the learner choose transcript or
   await expect(dialog).toBeVisible()
   await page.waitForTimeout(300)
   await expect(dialog.getByText(/local storage is not a secure session vault/)).toBeVisible()
+  await expect(dialog.getByText(/records a 30-second pulse only while this page is visible/)).toBeVisible()
   await expect(dialog.getByText(/your microphone audio goes to OpenAI Realtime for transcription only/i)).toBeVisible()
   await expect(dialog.getByText(/patient reply audio is not sent to OpenAI/i)).toBeVisible()
   await page.screenshot({ path: '/tmp/gptmd-encounter-preflight-desktop.png', fullPage: false })
@@ -562,7 +578,7 @@ test('voice turns auto-send after seven seconds, confirm spoken phase changes, a
     body: JSON.stringify({ answerSdp: 'mock-answer', maxDurationSeconds: 900 })
   }))
   await page.context().addCookies([{
-    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax'
+    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax'
   }])
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.goto('/encounter')
@@ -840,7 +856,7 @@ test('Realtime channel loss flushes one finalized utterance and leaves transcrip
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ turnId: turn.turnId, text: 'Since yesterday.' }) })
   })
   await page.context().addCookies([{
-    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax'
+    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax'
   }])
 
   await page.goto('/encounter')
@@ -925,7 +941,7 @@ test('assessment phase is confirmed and keeps the draft editable after field val
       await route.fulfill({ status: 201, contentType: 'application/json', body: JSON.stringify({ assessmentId: route.request().postDataJSON().assessmentId, status: 'unscored', submittedAt: '2026-10-01T00:02:00.000Z' }) })
     }
   })
-  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax' }])
+  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax' }])
   await page.goto('/encounter')
   const preflight = page.getByRole('dialog', { name: 'Before you begin' })
   await preflight.getByRole('radio', { name: /Transcript/ }).check()
@@ -983,7 +999,7 @@ test('cancels a prepared visit only after learner confirmation', async ({ page }
     cancellationRequests += 1
     await route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify({ sessionId, status: 'cancelled' }) })
   })
-  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax' }])
+  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax' }])
 
   await page.goto('/encounter')
   const preflight = page.getByRole('dialog', { name: 'Before you begin' })
@@ -1048,7 +1064,7 @@ test('restores and autosaves an unsubmitted assessment draft through the owner s
       body: JSON.stringify({ revision, fields, updatedAt: '2026-10-01T00:06:00.000Z' })
     })
   })
-  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax' }])
+  await page.context().addCookies([{ name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax' }])
   await page.goto('/encounter')
   await page.getByRole('dialog', { name: 'A visit is in progress' }).getByRole('button', { name: 'Resume visit' }).click()
   const preflight = page.getByRole('dialog', { name: 'Before you begin' })
@@ -1096,7 +1112,7 @@ test('voice conversation falls back to transcript when Realtime WebRTC is unsupp
     })
   }))
   await page.context().addCookies([{
-    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: 'https://localhost:3002', sameSite: 'Lax'
+    name: 'sb-localhost-auth-token', value: makeAuthCookie(), url: preflightOrigin, sameSite: 'Lax'
   }])
   await page.goto('/encounter')
   const dialog = page.getByRole('dialog', { name: 'Before you begin' })
@@ -1165,7 +1181,7 @@ test('starts setup on entry and withholds preflight until Redis setup and the pa
   await page.context().addCookies([{
     name: 'sb-localhost-auth-token',
     value: makeAuthCookie(),
-    url: 'https://localhost:3002',
+    url: preflightOrigin,
     sameSite: 'Lax'
   }])
   await page.setViewportSize({ width: 1440, height: 900 })

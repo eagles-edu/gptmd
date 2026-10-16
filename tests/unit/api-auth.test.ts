@@ -27,7 +27,10 @@ describe('Supabase access-token verification', () => {
     const address = server.address()
     if (!address || typeof address === 'string') throw new Error('JWKS test server did not bind.')
 
-    const token = await new SignJWT({ sub: 'supabase-user-uuid', aud: 'authenticated' })
+    const token = await new SignJWT({
+      sub: 'supabase-user-uuid', aud: 'authenticated', email: '  Employee@Example.test ',
+      app_metadata: { provider: 'google' }
+    })
       .setProtectedHeader({ alg: 'ES256', kid: 'gptmd-test-key', typ: 'JWT' })
       .setIssuer(issuer)
       .setIssuedAt()
@@ -40,7 +43,7 @@ describe('Supabase access-token verification', () => {
       jwksUrl: `http://127.0.0.1:${address.port}/auth/v1/.well-known/jwks.json`
     })
 
-    expect(principal).toEqual({ subjectId: 'supabase-user-uuid' })
+    expect(principal).toEqual({ subjectId: 'supabase-user-uuid', email: 'employee@example.test' })
   })
 })
 

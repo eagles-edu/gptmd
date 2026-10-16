@@ -68,7 +68,7 @@ describe('live deployment artifact whitelist', () => {
     const sync = await readFile('ops/freefilesync/gptmd-live-api.ffs_batch', 'utf8')
 
     expect(dockerfile).toContain('COPY --from=api-build --chown=node:node /workspace/services/api/catalog ./catalog')
-    expect(dockerfile).toContain('COPY --chown=node:node educator-input/obgyn-disorders.reference.json ./catalog/obgyn-disorders.reference.json')
+    expect(dockerfile).toContain('COPY --chown=node:node educator-input/obgyn-disorders.reference.diagnostics-tests-cleaned.json ./catalog/obgyn-disorders.reference.json')
     expect(sync).toContain('<Item>\\catalog\\</Item>')
     expect(sync).toContain('<Item>\\dist\\</Item>')
     expect(sync).toContain('<Item>\\migrations\\</Item>')
@@ -79,7 +79,7 @@ describe('live deployment artifact whitelist', () => {
     expect(sync).toContain('<Item>\\node_modules\\</Item>')
 
     const deployment = await readFile('scripts/deploy-live.mjs', 'utf8')
-    expect(deployment).toContain('educator-input/obgyn-disorders.reference.json')
+    expect(deployment).toContain('educator-input/obgyn-disorders.reference.diagnostics-tests-cleaned.json')
     expect(deployment).toContain("catalog/obgyn-disorders.reference.json")
   })
 

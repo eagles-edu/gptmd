@@ -153,7 +153,10 @@ describe('patient API response contracts', () => {
     }
     fetchMock.mockResolvedValue(setup)
 
-    await expect(usePatientApi().setupSession('session / one')).resolves.toEqual(setup)
+    await expect(usePatientApi().setupSession('session / one')).resolves.toEqual({
+      ...setup,
+      addonSpendNotice: false
+    })
     expect(fetchMock).toHaveBeenCalledWith(
       'https://api.example.test/api/sessions/session%20%2F%20one/setup',
       {

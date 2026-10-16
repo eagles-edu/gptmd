@@ -5,15 +5,111 @@
         <p class="eyebrow">Organization allocation</p>
         <h2 id="ai-budget-title">AI time pool</h2>
       </div>
-      <button type="button" :disabled="state === 'loading' || state === 'saving'" @click="save">
-        {{ state === 'saving' ? 'Saving…' : 'Save draft' }}
-      </button>
+      <div class="budget-actions">
+        <button type="button" class="secondary" :disabled="state === 'loading' || state === 'saving'" @click="save">
+          {{ state === 'saving' ? 'Saving…' : settings?.status === 'active' ? 'Save settings' : 'Save draft' }}
+        </button>
+        <button
+          type="button"
+          :disabled="state === 'loading' || state === 'saving' || !canActivate"
+          @click="toggleEnforcement"
+        >{{ settings?.status === 'active' ? 'Pause enforcement' : 'Activate limits' }}</button>
+      </div>
     </div>
 
-    <p class="boundary-note">Token budgets define the intended entitlement. Minute values are estimates; no token-to-minute conversion is defined. This draft does not meter or block AI usage.</p>
-    <p v-if="usage" class="usage-summary" role="status">
-      Provider-reported usage in this organization period: {{ formatTokenCount(usage.totalTokens) }} tokens across {{ usage.responseCount }} responses. These tokens are not charged against the draft.
+    <p class="boundary-note">Token limits apply to actual provider usage. In-flight calls reserve their input count plus the configured output cap. Minute values are estimates; they are not independently charged.</p>
+    <p class="status-message" role="status">
+      {{ settings?.status === 'active' ? 'Token enforcement is active for new provider calls.' : 'Limits are saved as a draft and do not block AI usage.' }}
     </p>
+    <p v-if="usage" class="usage-summary" role="status">
+      Settled provider usage in this organization period: {{ formatTokenCount(usage.totalTokens) }} tokens across {{ usage.responseCount }} responses.
+    </p>
+    <p v-if="reservationSummary" class="usage-summary" role="status">
+      In-flight: {{ formatTokenCount(reservationSummary.reservedTokens) }} reserved tokens ({{ reservationSummary.reservedCount }} {{ reservationSummary.reservedCount === 1 ? 'call' : 'calls' }}).
+      Held for reconciliation: {{ formatTokenCount(reservationSummary.heldTokens) }} tokens ({{ reservationSummary.heldCount }} {{ reservationSummary.heldCount === 1 ? 'call' : 'calls' }}).
+      Reservations are token ceilings; held amounts continue to count against active limits until reconciled.
+    </p>
+    <fieldset class="member-usage-report">
+      <legend>Member usage report</legend>
+      <p class="boundary-note">Period: {{ usagePeriodLabel }}. Active time is an estimate from visible-page, recent-interaction pulses (30 seconds each); it is not continuous monitoring or CEU evidence.</p>
+      <div class="roster-downloads" role="group" aria-label="Export member usage report">
+        <button v-for="format in reportFormats" :key="format" type="button" class="secondary" :disabled="usageState !== 'ready' || !memberUsage.length" @click="downloadUsageReport(format)">
+          Download {{ format.toUpperCase() }}
+        </button>
+      </div>
+      <p v-if="usageState === 'loading'" class="empty-state">Loading member activity…</p>
+      <p v-else-if="usageState === 'error'" class="empty-state" role="status">Member activity could not be loaded.</p>
+      <div v-else-if="memberUsage.length" class="table-wrap">
+        <table class="assignment-table">
+          <thead>
+            <tr>
+              <th scope="col">Member subject</th>
+              <th scope="col">Role</th>
+              <th scope="col">Sessions started</th>
+              <th scope="col">Completed</th>
+              <th scope="col">Provider responses</th>
+              <th scope="col">Tokens</th>
+              <th scope="col">Last AI use</th>
+              <th scope="col">Estimated active min</th>
+              <th scope="col">Last active</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="member in memberUsage" :key="member.subjectId">
+              <td>{{ member.subjectId }}</td>
+              <td>{{ member.role }}</td>
+              <td>{{ member.sessionsStarted }}</td>
+              <td>{{ member.sessionsCompleted }}</td>
+              <td>{{ member.providerResponseCount }}</td>
+              <td>{{ formatTokenCount(member.totalTokens) }}</td>
+              <td>{{ formatActivity(member.lastAiActivityAt) }}</td>
+              <td>{{ (member.estimatedEngagementSeconds / 60).toFixed(1) }}</td>
+              <td>{{ formatActivity(member.lastEngagementAt, 'No recorded active time') }}</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p v-else class="empty-state">No active workspace members are available for this report.</p>
+    </fieldset>
+    <fieldset class="member-usage-report">
+      <legend>Completed-session records</legend>
+      <p class="boundary-note">Records are based on completed simulation outcomes. Active minutes are estimates; printing this record does not award or verify CEU credit.</p>
+      <p v-if="completionState === 'loading'" class="empty-state">Loading completed sessions…</p>
+      <p v-else-if="completionState === 'error'" class="empty-state" role="status">Completed-session records could not be loaded.</p>
+      <template v-else>
+        <p v-if="completionRecords.length" class="usage-summary">
+          Period: {{ usagePeriodLabel }} · {{ completionRecords.length }} records
+          <span v-if="completionHasMore"> · showing the latest 500 completed sessions</span>
+        </p>
+        <div v-if="completionRecords.length" class="table-wrap">
+          <table class="assignment-table">
+            <thead>
+              <tr>
+                <th scope="col">Member subject</th>
+                <th scope="col">Started</th>
+                <th scope="col">Completed</th>
+                <th scope="col">Estimated active min</th>
+                <th scope="col">Record</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="record in completionRecords" :key="record.sessionId">
+                <td>{{ record.subjectId }}</td>
+                <td>{{ formatActivity(record.startedAt) }}</td>
+                <td>{{ formatActivity(record.completedAt) }}</td>
+                <td>{{ (record.estimatedEngagementSeconds / 60).toFixed(1) }}</td>
+                <td>
+                  <button type="button" class="secondary" @click="printCompletionRecord(record)">
+                    Print record
+                  </button>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p v-else class="empty-state">No completed sessions in this organization period.</p>
+      </template>
+    </fieldset>
     <p v-if="message" class="status-message" role="status">{{ message }}</p>
     <p v-if="state === 'loading'" class="status-message" role="status">Loading allocation draft…</p>
 
@@ -102,13 +198,26 @@
       <fieldset>
         <legend>Member assignments</legend>
         <div class="import-controls">
-          <button type="button" class="secondary" @click="downloadRoster">Download roster spreadsheet</button>
+          <div class="roster-downloads" role="group" aria-label="Download roster">
+            <button type="button" class="secondary" @click="downloadRoster('csv')">Download CSV</button>
+            <button type="button" class="secondary" @click="downloadRoster('xlsx')">Download Excel</button>
+            <button type="button" class="secondary" @click="downloadRoster('ods')">Download ODS</button>
+          </div>
           <label class="upload-control">
-            <span>Import CSV spreadsheet</span>
-            <input type="file" accept=".csv,text/csv" :disabled="state === 'saving'" @change="importRoster">
+            <span>Import CSV, XLSX, or ODS</span>
+            <input type="file" accept=".csv,.xlsx,.ods,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet" :disabled="state === 'saving'" @change="importRoster">
           </label>
         </div>
         <p class="empty-state">Use the downloaded roster as a template. Keep subject IDs unchanged; separate multiple group codes with semicolons. Existing visits keep their original department.</p>
+        <div class="invitation-controls">
+          <button type="button" class="secondary" :disabled="state === 'saving'" @click="downloadInvitationTemplate('xlsx')">
+            Download learner roster template
+          </button>
+          <label class="upload-control">
+            <span>Import learners by email</span>
+            <input type="file" accept=".csv,.xlsx,.ods,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.oasis.opendocument.spreadsheet" :disabled="state === 'saving'" @change="importInvitationRoster">
+          </label>
+        </div>
         <div v-if="assignmentMembers.length" class="assignment-form">
           <label>
             <span>Workspace member</span>
@@ -136,11 +245,11 @@
               </option>
             </select>
           </label>
-          <p v-if="departmentTokenPreview" class="allocation-preview" role="status">
+      <p v-if="departmentTokenPreview" class="allocation-preview" role="status">
             Department allowance preview: {{ formatTokenCount(String(departmentTokenPreview.tokens)) }} of
             {{ formatTokenCount(String(departmentTokenPreview.monthlyTokens)) }} monthly tokens
             ({{ Math.floor(departmentTokenPreview.fraction * 100) }}% for this calendar month).
-            Usage enforcement is not active yet.
+            New sessions use this prorated department allowance.
           </p>
           <button
             type="button"
@@ -191,17 +300,50 @@ type AssignmentMember = {
 type BudgetSettings = {
   schemaVersion: 1
   revision: number
-  status: 'draft'
+  status: 'draft' | 'active'
   organizationPeriod: { months: number; anchorDate: string }
   organizationPool: { tokens: number; estimatedMinutes: number }
   groups: GroupBudget[]
   departments: Department[]
 }
 type UsageSummary = { totalTokens: string; responseCount: number }
+type ReservationSummary = {
+  reservedTokens: string
+  reservedCount: number
+  heldTokens: string
+  heldCount: number
+}
+type MemberUsageRow = {
+  subjectId: string
+  role: 'learner' | 'instructor' | 'customer_admin'
+  sessionsStarted: number
+  sessionsCompleted: number
+  providerResponseCount: number
+  totalTokens: string
+  lastAiActivityAt: string | null
+  estimatedEngagementSeconds: number
+  lastEngagementAt: string | null
+}
+type CompletionRecord = {
+  sessionId: string
+  subjectId: string
+  startedAt: string
+  completedAt: string
+  estimatedEngagementSeconds: number
+}
+type ReportFormat = 'csv' | 'xlsx' | 'ods'
 
 const props = defineProps<{ tenantId: string }>()
 const settings = ref<BudgetSettings | null>(null)
 const usage = ref<UsageSummary | null>(null)
+const reservationSummary = ref<ReservationSummary | null>(null)
+const memberUsage = ref<MemberUsageRow[]>([])
+const completionRecords = ref<CompletionRecord[]>([])
+const completionHasMore = ref(false)
+const completionState = ref<'loading' | 'ready' | 'error'>('loading')
+const usagePeriodLabel = ref('Current UTC calendar month')
+const usageState = ref<'loading' | 'ready' | 'error'>('loading')
+const reportFormats: ReportFormat[] = ['csv', 'xlsx', 'ods']
 const state = ref<'idle' | 'loading' | 'saving' | 'error'>('idle')
 const message = ref('')
 const assignmentMembers = ref<AssignmentMember[]>([])
@@ -228,6 +370,9 @@ const departmentTokenPreview = computed(() => {
     tokens: Math.floor(department.monthlyTokensPerUser * fraction)
   }
 })
+const canActivate = computed(() => Boolean(
+  settings.value?.organizationPeriod.anchorDate && settings.value.groups.length > 0
+))
 
 function emptySettings(): BudgetSettings {
   return {
@@ -246,20 +391,67 @@ function apiUrl(): string {
   return `${String(config.public.apiBase).replace(/\/$/, '')}/api/admin/ai-time-budget`
 }
 
+function apiBaseUrl(): string {
+  const config = useRuntimeConfig()
+  return `${String(config.public.apiBase).replace(/\/$/, '')}/api`
+}
+
 async function load(): Promise<void> {
   state.value = 'loading'
   message.value = ''
   try {
-    const result = await $fetch<{ settings: BudgetSettings | null; usage: UsageSummary | null }>(apiUrl(), {
+    const result = await $fetch<{
+      settings: BudgetSettings | null
+      usage: UsageSummary | null
+      reservationSummary: ReservationSummary | null
+    }>(apiUrl(), {
       headers: await useGptmdAuth().accessHeaders()
     })
     settings.value = result.settings ?? emptySettings()
     usage.value = result.usage
-    await loadAssignments()
+    reservationSummary.value = result.reservationSummary
+    await Promise.all([loadAssignments(), loadMemberUsage(), loadCompletionRecords()])
     state.value = 'idle'
   } catch {
     state.value = 'error'
-    message.value = 'AI-time budget draft could not be loaded.'
+    message.value = 'AI-time budget settings could not be loaded.'
+  }
+}
+
+async function loadCompletionRecords(): Promise<void> {
+  completionState.value = 'loading'
+  try {
+    const result = await $fetch<{
+      periodStart: string
+      periodEnd: string
+      records: CompletionRecord[]
+      hasMore: boolean
+      certificateBasis: 'completed_simulation_no_ceu_credit'
+    }>(`${apiUrl()}/completed-sessions`, { headers: await useGptmdAuth().accessHeaders() })
+    completionRecords.value = result.records
+    completionHasMore.value = result.hasMore
+    completionState.value = 'ready'
+  } catch {
+    completionRecords.value = []
+    completionHasMore.value = false
+    completionState.value = 'error'
+  }
+}
+
+async function loadMemberUsage(): Promise<void> {
+  usageState.value = 'loading'
+  try {
+    const result = await $fetch<{
+      periodStart: string
+      periodEnd: string
+      members: MemberUsageRow[]
+    }>(`${apiUrl()}/member-usage`, { headers: await useGptmdAuth().accessHeaders() })
+    memberUsage.value = result.members
+    usagePeriodLabel.value = `${new Date(result.periodStart).toLocaleDateString()} – ${new Date(result.periodEnd).toLocaleDateString()}`
+    usageState.value = 'ready'
+  } catch {
+    memberUsage.value = []
+    usageState.value = 'error'
   }
 }
 
@@ -300,7 +492,7 @@ async function saveMemberAssignment(): Promise<void> {
     })
     assignmentMembers.value = assignmentMembers.value.map((member) =>
       member.subjectId === result.assignment.subjectId ? result.assignment : member)
-    message.value = 'Member assignment saved. Existing sessions keep their selected group.'
+    message.value = 'Member assignment saved. Existing sessions keep their pinned group and department.'
     state.value = 'idle'
   } catch {
     message.value = 'Member assignment was not saved. Confirm the group and department catalogs, then reload.'
@@ -314,6 +506,10 @@ function formatTokenCount(value: string): string {
   } catch {
     return value
   }
+}
+
+function formatActivity(value: string | null, fallback = 'No recorded AI use'): string {
+  return value ? new Date(value).toLocaleString() : fallback
 }
 
 function addGroup(): void {
@@ -345,54 +541,60 @@ function setDepartmentLimit(department: Department, event: Event): void {
   department.monthlyTokensPerUser = value === '' ? null : Number(value)
 }
 
-function csvCell(value: string): string {
-  return `"${value.replaceAll('"', '""')}"`
-}
-
-function downloadRoster(): void {
-  const rows = [
-    ['subjectId', 'groupCodes', 'departmentCode'],
-    ...assignmentMembers.value.map((member) => [
-      member.subjectId,
-      member.groupCodes.join(';'),
-      member.departmentCode ?? ''
-    ])
-  ]
-  const csv = rows.map((row) => row.map(csvCell).join(',')).join('\r\n')
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+async function downloadRoster(format: 'csv' | 'xlsx' | 'ods'): Promise<void> {
+  const { createMemberRosterSpreadsheet } = await import('~/utils/member-roster-spreadsheet')
+  const output = createMemberRosterSpreadsheet(assignmentMembers.value, format)
+  const content = typeof output.bytes === 'string'
+    ? output.bytes
+    : new Uint8Array(output.bytes).buffer as ArrayBuffer
+  const url = URL.createObjectURL(new Blob([content], { type: output.mimeType }))
   const link = document.createElement('a')
   link.href = url
-  link.download = 'gptmd-member-department-roster.csv'
+  link.download = output.fileName
   link.click()
   URL.revokeObjectURL(url)
 }
 
-function parseCsv(text: string): string[][] {
-  const rows: string[][] = []
-  let row: string[] = []
-  let cell = ''
-  let quoted = false
-  for (let index = 0; index < text.length; index += 1) {
-    const character = text[index]!
-    if (quoted && character === '"' && text[index + 1] === '"') {
-      cell += '"'
-      index += 1
-    } else if (character === '"') quoted = !quoted
-    else if (!quoted && character === ',') {
-      row.push(cell.trim())
-      cell = ''
-    } else if (!quoted && (character === '\n' || character === '\r')) {
-      if (character === '\r' && text[index + 1] === '\n') index += 1
-      row.push(cell.trim())
-      if (row.some(Boolean)) rows.push(row)
-      row = []
-      cell = ''
-    } else cell += character
+async function downloadInvitationTemplate(format: ReportFormat): Promise<void> {
+  const { createMemberRosterInvitationSpreadsheet } = await import('~/utils/member-roster-spreadsheet')
+  const output = createMemberRosterInvitationSpreadsheet([], format)
+  const content = typeof output.bytes === 'string'
+    ? output.bytes
+    : new Uint8Array(output.bytes).buffer as ArrayBuffer
+  const url = URL.createObjectURL(new Blob([content], { type: output.mimeType }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = output.fileName
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+async function downloadUsageReport(format: ReportFormat): Promise<void> {
+  const { createMemberUsageReport } = await import('~/utils/member-usage-report')
+  const output = createMemberUsageReport(memberUsage.value, format)
+  const content = typeof output.bytes === 'string'
+    ? output.bytes
+    : new Uint8Array(output.bytes).buffer as ArrayBuffer
+  const url = URL.createObjectURL(new Blob([content], { type: output.mimeType }))
+  const link = document.createElement('a')
+  link.href = url
+  link.download = output.fileName
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
+async function printCompletionRecord(record: CompletionRecord): Promise<void> {
+  const printWindow = window.open('', '_blank', 'popup,width=900,height=700')
+  if (!printWindow) {
+    message.value = 'Allow pop-ups to print this completion record.'
+    return
   }
-  if (quoted) throw new Error('Unclosed quote in CSV')
-  row.push(cell.trim())
-  if (row.some(Boolean)) rows.push(row)
-  return rows
+  const { createCompletionRecordHtml } = await import('~/utils/completion-record')
+  printWindow.document.open()
+  printWindow.document.write(createCompletionRecordHtml(record))
+  printWindow.document.close()
+  printWindow.focus()
+  printWindow.setTimeout(() => printWindow.print(), 100)
 }
 
 async function importRoster(event: Event): Promise<void> {
@@ -402,19 +604,12 @@ async function importRoster(event: Event): Promise<void> {
   state.value = 'saving'
   message.value = ''
   try {
-    const rows = parseCsv((await file.text()).replace(/^\uFEFF/, ''))
-    const headers = rows.shift()?.map((header) => header.toLowerCase()) ?? []
-    const subjectColumn = headers.indexOf('subjectid')
-    const groupsColumn = headers.indexOf('groupcodes')
-    const departmentColumn = headers.indexOf('departmentcode')
-    if (subjectColumn < 0 || groupsColumn < 0 || departmentColumn < 0 || rows.length === 0) {
-      throw new Error('Expected subjectId, groupCodes, departmentCode columns')
-    }
-    const assignments = rows.map((row) => ({
-      subjectId: row[subjectColumn] ?? '',
-      groupCodes: (row[groupsColumn] ?? '').split(';').map((code) => code.trim()).filter(Boolean),
-      departmentCode: (row[departmentColumn] ?? '').trim() || null
-    }))
+    const { MAX_MEMBER_ROSTER_FILE_BYTES, parseMemberRosterSpreadsheet } = await import('~/utils/member-roster-spreadsheet')
+    if (file.size > MAX_MEMBER_ROSTER_FILE_BYTES) throw new Error('Roster files must be 5 MB or smaller')
+    const data = file.name.toLowerCase().endsWith('.csv')
+      ? await file.text()
+      : await file.arrayBuffer()
+    const assignments = parseMemberRosterSpreadsheet(file.name, data)
     const result = await $fetch<{ imported: number; failures: Array<{ subjectId: string; error: string }> }>(`${apiUrl()}/assignments/import`, {
       method: 'POST',
       headers: await useGptmdAuth().accessHeaders(),
@@ -426,35 +621,100 @@ async function importRoster(event: Event): Promise<void> {
       : `Imported ${result.imported} member assignments.`
     state.value = 'idle'
   } catch (error) {
-    message.value = error instanceof Error && error.message.includes('Expected')
-      ? error.message
-      : 'Spreadsheet import failed. Check the CSV columns and member, group, and department codes.'
+    message.value = error instanceof Error && (
+      error.message.includes('Expected') ||
+      error.message.includes('limited to') ||
+      error.message.includes('5 MB') ||
+      error.message.includes('must be') ||
+      error.message.includes('Formula') ||
+      error.message.includes('Choose') ||
+      error.message.includes('worksheet') ||
+      error.message.includes('empty')
+    ) ? error.message : 'Spreadsheet import failed. Check the roster columns and member, group, and department codes.'
     state.value = 'error'
   } finally {
     input.value = ''
   }
 }
 
-async function save(): Promise<void> {
-  if (!settings.value || state.value === 'saving') return
+async function importInvitationRoster(event: Event): Promise<void> {
+  const input = event.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
   state.value = 'saving'
   message.value = ''
   try {
-    const result = await $fetch<{ settings: BudgetSettings; usage: UsageSummary }>(apiUrl(), {
+    const {
+      MAX_MEMBER_ROSTER_FILE_BYTES,
+      parseMemberRosterInvitationSpreadsheet
+    } = await import('~/utils/member-roster-spreadsheet')
+    if (file.size > MAX_MEMBER_ROSTER_FILE_BYTES) throw new Error('Roster files must be 5 MB or smaller')
+    const data = file.name.toLowerCase().endsWith('.csv')
+      ? await file.text()
+      : await file.arrayBuffer()
+    const invitations = parseMemberRosterInvitationSpreadsheet(file.name, data)
+    const result = await $fetch<{ imported: number; alreadyAccepted: number }>(`${apiBaseUrl()}/admin/member-roster/invitations/import`, {
+      method: 'POST',
+      headers: await useGptmdAuth().accessHeaders(),
+      body: { invitations }
+    })
+    message.value = `Imported ${result.imported} learner invitations; ${result.alreadyAccepted} already active.`
+    state.value = 'idle'
+  } catch (error) {
+    message.value = error instanceof Error && (
+      error.message.includes('Expected') ||
+      error.message.includes('limited to') ||
+      error.message.includes('5 MB') ||
+      error.message.includes('must be') ||
+      error.message.includes('Formula') ||
+      error.message.includes('Choose') ||
+      error.message.includes('worksheet') ||
+      error.message.includes('empty')
+    ) ? error.message : 'Email roster import failed. Check the email, group, and department columns.'
+    state.value = 'error'
+  } finally {
+    input.value = ''
+  }
+}
+
+async function save(): Promise<boolean> {
+  if (!settings.value || state.value === 'saving') return false
+  state.value = 'saving'
+  message.value = ''
+  try {
+    const result = await $fetch<{
+      settings: BudgetSettings
+      usage: UsageSummary
+      reservationSummary: ReservationSummary
+    }>(apiUrl(), {
       method: 'PUT',
       headers: await useGptmdAuth().accessHeaders(),
       body: settings.value
     })
     settings.value = result.settings
     usage.value = result.usage
+    reservationSummary.value = result.reservationSummary
     assignmentGroups.value = result.settings.groups.map(({ code, name }) => ({ code, name }))
     assignmentDepartments.value = result.settings.departments
     state.value = 'idle'
-    message.value = 'Draft saved. AI usage remains unenforced.'
-  } catch {
+    message.value = settings.value.status === 'active'
+      ? 'Token enforcement settings saved.'
+      : 'Draft saved. AI usage remains unenforced.'
+    return true
+  } catch (error) {
     state.value = 'error'
-    message.value = 'Draft was not saved. Check the values and reload if another administrator changed them.'
+    const apiMessage = (error as { data?: { error?: string } }).data?.error
+    message.value = apiMessage ?? 'Settings were not saved. Check the values and reload if another administrator changed them.'
+    return false
   }
+}
+
+async function toggleEnforcement(): Promise<void> {
+  if (!settings.value) return
+  const previousStatus = settings.value.status
+  if (previousStatus === 'draft' && !window.confirm('Activate token limits for new AI provider calls? Exhausted included allowances will stop setup and patient turns.')) return
+  settings.value.status = settings.value.status === 'active' ? 'draft' : 'active'
+  if (!await save() && settings.value) settings.value.status = previousStatus
 }
 
 onMounted(load)
@@ -474,6 +734,12 @@ watch(() => props.tenantId, () => { void load() })
   display: flex;
   gap: 1rem;
   justify-content: space-between;
+}
+
+.budget-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .section-heading h2 {
@@ -619,6 +885,10 @@ select {
   min-width: 620px;
 }
 
+.member-usage-report .assignment-table {
+  min-width: 900px;
+}
+
 .table-wrap {
   overflow-x: auto;
 }
@@ -666,6 +936,20 @@ th {
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-bottom: 0.8rem;
+}
+
+.invitation-controls {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  margin: 0.8rem 0;
+}
+
+.roster-downloads {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
 }
 
 .upload-control {

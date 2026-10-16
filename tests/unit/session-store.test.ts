@@ -41,7 +41,10 @@ const generated: GeneratedPatientScenario = {
   sourceContext: {
     catalogId: 'obgyn-disorders', mode: 'primary_condition_reference_and_simulation_augmentation',
     approvalStatus: 'approved_for_gptmd_educator_input', approvedOn: '2026-10-14',
-    approvalScope: 'gptmd_educator_input', sourceRevision: '2026-10-14', sectionCount: 260, conditionCount: 130,
+    approvalScope: 'gptmd_educator_input', sourceRevision: '2026-10-16', sectionCount: 260, conditionCount: 138,
+    routineCareRecordCount: 8, probabilityModelReviewedOn: '2026-10-15',
+    selectedPrimaryCaseFocus: 'Abnormal uterine bleeding', selectedRecordType: 'condition',
+    estimateType: 'modeled encounter relevance, not population incidence',
     sha256: 'a'.repeat(64)
   }
 }
@@ -66,7 +69,7 @@ describe('tenant membership roles', () => {
   it('returns active workspace IDs and roles for one authenticated subject', async () => {
     const pool = {
       query: vi.fn().mockResolvedValue({ rows: [
-        { tenant_id: 'tenant-a', role: 'instructor', sessions_enabled: true, responses_enabled: true, audio_transcription_available: true },
+        { tenant_id: 'tenant-a', role: 'instructor', sessions_enabled: true, responses_enabled: true, audio_transcription_available: true, brand_name: null, brand_logo_path: null },
         { tenant_id: 'tenant-b', role: 'customer_admin', sessions_enabled: true, responses_enabled: true, audio_transcription_available: true }
       ], rowCount: 2 })
     } as unknown as Pool
@@ -77,13 +80,32 @@ describe('tenant membership roles', () => {
       { tenantId: 'tenant-b', role: 'customer_admin', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true }
     ])
     expect(pool.query).toHaveBeenCalledWith(
-      expect.stringMatching(/SELECT m\.tenant_id, m\.role[\s\S]*LEFT JOIN tenant_entitlements[\s\S]*status = 'active'[\s\S]*ORDER BY m\.tenant_id/),
+      expect.stringMatching(/SELECT m\.tenant_id, m\.role[\s\S]*LEFT JOIN tenant_entitlements[\s\S]*LEFT JOIN tenant_branding[\s\S]*status = 'active'[\s\S]*ORDER BY m\.tenant_id/),
       ['learner-a']
     )
     const query = String(pool.query.mock.calls[0]?.[0])
     expect(query).toContain('audio_transcription_sessions')
     expect(query).toContain('audio_transcription_privacy_approved')
     expect(query).toContain('monthly_audio_transcription_session_quota > audio_usage.used')
+  })
+
+  it('returns branding only for the matching branded tenant membership', async () => {
+    const pool = {
+      query: vi.fn().mockResolvedValue({ rows: [
+        { tenant_id: 'vinmed-hospital-demo', role: 'customer_admin', sessions_enabled: false, responses_enabled: false,
+          audio_transcription_available: false, brand_name: 'VinMed Hospital', brand_logo_path: '/assets/images/vinmed-logo.svg' },
+        { tenant_id: 'other-tenant', role: 'learner', sessions_enabled: false, responses_enabled: false,
+          audio_transcription_available: false, brand_name: null, brand_logo_path: null }
+      ], rowCount: 2 })
+    } as unknown as Pool
+    const store = createPostgresSessionStore(pool)
+
+    await expect(store.getActiveMemberships('vinmed-admin')).resolves.toEqual([
+      { tenantId: 'vinmed-hospital-demo', role: 'customer_admin', sessionsEnabled: false, responsesEnabled: false,
+        audioTranscriptionAvailable: false, branding: { displayName: 'VinMed Hospital', logoPath: '/assets/images/vinmed-logo.svg' } },
+      { tenantId: 'other-tenant', role: 'learner', sessionsEnabled: false, responsesEnabled: false,
+        audioTranscriptionAvailable: false }
+    ])
   })
 
   it('reports workspace visit features as disabled when no entitlement row exists', async () => {
@@ -97,6 +119,83 @@ describe('tenant membership roles', () => {
     await expect(store.getActiveMemberships('learner-a')).resolves.toEqual([
       { tenantId: 'tenant-a', role: 'learner', sessionsEnabled: false, responsesEnabled: false, audioTranscriptionAvailable: false }
     ])
+  })
+
+  it('takes the tenant snapshot lock before reading assignments and aborts if the tenant is missing', async () => {
+    const queries: string[] = []
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql)
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 }
+        if (sql.includes('FROM tenants')) return { rows: [{ tenant_id: principal.tenantId }], rowCount: 1 }
+        if (sql.includes('FROM tenant_entitlements')) return { rows: [{
+          enabled: true, monthly_quota: null, monthly_user_quota: null, max_active_sessions: null
+        }], rowCount: 1 }
+        if (sql.includes('tenant_ai_time_budget_settings')) return { rows: [{ settings: {
+          schemaVersion: 1, revision: 1, status: 'active',
+          organizationPeriod: { months: 1, anchorDate: '2026-10-01' },
+          organizationPool: { tokens: 100_000, estimatedMinutes: 0 },
+          groups: [{
+            code: 'gptnursing', name: 'Nursing', tokenBudget: 100_000,
+            estimatedMinuteBudget: 0, monthlyTokensPerUser: null,
+            monthlyEstimatedMinutesPerUser: null
+          }],
+          departments: [{ code: 'obgyn', name: 'OBGYN', monthlyTokensPerUser: 10_000 }]
+        } }], rowCount: 1 }
+        if (sql.includes('tenant_member_ai_group_assignments')) return { rows: [{ group_code: 'gptnursing' }], rowCount: 1 }
+        if (sql.includes('tenant_member_ai_department_assignments')) return { rows: [], rowCount: 0 }
+        if (sql.includes('INSERT INTO app_sessions')) return {
+          rows: [{ created_at: createdAt, updated_at: createdAt }], rowCount: 1
+        }
+        return { rows: [{ used: 1 }], rowCount: 1 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool
+    const store = createPostgresSessionStore(pool)
+
+    await expect(store.createSession(principal, {
+      promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna',
+      schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3'
+    })).resolves.toMatchObject({ status: 'initializing', aiBudgetGroupCode: 'gptnursing' })
+
+    const tenantLockIndex = queries.findIndex((sql) => sql.includes('FROM tenants') && sql.includes('FOR SHARE'))
+    const entitlementLockIndex = queries.findIndex((sql) => sql.includes('FROM tenant_entitlements') && sql.includes('FOR UPDATE'))
+    const settingsLockIndex = queries.findIndex((sql) => sql.includes('tenant_ai_time_budget_settings') && sql.includes('FOR SHARE'))
+    const groupReadIndex = queries.findIndex((sql) => sql.includes('tenant_member_ai_group_assignments'))
+    const departmentReadIndex = queries.findIndex((sql) => sql.includes('tenant_member_ai_department_assignments'))
+    expect(tenantLockIndex).toBeGreaterThan(queries.indexOf('BEGIN'))
+    expect(tenantLockIndex).toBeLessThan(entitlementLockIndex)
+    expect(tenantLockIndex).toBeLessThan(settingsLockIndex)
+    expect(tenantLockIndex).toBeLessThan(groupReadIndex)
+    expect(tenantLockIndex).toBeLessThan(departmentReadIndex)
+    expect(client.release).toHaveBeenCalledOnce()
+  })
+
+  it('rolls back before reading entitlements when the tenant snapshot lock finds no tenant', async () => {
+    const queries: string[] = []
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        queries.push(sql)
+        if (sql === 'BEGIN' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 }
+        if (sql.includes('FROM tenants')) return { rows: [], rowCount: 0 }
+        return { rows: [], rowCount: 0 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const store = createPostgresSessionStore({
+      connect: vi.fn().mockResolvedValue(client)
+    } as unknown as Pool)
+
+    await expect(store.createSession(principal, {
+      promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna',
+      schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3'
+    })).resolves.toBe('membership_missing')
+
+    expect(queries).toContain('ROLLBACK')
+    expect(queries.some((sql) => sql.includes('FROM tenant_entitlements'))).toBe(false)
+    expect(queries.some((sql) => sql.includes('INSERT INTO app_sessions'))).toBe(false)
+    expect(client.release).toHaveBeenCalledOnce()
   })
 
   it('persists one independent scenario variation seed when reserving a session', async () => {
@@ -130,6 +229,48 @@ describe('tenant membership roles', () => {
     expect(client.release).toHaveBeenCalledOnce()
   })
 
+  it('keeps saved draft AI budgets inert for session creation', async () => {
+    const queries: string[] = []
+    const insert: { sql: string; values: unknown[] | undefined }[] = []
+    const client = {
+      query: vi.fn(async (sql: string, values?: unknown[]) => {
+        queries.push(sql)
+        if (sql === 'BEGIN' || sql === 'COMMIT' || sql === 'ROLLBACK') return { rows: [], rowCount: 0 }
+        if (sql.includes('FROM tenant_entitlements')) return { rows: [{
+          enabled: true, monthly_quota: null, monthly_user_quota: null, max_active_sessions: null
+        }], rowCount: 1 }
+        if (sql.includes('tenant_ai_time_budget_settings')) return { rows: [{ settings: {
+          schemaVersion: 1, revision: 1, status: 'draft',
+          organizationPeriod: { months: 1, anchorDate: '2026-10-01' },
+          organizationPool: { tokens: 100_000, estimatedMinutes: 0 },
+          groups: [{
+            code: 'gptnursing', name: 'Nursing', tokenBudget: 100_000, estimatedMinuteBudget: 0,
+            monthlyTokensPerUser: null, monthlyEstimatedMinutesPerUser: null
+          }],
+          departments: [{ code: 'obgyn', name: 'OBGYN', monthlyTokensPerUser: 10_000 }]
+        } }], rowCount: 1 }
+        if (sql.includes('INSERT INTO app_sessions')) {
+          insert.push({ sql, values })
+          return { rows: [{ created_at: createdAt, updated_at: createdAt }], rowCount: 1 }
+        }
+        return { rows: [{ used: 1 }], rowCount: 1 }
+      }),
+      release: vi.fn()
+    } as unknown as PoolClient
+    const store = createPostgresSessionStore({
+      connect: vi.fn().mockResolvedValue(client)
+    } as unknown as Pool)
+
+    await expect(store.createSession(principal, {
+      promptVersion: 'patient-scenario-prompt-v13', modelVersion: 'gpt-6-luna',
+      schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3'
+    })).resolves.toMatchObject({ status: 'initializing', aiBudgetGroupCode: null })
+
+    expect(queries.some((sql) => sql.includes('tenant_member_ai_group_assignments'))).toBe(false)
+    expect(queries.some((sql) => sql.includes('tenant_member_ai_department_assignments'))).toBe(false)
+    expect(insert[0]?.values?.slice(-3)).toEqual([null, null, null])
+  })
+
   it('requires a group choice for multiple assignments and pins the selected group and department', async () => {
     const insert: { sql: string; values: unknown[] | undefined }[] = []
     const client = {
@@ -139,7 +280,7 @@ describe('tenant membership roles', () => {
           enabled: true, monthly_quota: null, monthly_user_quota: null, max_active_sessions: null
         }], rowCount: 1 }
         if (sql.includes('tenant_ai_time_budget_settings')) return { rows: [{ settings: {
-          schemaVersion: 1, revision: 1, status: 'draft',
+          schemaVersion: 1, revision: 1, status: 'active',
           organizationPeriod: { months: 1, anchorDate: '2026-10-01' },
           organizationPool: { tokens: 100_000, estimatedMinutes: 0 },
           groups: [
@@ -150,7 +291,7 @@ describe('tenant membership roles', () => {
         if (sql.includes('tenant_member_ai_group_assignments')) return { rows: [
           { group_code: 'gptnursing' }, { group_code: 'gptreception' }
         ], rowCount: 2 }
-        if (sql.includes('tenant_member_ai_department_assignments')) return { rows: [{ department_code: 'obgyn' }], rowCount: 1 }
+        if (sql.includes('tenant_member_ai_department_assignments')) return { rows: [{ department_code: 'obgyn', assigned_at: createdAt }], rowCount: 1 }
         if (sql.includes('INSERT INTO app_sessions')) {
           insert.push({ sql, values })
           return { rows: [{ created_at: createdAt, updated_at: createdAt }], rowCount: 1 }
@@ -178,8 +319,8 @@ describe('tenant membership roles', () => {
     const created = await store.createSession(principal, versions, 'gptreception')
     expect(created).toMatchObject({ status: 'initializing', aiBudgetGroupCode: 'gptreception' })
     expect(insert).toHaveLength(1)
-    expect(insert[0]?.sql).toContain('ai_budget_group_code, ai_budget_department_code')
-    expect(insert[0]?.values?.slice(-2)).toEqual(['gptreception', 'obgyn'])
+    expect(insert[0]?.sql).toContain('ai_budget_group_code, ai_budget_department_code, ai_budget_department_assigned_at')
+    expect(insert[0]?.values?.slice(-3)).toEqual(['gptreception', 'obgyn', createdAt])
   })
 })
 
@@ -457,7 +598,7 @@ describe('session entitlement authorization', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: false,
-            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v14', model_version: 'gpt-6-luna',
             schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -625,7 +766,7 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v14', model_version: 'gpt-6-luna',
             schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -666,7 +807,7 @@ describe('patient setup persistence coordination', () => {
           rows: [{
             session_id: sessionId, patient_profile_id: patientProfileId, scenario_seed: 'r'.repeat(43), status: 'initializing',
             created_at: createdAt, setup_idempotency_key_hash: null, sessions_enabled: true,
-            prompt_version: 'patient-scenario-prompt-v13', model_version: 'gpt-6-luna',
+            prompt_version: 'patient-scenario-prompt-v14', model_version: 'gpt-6-luna',
             schema_version: 8, policy_version: 'patient-scenario-policy-v3'
           }], rowCount: 1
         }
@@ -1381,5 +1522,31 @@ describe('assessment submission retries', () => {
     })
     expect(stateStore.acceptAssessment).not.toHaveBeenCalled()
     expect(stateStore.recordTerminal).toHaveBeenCalledOnce()
+  })
+})
+
+describe('session engagement pulses', () => {
+  it('serializes pulses on the owned active session and accepts only the first recent pulse', async () => {
+    const statements: string[] = []
+    const client = {
+      query: vi.fn(async (sql: string) => {
+        statements.push(sql)
+        if (sql.includes('FROM app_sessions')) return { rows: [{ session_id: sessionId }], rowCount: 1 }
+        if (sql.includes('INSERT INTO session_engagement_pulses')) return { rows: [{ pulse_id: 'pulse' }], rowCount: 1 }
+        return { rows: [], rowCount: null }
+      }),
+      release: vi.fn()
+    }
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool
+    const store = createPostgresSessionStore(pool)
+
+    await expect(store.recordEngagementPulse(principal, sessionId, '123e4567-e89b-42d3-a456-426614174000'))
+      .resolves.toBe('recorded')
+    expect(statements[0]).toBe('BEGIN')
+    expect(statements.find((sql) => sql.includes('FROM app_sessions'))).toContain("s.status = 'active'")
+    expect(statements.find((sql) => sql.includes('FROM app_sessions'))).toContain("m.status = 'active'")
+    expect(statements.find((sql) => sql.includes('INSERT INTO session_engagement_pulses'))).toContain("interval '25 seconds'")
+    expect(statements).toContain('COMMIT')
+    expect(client.release).toHaveBeenCalledOnce()
   })
 })

@@ -7,6 +7,7 @@ Type=simple
 LogNamespace=gptmd-live
 User=eaglesvn
 Group=eaglesvn
+SupplementaryGroups=gptmd-ops
 WorkingDirectory=/home/obgyn.eaglesvn.club/gptmd/current/api
 EnvironmentFile=/home/eaglesvn/.config/gptmd-live/api.env
 Environment=NODE_ENV=production

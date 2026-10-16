@@ -1,0 +1,12 @@
+[Unit]
+Description=GPTMD restricted operations socket
+
+[Socket]
+ListenStream=/run/gptmd-ops.sock
+SocketUser=root
+SocketGroup=gptmd-ops
+SocketMode=0660
+RemoveOnStop=true
+
+[Install]
+WantedBy=sockets.target

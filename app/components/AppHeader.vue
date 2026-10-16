@@ -1,7 +1,11 @@
 <template>
   <header class="site-header">
     <NuxtLink class="brand" to="/" aria-label="GPTpatient home" @click="closeMenu">
-      <img src="/assets/images/logosing.svg" alt="GPTpatient" width="150" height="55">
+      <template v-if="selectedMembership?.branding">
+        <img class="customer-brand-logo" :src="selectedMembership.branding.logoPath" :alt="selectedMembership.branding.displayName" width="52" height="52">
+        <span class="customer-brand-name">{{ selectedMembership.branding.displayName }}</span>
+      </template>
+      <img v-else src="/assets/images/logosing.svg" alt="GPTpatient" width="150" height="55">
     </NuxtLink>
 
     <button
@@ -103,7 +107,10 @@ watch(() => route.fullPath, closeMenu);
 
 .brand {
   display: inline-flex;
+  align-items: center;
   flex: 0 0 auto;
+  gap: 0.65rem;
+  min-height: 2.75rem;
 }
 
 .brand img {
@@ -111,6 +118,16 @@ watch(() => route.fullPath, closeMenu);
   height: 48px;
   max-width: 100%;
   object-fit: contain;
+}
+
+.brand img.customer-brand-logo {
+  width: auto;
+}
+
+.customer-brand-name {
+  color: inherit;
+  font-size: 1rem;
+  font-weight: 700;
 }
 
 nav {
@@ -127,6 +144,7 @@ nav a {
   display: inline-flex;
   font-size: 0.94rem;
   gap: 0.4rem;
+  min-height: 2.75rem;
   padding: 0.55rem 0.65rem;
   text-decoration: none;
 }
@@ -145,7 +163,7 @@ nav a svg,
 nav a:hover,
 nav a:focus-visible,
 nav a.router-link-active {
-  background: rgb(255 255 255 / 15%);
+  background: rgb(0 0 0 / 18%);
 }
 
 nav a.visit-link {
@@ -163,7 +181,7 @@ nav a.visit-link:focus-visible {
 .menu-toggle {
   align-items: center;
   background: transparent;
-  border: 1px solid rgb(255 255 255 / 55%);
+  border: 1px solid rgb(255 255 255 / 90%);
   border-radius: 0.5rem;
   color: inherit;
   cursor: pointer;
@@ -172,7 +190,7 @@ nav a.visit-link:focus-visible {
   font: inherit;
   gap: 0.5rem;
   justify-content: center;
-  min-height: 2.6rem;
+  min-height: 2.75rem;
   padding: 0.45rem 0.7rem;
 }
 
@@ -190,8 +208,9 @@ nav a.visit-link:focus-visible {
 
 .theme-toggle:focus-visible,
 .menu-toggle:focus-visible,
+.brand:focus-visible,
 nav a:focus-visible {
-  outline: 2px solid currentcolor;
+  outline: 3px solid currentcolor;
   outline-offset: 3px;
 }
 
@@ -215,10 +234,10 @@ nav a:focus-visible {
 
   .menu-toggle {
     display: inline-flex;
-    height: 2.6rem;
+    height: 2.75rem;
     grid-column: 2;
     grid-row: 1;
-    width: 2.6rem;
+    width: 2.75rem;
   }
 
   .theme-toggle {
@@ -240,7 +259,6 @@ nav a:focus-visible {
   }
 
   nav a {
-    min-height: 2.75rem;
     width: 100%;
   }
 }

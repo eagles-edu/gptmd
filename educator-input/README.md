@@ -17,9 +17,17 @@ case/rubric. The ordinary learner session-setup generator uses its source-
 attributed summaries as factual grounding for catalog-covered conditions
 while generating a new fictional patient with varied history and persona.
 Each saved scenario records the catalog approval, revision, and content hash.
-Condition selection is not incidence-weighted until incidence data is
-provided. Preserve source attribution and review provenance; the catalog is
-not a patient-specific answer key or standalone clinical standard.
+The latest cleaned runtime source is
+`obgyn-disorders.reference.diagnostics-tests-cleaned.json`. It contains 130
+disorder records and 8 routine-care service records, encounter-relevance
+estimates, and structured illustrative diagnostic profiles. Runtime picks one
+primary focus using the supplied overall encounter-relevance estimates as
+normalized sampling weights, with selection pinned to the scenario seed.
+These are modeled encounter-relevance estimates, explicitly not population
+incidence, prevalence, individual risk, or diagnostic certainty. The estimates
+are planning values, not measured rates from a single dataset. Preserve source
+attribution and review provenance; neither catalog is a patient-specific
+answer key or standalone clinical standard.
 
 Educator review also needs to define voice and communication-variability
 settings independently for each age/body portrait variant. The ten variant
@@ -46,7 +54,18 @@ educator review or clinical approval.
 
 ## Import audit
 
-The JSON parses and contains 130 unique disorder labels, two named sections per
+The current cleaned runtime source has 138 records (130 disorders plus 8
+routine-care services), 276 section summaries, and 138 structured diagnostic
+profiles. Its metadata reports 260 source-backed disorder sections, 86
+conditions with external sources, and 101 external-source records; the eight
+service records account for the additional 16 section summaries. Diagnostic
+examples are sent to generation for the selected focus only, rather than
+adding every test profile to every provider request. They are illustrative
+mock-report language, not orders or universal thresholds. The encounter
+relevance scores influence case-focus sampling but must not be described as
+real-world incidence.
+
+The older reviewed JSON parses and contains 130 unique disorder labels, two named sections per
 condition (260 section records), and no empty section summaries after the
 2026-10-14 backfill. All 260 sections now have explicit `source_attribution`
 and section-level `source_url` values. Nine Diagnosis & treatment records were

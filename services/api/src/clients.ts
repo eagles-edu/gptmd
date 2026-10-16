@@ -5,11 +5,14 @@ import type { ApiDependencies, PostgresProbe, RedisProbe } from './app.js'
 import type { SetupQueueLimits } from './bounded-setup-queue.ts'
 import { generatePatientScenario } from './patient-profile.js'
 import { generatePatientTurn } from './patient-turn.js'
-import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.js'
 import { createPostgresSessionStore } from './session-store.ts'
 import { createPostgresTenantEntitlementAdminStore } from './tenant-entitlements.ts'
 import { createPostgresPatientVariantSettingsStore } from './patient-variant-settings.ts'
 import { createPostgresOrganizationAiTimeBudgetStore } from './organization-ai-time-budget.ts'
+import { createPostgresProviderTokenReservationStore } from './provider-token-reservations.ts'
+import { createPostgresSessionArchiveStore } from './session-archives.ts'
+import { createPostgresConsumerTokenCatalogStore } from './consumer-token-catalog.ts'
+import { createPostgresTokenEntitlementStore } from './token-entitlements.ts'
 import { createRedisPatientStateStore, type SessionCommitTimingRecorder } from './patient-state-store.ts'
 import { createRealtimeTranscriptionUsageObserver } from './realtime-transcription-usage-observer.ts'
 import { resolveTrustedProxyAddresses } from './listener-config.ts'
@@ -98,6 +101,9 @@ export function createServiceClients(
   const openaiClient = env.OPENAI_API_KEY
     ? new OpenAI({ apiKey: env.OPENAI_API_KEY, timeout: 15_000, maxRetries: 2 })
     : null
+  const providerTokenReservations = postgresPool
+    ? createPostgresProviderTokenReservationStore(postgresPool)
+    : null
   const transcriptionUsageObservers = new Map<string, () => Promise<void>>()
   const openTranscriptionUsageObserver = openaiClient
     ? createRealtimeTranscriptionUsageObserver(env.OPENAI_API_KEY!)
@@ -181,6 +187,11 @@ export function createServiceClients(
                  GROUP BY table_name HAVING count(*) = 2
                ) AND
                to_regclass('public.app_sessions') IS NOT NULL AND
+               to_regclass('public.gptmd_consumer_token_catalog') IS NOT NULL AND
+               to_regclass('public.gptmd_consumer_token_catalog_audit') IS NOT NULL AND
+              to_regclass('public.gptmd_token_entitlement_grants') IS NOT NULL AND
+              to_regclass('public.gptmd_token_entitlement_entries') IS NOT NULL AND
+              to_regclass('public.gptmd_token_reservation_allocations') IS NOT NULL AND
                to_regclass('public.session_identity_binding') IS NOT NULL AND
                to_regclass('public.session_events') IS NOT NULL AND
                to_regclass('public.app_assessment_drafts') IS NOT NULL AND
@@ -192,11 +203,13 @@ export function createServiceClients(
                to_regclass('public.tenant_member_ai_group_assignments') IS NOT NULL AND
                to_regclass('public.tenant_member_ai_department_assignments') IS NOT NULL AND
                to_regclass('public.tenant_member_ai_assignment_audit') IS NOT NULL AND
+               to_regclass('public.tenant_member_roster_invitations') IS NOT NULL AND
+               to_regclass('public.tenant_member_roster_invitation_audit') IS NOT NULL AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'app_sessions'
-                   AND column_name IN ('ai_budget_group_code', 'ai_budget_department_code')
-                 GROUP BY table_name HAVING count(*) = 2
+                   AND column_name IN ('ai_budget_group_code', 'ai_budget_department_code', 'ai_budget_department_assigned_at')
+                 GROUP BY table_name HAVING count(*) = 3
                ) AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
@@ -209,6 +222,17 @@ export function createServiceClients(
                    AND pg_get_constraintdef(oid) LIKE '%assessment_submitted%'
                ) AND
                to_regclass('public.provider_usage') IS NOT NULL AND
+               to_regclass('public.provider_token_reservations') IS NOT NULL AND
+               EXISTS (
+                 SELECT 1 FROM pg_constraint
+                 WHERE conrelid = to_regclass('public.provider_token_reservations')
+                   AND conname = 'provider_token_reservations_session_identity_snapshot_check'
+               ) AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'app_sessions'
+                   AND column_name = 'ai_budget_department_assigned_at'
+               ) AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'provider_usage'
@@ -222,6 +246,17 @@ export function createServiceClients(
                to_regclass('public.download_engagement') IS NOT NULL AND
                to_regclass('public.session_outcomes') IS NOT NULL AND
                to_regclass('public.session_archive_jobs') IS NOT NULL AND
+               to_regclass('public.session_archive_artifacts') IS NOT NULL AND
+               EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'session_archive_jobs'
+                   AND column_name IN ('artifact_id', 'download_expires_at')
+                 GROUP BY table_name HAVING count(*) = 2
+               ) AND EXISTS (
+                 SELECT 1 FROM information_schema.columns
+                 WHERE table_schema = 'public' AND table_name = 'download_engagement'
+                   AND column_name = 'download_id'
+               ) AND
                EXISTS (
                  SELECT 1 FROM information_schema.columns
                  WHERE table_schema = 'public' AND table_name = 'app_sessions'
@@ -243,28 +278,11 @@ export function createServiceClients(
       redis,
       postgres,
       openaiConfigured: Boolean(openaiClient),
-      generateResponse: openaiClient
-        ? async (input, recordTiming?: ResponsesTimingRecorder) => {
-            const startedAt = performance.now()
-            let firstTokenReported = false
-            const stream = openaiClient.responses.stream({
-              model: env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
-              input
-            })
-            const reportFirstToken = () => {
-              if (firstTokenReported) return
-              firstTokenReported = true
-              reportResponsesTiming(recordTiming, 'first_token', startedAt)
-            }
-            stream.on('response.output_text.delta', reportFirstToken)
-            stream.on('response.refusal.delta', reportFirstToken)
-            stream.on('response.completed', () => reportResponsesTiming(recordTiming, 'completed', startedAt))
-            const result = await stream.finalResponse()
-            return { id: result.id, outputText: result.output_text }
-          }
+      reserveProviderTokens: providerTokenReservations
+        ? (input) => providerTokenReservations.reserve(input)
         : null,
       generatePatientScenario: openaiClient
-        ? (versions, asOf, scenarioSeed, recordTiming, recordProviderUsage) => generatePatientScenario(
+        ? (versions, asOf, scenarioSeed, recordTiming, recordProviderUsage, reserveProviderTokens) => generatePatientScenario(
             openaiClient,
             versions.modelVersion,
             {
@@ -274,6 +292,7 @@ export function createServiceClients(
               scenarioSeed,
               recordTiming,
               recordProviderUsage,
+              reserveProviderTokens,
               recordAbandonedConversationIds: async (conversationIds) => {
                 if (!postgresPool) throw new Error('Patient setup Conversation cleanup storage is unavailable')
                 await postgresPool.query(
@@ -287,11 +306,12 @@ export function createServiceClients(
           )
         : null,
       generatePatientTurn: openaiClient
-        ? (context, recordTiming) => generatePatientTurn(
+        ? (context, recordTiming, reserveProviderTokens) => generatePatientTurn(
             openaiClient,
             env.OPENAI_MODEL?.trim() || 'gpt-6-luna',
             context,
-            recordTiming
+            recordTiming,
+            reserveProviderTokens
           )
         : null,
       createTranscriptionCall: openaiClient
@@ -393,7 +413,10 @@ export function createServiceClients(
         : null,
       organizationAiTimeBudgetStore: postgresPool
         ? createPostgresOrganizationAiTimeBudgetStore(postgresPool)
-        : null
+        : null,
+      sessionArchiveStore: postgresPool ? createPostgresSessionArchiveStore(postgresPool) : null,
+      consumerTokenCatalogStore: postgresPool ? createPostgresConsumerTokenCatalogStore(postgresPool) : null,
+      tokenEntitlementStore: postgresPool ? createPostgresTokenEntitlementStore(postgresPool) : null
     },
     async close() {
       await Promise.all([...transcriptionUsageObservers.values()].map((closeObserver) => closeObserver()))

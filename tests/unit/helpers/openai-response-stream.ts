@@ -5,12 +5,13 @@ type ResponseListener = (event: Record<string, unknown>) => void
 
 export function createMockResponsesStream<T>(responseOrFactory: T | (() => T)) {
   let listeners = new Map<ResponseEvent, ResponseListener[]>()
+  const inputTokenCount = vi.fn(async () => ({ object: 'response.input_tokens' as const, input_tokens: 100 }))
   let stream: {
     on: ReturnType<typeof vi.fn>
     finalResponse: ReturnType<typeof vi.fn>
   }
 
-  const streamFactory = vi.fn((_request: unknown) => {
+  const streamFactory = vi.fn((_request: unknown, _options?: unknown) => {
     listeners = new Map()
     stream = {
       on: vi.fn((event: ResponseEvent, listener: ResponseListener) => {
@@ -56,5 +57,5 @@ export function createMockResponsesStream<T>(responseOrFactory: T | (() => T)) {
     return stream
   })
 
-  return { streamFactory }
+  return { streamFactory, inputTokenCount }
 }

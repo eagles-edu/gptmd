@@ -79,6 +79,8 @@ describe('patient setup Conversation isolation', () => {
       finalResponse: vi.fn().mockRejectedValue(new Error('provider stream failed'))
     }
     const recordAbandonedConversationIds = vi.fn(async () => undefined)
+    const reservation = { settle: vi.fn().mockResolvedValue(undefined), hold: vi.fn().mockResolvedValue(undefined) }
+    const reserveProviderTokens = vi.fn().mockResolvedValue(reservation)
     const client = {
       conversations: {
         create: vi.fn().mockResolvedValue({ id: 'conv-provider-failure' }),
@@ -88,11 +90,12 @@ describe('patient setup Conversation isolation', () => {
           delete: vi.fn().mockRejectedValue(new Error('item delete failed'))
         }
       },
-      responses: { stream: vi.fn(() => stream) }
+      responses: { inputTokens: { count: vi.fn().mockResolvedValue({ input_tokens: 100 }) }, stream: vi.fn(() => stream) }
     } as unknown as OpenAI
 
     await expect(generatePatientScenario(client, 'gpt-6-luna', {
-      scenarioSeed: 'p'.repeat(43), maxAttempts: 1, recordAbandonedConversationIds
+      scenarioSeed: 'p'.repeat(43), maxAttempts: 1, recordAbandonedConversationIds,
+      reserveProviderTokens
     })).rejects.toMatchObject({
       name: PatientScenarioProviderError.name,
       conversationIds: ['conv-provider-failure']
@@ -100,6 +103,9 @@ describe('patient setup Conversation isolation', () => {
 
     expect(client.conversations.delete).not.toHaveBeenCalled()
     expect(recordAbandonedConversationIds).toHaveBeenCalledWith(['conv-provider-failure'])
+    expect(reserveProviderTokens).toHaveBeenCalledWith(100, 8_192)
+    expect(reservation.hold).toHaveBeenCalledOnce()
+    expect(reservation.settle).not.toHaveBeenCalled()
   })
 
   it('clears setup input and answer-key output before returning the validated scenario', async () => {
@@ -117,7 +123,7 @@ describe('patient setup Conversation isolation', () => {
         educationLevel: 'college', willingnessToDisclose: 'gradual'
       }
     }
-    const { streamFactory } = createMockResponsesStream({
+    const { streamFactory, inputTokenCount } = createMockResponsesStream({
       id: 'resp-1', status: 'completed', output_text: JSON.stringify(profile),
       usage: { input_tokens: 20, output_tokens: 30, total_tokens: 50 }
     })
@@ -136,7 +142,7 @@ describe('patient setup Conversation isolation', () => {
           })
         }
       },
-      responses: { stream: streamFactory }
+      responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory }
     } as unknown as OpenAI
 
     const timings: string[] = []
@@ -151,6 +157,7 @@ describe('patient setup Conversation isolation', () => {
     const request = streamFactory.mock.calls[0]?.[0] as {
       instructions?: string
       prompt_cache_options?: { mode: string; ttl: string }
+      max_output_tokens?: number
       input?: Array<
         | {
             role: 'developer'
@@ -160,6 +167,11 @@ describe('patient setup Conversation isolation', () => {
       >
       text?: { format?: unknown }
     }
+    expect(inputTokenCount).toHaveBeenCalledWith(expect.objectContaining({
+      model: 'gpt-6-luna', conversation: 'conv-1', input: request.input, text: request.text
+    }))
+    expect(request.max_output_tokens).toBe(8_192)
+    expect(streamFactory.mock.calls[0]?.[1]).toEqual({ maxRetries: 0 })
     const canonicalCatalog = readFileSync(
       new URL('../../services/api/catalog/patient-profile.json', import.meta.url), 'utf8'
     )
@@ -168,6 +180,7 @@ describe('patient setup Conversation isolation', () => {
     const scenarioInput = request.input?.[1]
     const catalogBlock = setupInput?.role === 'developer' ? setupInput.content[1] : undefined
     const educatorBlock = setupInput?.role === 'developer' ? setupInput.content[2] : undefined
+    const selectedFocusBlock = setupInput?.role === 'developer' ? setupInput.content[3] : undefined
     expect(request.instructions).toBeUndefined()
     expect(request.prompt_cache_options).toEqual({ mode: 'explicit', ttl: '30m' })
     expect(setupInput?.role).toBe('developer')
@@ -190,6 +203,9 @@ describe('patient setup Conversation isolation', () => {
     expect(educatorBlock?.text).toContain('Endometriosis')
     expect(educatorBlock?.text).toContain('Mayo Clinic')
     expect(educatorBlock?.prompt_cache_breakpoint).toEqual({ mode: 'explicit' })
+    expect(selectedFocusBlock?.text).toContain('Seed-selected primary case focus')
+    expect(selectedFocusBlock?.text).toContain('diagnostics')
+    expect(selectedFocusBlock?.text).toContain('modeled encounter relevance, not population incidence')
     expect((setupInput?.role === 'developer' ? setupInput.content[0]?.text.length ?? 0 : 0) +
       (catalogBlock?.text.length ?? 0) + (educatorBlock?.text.length ?? 0)).toBeGreaterThan(4096)
     expect(scenarioInput?.role).toBe('user')
@@ -206,8 +222,12 @@ describe('patient setup Conversation isolation', () => {
       catalogId: 'obgyn-disorders',
       mode: 'primary_condition_reference_and_simulation_augmentation',
       approvalStatus: 'approved_for_gptmd_educator_input',
-      sourceRevision: '2026-10-14',
-      conditionCount: 130,
+      sourceRevision: '2026-10-16',
+      conditionCount: 138,
+      routineCareRecordCount: 8,
+      probabilityModelReviewedOn: '2026-10-15',
+      selectedPrimaryCaseFocus: expect.any(String),
+      estimateType: 'modeled encounter relevance, not population incidence',
       sha256: expect.stringMatching(/^[a-f0-9]{64}$/)
     }))
     expect(timings).toEqual(['first_token', 'completed'])
@@ -220,6 +240,11 @@ describe('patient setup Conversation isolation', () => {
     let responseNumber = 0
     let conversationNumber = 0
     const recordProviderUsage = vi.fn(async () => undefined)
+    const reservations = Array.from({ length: 2 }, () => ({
+      settle: vi.fn().mockResolvedValue(undefined), hold: vi.fn().mockResolvedValue(undefined)
+    }))
+    let reservationIndex = 0
+    const reserveProviderTokens = vi.fn(async () => reservations[reservationIndex++]!)
     const profile = {
       fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
       reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', painHistoryStatus: 'absent', painEpisodes: [], history: [],
@@ -232,7 +257,7 @@ describe('patient setup Conversation isolation', () => {
         educationLevel: 'college', willingnessToDisclose: 'gradual'
       }
     }
-    const { streamFactory } = createMockResponsesStream(() => {
+    const { streamFactory, inputTokenCount } = createMockResponsesStream(() => {
       responseNumber += 1
       return {
         id: `response-${responseNumber}`, status: 'completed',
@@ -254,12 +279,13 @@ describe('patient setup Conversation isolation', () => {
           delete: vi.fn(async () => ({ id: 'conv' }))
         }
       },
-      responses: { stream: streamFactory }
+      responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory }
     } as unknown as OpenAI
 
     const scenario = await generatePatientScenario(client, 'gpt-6-luna', {
       asOf: new Date('2026-10-01T00:00:00.000Z'), maxAttempts: 2, scenarioSeed: seed,
-      recordProviderUsage
+      recordProviderUsage,
+      reserveProviderTokens
     })
 
     const responseInputs = streamFactory.mock.calls.map(([rawRequest]) => {
@@ -269,6 +295,11 @@ describe('patient setup Conversation isolation', () => {
     expect(scenario.conversationId).toBe('conv-2')
     expect(client.conversations.delete).toHaveBeenCalledWith('conv-1')
     expect(recordProviderUsage).toHaveBeenCalledTimes(2)
+    expect(reserveProviderTokens).toHaveBeenCalledTimes(2)
+    expect(reserveProviderTokens).toHaveBeenNthCalledWith(1, 100, 8_192)
+    expect(reserveProviderTokens).toHaveBeenNthCalledWith(2, 100, 8_192)
+    expect(reservations[0]?.settle).toHaveBeenCalledWith('response-1', 322)
+    expect(reservations[1]?.settle).toHaveBeenCalledWith('response-2', 444)
     expect(recordProviderUsage.mock.calls.map(([usage]) => usage)).toEqual([
       expect.objectContaining({
         responseId: 'response-1', inputTokens: 310, cachedInputTokens: 30,
@@ -304,7 +335,7 @@ describe('patient setup Conversation isolation', () => {
         educationLevel: 'college', willingnessToDisclose: 'gradual'
       }
     }
-    const { streamFactory } = createMockResponsesStream({
+    const { streamFactory, inputTokenCount } = createMockResponsesStream({
       id: 'resp-old-prompt', status: 'completed', output_text: JSON.stringify(profile)
     })
     const client = {
@@ -312,11 +343,11 @@ describe('patient setup Conversation isolation', () => {
         create: vi.fn().mockResolvedValue({ id: 'conv-old-prompt' }),
         items: { list: vi.fn(async function* () {}), delete: vi.fn() }
       },
-      responses: { stream: streamFactory }
+      responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory }
     } as unknown as OpenAI
 
     const scenario = await generatePatientScenario(client, 'gpt-6-luna', {
-      promptVersion: 'patient-scenario-prompt-v13',
+      promptVersion: 'patient-scenario-prompt-v14',
       scenarioSeed: 'o'.repeat(43), maxAttempts: 1
     })
 

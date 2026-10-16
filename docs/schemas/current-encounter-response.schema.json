@@ -61,6 +61,10 @@
               ],
               "additionalProperties": false
             },
+            "addonSpendNotice": {
+              "default": false,
+              "type": "boolean"
+            },
             "patient": {
               "anyOf": [
                 {
@@ -564,6 +568,7 @@
             "createdAt",
             "updatedAt",
             "versions",
+            "addonSpendNotice",
             "patient",
             "phase",
             "currentTurnSequence",

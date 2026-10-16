@@ -1,5 +1,70 @@
 # Architectural and operational decisions
 
+## 2026-10-16 - Deploy tenant-scoped VinMed branding
+
+**Beginning - trigger and context:** The user requested a fictitious corporate
+hospital tenant with its own logo and a designated customer administrator. The
+worktree was already in progress, so existing changes and the supplied SVG had
+to be preserved. Live account provisioning depends on an authenticated
+Supabase identity and must not grant platform system-admin privileges.
+
+**Middle - decisions and work:** Added migration 040 for tenant-scoped display
+names and same-origin SVG paths, returned branding only with an authenticated
+active membership, and changed the selected-workspace header to show that
+tenant's logo/name. Added a guarded seed for the isolated `vinmed-hospital-demo`
+tenant with a customer-admin membership and disabled default entitlements. The
+script checks the live database identity, required migrations, unique active
+Auth identity, and absence of an existing tenant. It was not run because the
+designated identity was absent. A focused browser test checks the rendered SVG
+loads and that unbranded workspace behavior remains covered separately.
+
+**End - outcome and verification:** `npm run check` passed before the final
+documentation-only edits; the additional VinMed header browser test passed in
+Chromium, Firefox, and WebKit. The mirror deployment applied migration 040 and
+activated release `2026-10-16T110205011Z`. All 39 repository migrations match
+the live ledger. All three services, API readiness, public home/privacy/logo,
+and OAuth/browser preflights returned success. The deployed logo SHA-256
+matches the supplied local asset. The release tree has the expected owner and
+group with no group/other-writable files. The branding table and VinMed tenant
+are present/absent respectively as expected; no membership or branding row
+exists yet. The live account flow remains incomplete until the designated
+identity completes Google sign-in and the guarded seed succeeds. Raw audio
+retention and token-funding evidence remain separate open product gates.
+
+**Future utility:** Reuse the tenant-scoped branding projection and fail-closed
+provisioning pattern for customer-specific identity and visual setup without
+confusing customer administration with GPTMD platform operations.
+
+## 2026-10-16 - Deploy token entitlement buckets to the OBGYN mirror
+
+**Beginning - trigger and context:** The local entitlement release added
+included/add-on token buckets, reservation settlement, a learner notice, and
+the operator-managed consumer catalog. Before sync, the live database was at
+migration 032 and had no token grant schema; the complete local project gate
+and disposable phase verifier had passed.
+
+**Middle - decisions and work:** Used `npm run deploy:live` to stage the web
+and API artifacts, apply only unapplied migrations, atomically switch the
+release symlink, and restart the three GPTMD services. Migrations 033-037
+applied. Checkout remained disabled, and no grants or balances were seeded.
+
+**End - outcome and verification:** Release
+`2026-10-16T072730705Z` is active. All three services are active with zero
+restarts; API readiness reports Redis, PostgreSQL, OpenAI, and auth ready.
+Origin/public OAuth and Chromium home/OAuth checks passed. The shipped
+educator catalog is owned by `eaglesvn:eaglesvn` with mode 0644. A read-only
+live query confirmed migrations 033-037 and zero grants, reservations, offer
+catalog entries, organization budget settings, group assignments, archive
+jobs, and download-engagement rows. This verifies deployment/readiness only:
+no learner-funded setup or provider turn was run, and no live token purchase
+or renewal path exists. Provider usage remains unavailable to learners until
+trusted grants are configured; the scsstx test balance requires an explicit
+amount and expiry decision.
+
+**Future utility:** Keep the live release distinct from product funding
+readiness. Configure a verified ACB2Pay payment/renewal issuer or explicitly
+approved test grant before claiming that learner sessions can consume tokens.
+
 ## 2026-10-14 — Define per-variant patient voice and variability settings
 
 **Beginning — trigger and context:** The user clarified that each of GPTMD's
@@ -576,7 +641,19 @@ callback or broaden the CRS exclusion for that separate gate.
 
 **Future utility:** These choices constrain the upcoming member assignment, session creation, reservation ledger, retry, and reconciliation paths; they prevent silent use of unallocated pool balance or changing the budget group underneath an active session.
 
-**Project impact:** Observed: the product policy is now recorded consistently in the reference and checklist. Runtime correctness is unchanged until the corresponding API and database behavior is implemented and tested.
+## 2026-10-15 — Separate consumer token plans from organization budgets
+
+**Beginning — trigger and context:** The user distinguished consumer subscriptions from corporate customer budgets and clarified that model, voice, reasoning, and personality are controlled in-house by TEAECL, the GPTMD operating organization.
+
+**Middle — decisions and work:** Consumer plans use monthly included-token tiers: Lunar at a configurable base amount, Solar at twice that amount, and Stellar at three times that amount. TEAECL manages plan amounts, prices, and an extensible client-facing add-on catalog. Purchased individual add-on credits carry forward; included monthly plan tokens reset monthly. Consumer plan grants remain separate from corporate organization/group/department allocations. OpenAI is the primary provider; a different provider is reserved for continuity when OpenAI is unavailable, with in-house health/routing policy and matching GPTMD response/safety contracts. TEAECL controls both provider pools. Each provider attempt is recorded and billable actual usage is reconciled once against the consumer's single plan/add-on balance and its corresponding operational provider pool; failover does not expose a second learner wallet. Learners and corporate administrators do not receive model/voice/reasoning/personality or provider-routing controls.
+
+**End — outcome and verification:** Added `docs/consumer-ai-token-plans.md` and linked it from the organization entitlement reference. Follow-up implementation added migration 033, an allowlisted system-admin catalog API/editor, revision conflict protection, append-only audit, and explicit checkout-disabled projections. `npm run check` passed, including unit/API tests, production build, 48 cross-browser E2E tests, 44 preflight browser tests, and 11 mobile checks; the disposable-database migration verifier also passed. No deployment, product publication, payment, plan grant, or provider failover has occurred. No prices or token quantities were invented.
+
+**Rationale:** Separate subscription entitlements, corporate budget allocations, and provider operating capacity so customer administration cannot alter TEAECL's AI configuration, while billable failover attempts remain accurately reconciled.
+
+**Future utility:** Use this boundary when implementing the public catalog, consumer subscription ledger, add-on payments, and provider-aware metering. Cross-provider token normalization and failover behavior remain explicit implementation gates.
+
+**Project impact:** Observed: consumer catalog configuration is now separated from corporate budgets and only the allowlisted system-admin lane can edit it. Runtime purchases and entitlements remain disabled until their separate accounting and payment paths exist.
 ## 2026-10-14 — Preserve OBGYN disorder catalog as educator review input
 
 **Beginning — trigger and context:** The user supplied a curated OBGYN disorder catalog to use for educator input on fictional training cases. The project does not yet implement instructor case authoring, and clinical content must remain distinct from model instructions and runtime answer-key truth.
@@ -610,3 +687,99 @@ callback or broaden the CRS exclusion for that separate gate.
 **Future utility:** Keep organization-admin authority explicit, preserve historical session attribution, and avoid renewing a learner's proration period when a roster import repeats the same department.
 
 **Project impact:** Observed: API tests verify tenant-role handling, assignment import, assignment persistence, and calendar-month proration; session creation snapshots department and group codes in code. Expected: tenant-scoped roster workflows make customer setup manageable. No live migration, deployment, or token balance enforcement was verified.
+
+## 2026-10-16 — Support customer roster CSV, XLSX, and ODS
+
+**Beginning — trigger and context:** The customer-admin assignment workflow supported CSV only, while the user requested import/export in XLSX, ODS, and CSV for hospital IT roster management.
+
+**Middle — decisions and work:** Added a browser-side roster spreadsheet boundary using SheetJS 0.20.3 from the project's official package distribution. It imports and exports all three formats, preserves identifier/code values as text, rejects formulas, enforces a 5 MB file bound and 500-member row cap, and sends the same existing tenant-scoped assignment payload to the API. The downloadable roster remains based only on active members visible in the authenticated tenant workspace.
+
+**End — outcome and verification:** Unit tests verify CSV/XLSX/ODS round trips, BOM and quoted CSV parsing, required headers, text-only identifiers, formula rejection, and file/row limits. Browser tests verify downloads and imports for all three formats in Chromium, Firefox, and WebKit. `npm run check` passed: 57 Vitest files / 375 tests, warning-free production build, 48 standard browser cases, 44 preflight browser cases, 10 mobile-viewer cases, and one mobile-viewer tool case. No live deployment or tenant roster mutation was performed.
+
+**Future utility:** Hospital administrators can use common spreadsheet formats without changing tenant authorization, group/department assignment rules, or session-pinned historical assignments.
+
+**Project impact:** Observed: local browser and unit evidence confirms three-format handling over the same tenant-scoped assignment contract. Live customer workflows remain deployment-gated.
+
+## 2026-10-16 — Notify learners when add-on tokens are spent
+
+**Beginning — trigger and context:** The learner entitlement flow could debit included or add-on grants, but it did not tell a learner when confirmed provider usage began consuming add-ons or preserve dismissal across reloads. The next account-policy decision is an informational, once-dismissable notice; payment and grant issuance remain separate unfinished work.
+
+**Middle — decisions and work:** Added migration 037 with session-level `addon_tokens_used` and `addon_notice_acknowledged` flags. Reservation reconciliation reports whether actual settled tokens reached an add-on grant; patient turns persist that fact with settlement, while scenario setup returns the signal and writes it through its existing session transaction to avoid locking the same row on a second connection. Setup, turn, and owner-scoped restore responses expose only an unacknowledged notice. A learner-only, session-owner-scoped acknowledgment route persists dismissal. The encounter shows the notice after entering the room or after a later turn, with the existing included-first funding and 365-day add-on expiry policy. Ambiguous/held usage alone does not trigger it.
+
+**End — outcome and verification:** `npm run check` passed locally: 59 Vitest files / 392 tests, API compilation, generated schema and diagram checks, warning-free Nuxt production build, 48 cross-browser cases, 44 encounter/preflight cases, 10 mobile-viewer cases, and one viewer-tool case. A focused regression verifies confirmed add-on debit versus included-only debit, API role enforcement, and the browser restore/dismiss flow. Migration 037 and application changes have not been applied to the live mirror; no checkout, grant issuance, deployment, or live balance change occurred. `a09` and `d02` remain open.
+
+**Future utility:** Keep user notification tied to actual ledger consumption rather than reservation ceilings, and preserve the acknowledgment at the authenticated session-owner boundary.
+
+**Project impact:** Observed: learners can be informed once when a settled provider usage debit spends add-on tokens, including after restoring an encounter. Expected: the persistent notice should make automatic included-first overage behavior more transparent. Live entitlement funding and payment verification remain independent gates.
+
+## 2026-10-16 — Show learner-scoped provider usage in Account
+
+**Beginning — trigger and context:** The learner Account page still labeled usage as unavailable even though `provider_usage` records actual provider token totals by tenant and authenticated subject. The workspace selector supports multiple memberships, so usage needed to follow the selected learner workspace without exposing organization-wide or other-user totals.
+
+**Middle — decisions and work:** Added a learner-only account usage endpoint for the current UTC calendar month, filtering by the verified tenant and subject. Added a matching PostgreSQL index, client display of provider tokens and response count, and API, query, and browser regression coverage. The UI states clearly that usage is not a remaining balance or purchase ledger.
+
+**End — outcome and verification:** `npm run check` passed with 57 Vitest files / 378 tests, a warning-free production build, 48 standard browser cases, 44 preflight browser cases, 10 mobile-viewer cases, and one mobile-viewer tool case. `npm run verify:phase2` applied migration 034 to its disposable PostgreSQL database and passed the real API/storage/browser workflow. No migration or application deployment has been performed; live account and tenant data remain unverified.
+
+**Future utility:** Provides learners with usage telemetry while keeping consumer credits, organization entitlements, and engagement-minute certification as separate unimplemented records and contracts.
+
+**Project impact:** Observed: the query and API contract are tenant-and-subject-scoped in source and covered by regression tests. Live usage display remains deployment-gated.
+
+## 2026-10-16 — Expose published consumer token offers
+
+**Beginning — trigger and context:** The TEAECL system-admin catalog already stored Lunar/Solar/Stellar tier pricing and extensible add-ons, but signed-in clients could not view published offers. ACB2Pay confirmation is not configured, so the app must not accept checkout or grant credits.
+
+**Middle — decisions and work:** Added an authenticated read-only catalog endpoint that does not require tenant membership, projects only published catalog items, and returns `checkoutEnabled: false`. Added a client Account table for monthly tiers and add-ons with clear unavailable-checkout messaging. Draft products stay hidden and no model/provider controls are exposed.
+
+**End — outcome and verification:** `npm run check` passed with 57 Vitest files / 379 tests, a warning-free production build, 48 standard browser cases, 44 preflight browser cases, 10 mobile-viewer cases, and one mobile-viewer tool case. The API regression test confirms published-only visibility without an active tenant and checkout disabled; browser coverage renders offers alongside learner usage and transcript downloads. No payment, credit, database, or application deployment occurred.
+
+**Future utility:** This is a catalog preview only. Payment confirmation, monthly plan subscriptions, carry-forward credit ledger, balances, and provider failover remain open.
+
+**Project impact:** Observed: the signed-in Account page can render operator-published token offers while checkout remains disabled by the API contract. Live catalog deployment and product configuration remain unverified.
+
+## 2026-10-16 - Define separate learner included and add-on balances
+
+**Beginning - trigger and context:** The learner account requirements distinguish private monthly included tokens from purchased add-ons, and corporate included allocations from each learner's own add-ons. The prior product notes incorrectly described a funding-choice prompt and month-to-month add-on carry-forward without a fixed expiry.
+
+**Middle - decisions and work:** Updated the consumer and corporate entitlement contracts. Private included tokens renew on the account subscription anniversary and do not roll over; individual add-on grants expire 365 days after grant. Corporate monthly allowances remain valid for 45 days after the organization renewal date; corporate learners consume their assigned included allowance before personal add-ons, with no funding prompt. Organization-owned add-on packages must be allocated through group budgets. Clarified that TEAECL system administrators have global authority while corporate administrators remain tenant-scoped. Added a learner-only recent provider usage ledger to Account and an API query scoped by authenticated tenant and subject, capped at 100 records. Kept balance gauges and checkout unimplemented because durable entitlement grants and payment confirmation do not exist yet.
+
+**End - outcome and verification:** `npm run check` passed: 58 Vitest files / 385 tests, API TypeScript build, schema and diagram checks, warning-free production build, 48 standard browser tests, 44 preflight tests, 10 mobile-viewer tests, and one mobile-viewer tool test. New API and browser regression coverage verifies learner-scoped ledger display and role boundaries. No payment, entitlement grant, database migration, deployment, or live account mutation occurred.
+
+**Future utility:** Implement the durable grant/debit ledger and authenticated balance summary before showing remaining-balance gauges or enabling add-on spend. Apply the anniversary, 45-day organization window, 365-day add-on expiry, included-first debit order, and informational dismissal notice atomically with provider-usage reconciliation. Configure Anthropic Haiku 5.5 failover only after native-usage normalization and clinical simulation evaluation are approved.
+
+**Project impact:** Observed: learners can view up to 100 recent provider-usage records for their own authenticated workspace. Balance amounts and expiry counts are not yet available, and neither provider failover nor billing is live.
+
+## 2026-10-16 - Add learner token bucket ledger preview
+
+**Beginning - trigger and context:** Account usage telemetry and policy docs specified separate included and purchased token buckets, but there was no persistent entitlement-grant record or learner balance view. The state must not imply available credit without a trusted renewal/payment issuer or reconciled provider usage.
+
+**Middle - decisions and work:** Added migration 035 with owner-scoped included/add-on grant rows, append-only debit/reversal entries, and reservation-to-grant hold allocations. Database constraints enforce confirmed-purchase source types, 365-day add-on expiry, and a 45-day maximum corporate included window; row-level security and revokes keep access in the Express service. Added a learner-only API summary scoped to the authenticated subject and selected workspace, showing grant, used, reserved, remaining, renewal/expiry, and days remaining. Added responsive separate Account gauges and a no-grants state. Provider reservations now allocate available grants in included-first order, retain allocations on ambiguous outcomes, and atomically debit actual `total_tokens` exactly once when settled. The disposable verifier seeds a synthetic included grant before real API setup/turn generation and checks that reservation debit totals match provider usage in PostgreSQL and the authenticated API. Checkout and trusted payment/renewal issuance remain disabled and unimplemented.
+
+**End - outcome and verification:** `npm run verify:phase2` passed against disposable PostgreSQL/Redis. It applies migrations 035-036, drives the actual reservation callback through authenticated scenario setup and patient turns, and verifies provider reservations debit exactly actual `total_tokens` before the learner API reports the balance. `npm run check` passed with 59 test files / 389 unit tests, API build, schema/diagram checks, warning-free production build, 48 cross-browser tests, 44 preflight tests, 10 mobile-viewer tests, and one viewer-tool test. No live migration, credit grant, payment, debit, or deployment occurred.
+
+**Future utility:** Connect trusted subscription/organization allocation issuers and payment confirmation to grant creation. Add the once-dismissable notice when add-on spending begins. Do not activate checkout or claim live balances until live deployment, grant issuance, expiry, and source-priority behavior are verified.
+
+**Project impact:** Observed: the repository can reserve against synthetic grants and reconcile actual provider token usage to a subject-scoped balance in disposable verification. Live balances remain absent; gauges stay empty until a trusted issuer exists. Haiku 5.5 remains the selected provider failover candidate but is not wired or live.
+
+## 2026-10-16 - Deploy organization allocation reconciliation and cleaned OBGYN source
+
+**Beginning - trigger and context:** Active organization budgets configured group limits but did not issue the included-token grants required by provider reservations. The educator catalog also gained discrete illustrative diagnostic tests and routine-care focus records and needed to be the exact source packaged for the live API.
+
+**Middle - decisions and work:** Active budget saves now reconcile organization-owned grants to configured group allocations; increases create idempotent grants expiring 45 days after period renewal, while reductions append adjustments and cannot exceed unspent/unheld tokens. Draft settings remain inert, and the next provider reservation lazily renews an active period. The cleaned catalog is packaged by the live deploy path; its modeled encounter-relevance scores remain sampling weights and are not relabeled as observed incidence. Checkout and live grants remain disabled/uncreated.
+
+**End - outcome and verification:** `npm run check` passed with 60 unit files / 399 tests, 48 desktop browser cases, 44 preflight cases, 10 mobile-viewer cases, and one viewer-tool case. The disposable PostgreSQL/Redis verifier exercised issuance, adjustment, refusal below usage, and renewal. `npm run deploy:live` activated `2026-10-16T081212459Z` and applied migration 038. Post-deploy OAuth/browser checks passed, all three services are active, API dependencies are ready, and the packaged educator source hash matches the repository file. Read-only live queries confirmed zero grants, entries, reservations, group assignments, budget settings, checkout catalog rows, archive jobs, and engagement rows. No live learner funding or scenario generation was performed.
+
+**Future utility:** Before live learner funding, verify an intentionally configured organization allocation and owned learner flow. Verify fresh live scenario generation separately from the deploy check; retain the catalog's distinction between modeled encounter relevance and measured incidence.
+
+**Project impact:** Observed: group-budget configuration can now issue and reconcile organization grants in verified local/disposable flows, and the cleaned educator catalog is present in the live release. Expected: this closes the active-budget-without-grants failure path once an organization configures an allocation. No live budget or learner balance was created.
+
+## 2026-10-16 - Deploy restricted GPTMD operations and bind system admin
+
+**Beginning - trigger and context:** The system-admin dashboard had a fixed-command API and host operator implementation, but no installed host socket/key or configured system-admin identity. The user selected `onlineadmin@eaglesvn.online` as the system-admin account.
+
+**Middle - decisions and work:** Deployed release `2026-10-16T083125601Z`; installed the root-owned restricted operator, socket activation, and API supplementary group without changing application data. Added a separate configuration command that resolves exactly one active local Supabase Auth subject for the selected email, adds that UUID to the private API allowlist while preserving existing values, restarts the API, and checks readiness. It keeps credentials and the UUID out of terminal output. Documented setup and added regression tests for subject-list updates and invalid configuration.
+
+**End - outcome and verification:** The operator returned a signed overview of all three GPTMD units; all three app units and both ops units report active. Public home and API readiness returned HTTP 200. The API env remains mode 0600 and the socket is `root:gptmd-ops` mode 0660. The full `npm run check` passed with 404 unit tests, 54 desktop browser tests, 44 encounter-preflight tests, 10 mobile-viewer tests, and one viewer-tool test. Desktop cross-browser tests run with one worker to avoid host contention timeouts. New E2E tests verify non-operator denial and allowlisted status/log/action UI with mocked auth/API responses. Live authenticated dashboard/actions still require an `onlineadmin` browser-session check.
+
+**Future utility:** Keep platform operations behind exact Auth subject allowlisting, separate from tenant roles. Verify the protected page and controlled restart/log actions in the authorized browser profile; preserve the sanitized fixed-command operator boundary.
+
+**Project impact:** Observed: the live operator is installed and signed requests work; the selected system-admin subject is configured and API-ready. Expected: the separately allowlisted operator can manage only the GPTMD stack from the system-admin dashboard after browser authentication. No customer tenant or application data was modified.

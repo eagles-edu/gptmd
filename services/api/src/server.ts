@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { createServiceClients } from './clients.js'
 import { createApiApp } from './app.js'
 import { createServer } from 'node:http'
@@ -5,6 +6,7 @@ import { createSessionCommitMetrics } from './session-commit-metrics.ts'
 import { createProcessResourceSampler } from './process-resource-metrics.ts'
 import { resolveApiListenerHost } from './listener-config.ts'
 import { API_SHUTDOWN_DRAIN_TIMEOUT_MS, drainHttpServer, withHttpDrainGate } from './http-server-shutdown.ts'
+import { createSystemOperationsClient, parseSystemAdminSubjects } from './system-operations.ts'
 
 const host = resolveApiListenerHost(process.env)
 const port = Number(process.env.PORT ?? 4000)
@@ -31,9 +33,23 @@ const processResourceMetricsTimer = setInterval(() => {
 }, 30_000)
 processResourceMetricsTimer.unref()
 
+function readSystemOperationsKey(): string | undefined {
+  try {
+    return readFileSync('/etc/gptmd-ops/hmac-key', 'utf8').trim()
+  } catch {
+    return undefined
+  }
+}
+
 const app = createApiApp({
   ...clients.dependencies,
-  recordSessionCommitTiming: sessionCommitMetrics.record
+  recordSessionCommitTiming: sessionCommitMetrics.record,
+  systemAdminSubjectIds: parseSystemAdminSubjects(process.env.GPTMD_SYSTEM_ADMIN_SUBJECTS),
+  systemOperations: createSystemOperationsClient({
+    socketPath: process.env.GPTMD_OPS_SOCKET,
+    signingKey: readSystemOperationsKey()
+  }),
+  sampleSystemResources: processResourceSample
 })
 
 let shuttingDown = false

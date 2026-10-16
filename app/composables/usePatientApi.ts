@@ -133,6 +133,13 @@ export function usePatientApi() {
     return parsed.data
   }
 
+  async function acknowledgeAddonSpendNotice(sessionId: string): Promise<void> {
+    await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/addon-spend-notice/acknowledge`,
+      { method: 'POST', headers: await auth.accessHeaders() }
+    )
+  }
+
   async function recordLocalUtterance(
     sessionId: string,
     utterance: {
@@ -155,6 +162,13 @@ export function usePatientApi() {
       throw new Error('The transcript service returned an invalid local utterance.')
     }
     return parsed.data
+  }
+
+  async function recordEngagementPulse(sessionId: string, pulseId: string): Promise<void> {
+    await $fetch<unknown>(
+      `${getApiBase()}/api/sessions/${encodeURIComponent(sessionId)}/engagement-pulses`,
+      { method: 'POST', headers: await auth.accessHeaders(), body: { pulseId } }
+    )
   }
 
   async function createAudioTranscriptionCall(sessionId: string, sdp: string): Promise<import('../schemas/patient-api').AudioTranscriptionCall> {
@@ -236,7 +250,9 @@ export function usePatientApi() {
     getCurrentEncounter,
     setupSession,
     sendTurn,
+    acknowledgeAddonSpendNotice,
     recordLocalUtterance,
+    recordEngagementPulse,
     createAudioTranscriptionCall,
     beginAssessment,
     saveAssessmentDraft,

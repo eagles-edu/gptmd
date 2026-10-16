@@ -5,6 +5,7 @@ import { createAudioTranscriptionExpiryWorker } from './audio-transcription-expi
 import { createPatientScenarioConversationCleanupWorker } from './patient-scenario-conversation-cleanup-worker.ts'
 import { deletePatientSetupConversation } from './patient-profile.js'
 import { createSessionEventWorker } from './session-event-worker.ts'
+import { createSessionArchiveWorker } from './session-archives.ts'
 import { createProcessResourceSampler } from './process-resource-metrics.ts'
 import { createRedisPatientStateStore } from './patient-state-store.ts'
 import { createSessionIdentityVerificationWorker } from './session-identity-verification-worker.ts'
@@ -49,6 +50,14 @@ const worker = createSessionEventWorker(redis, pool, {
   onError: () => process.stderr.write('Session history worker reported an operational error; inspect Redis/PostgreSQL readiness and recent events.\n'),
   onMetrics: (metrics) => process.stdout.write(`${JSON.stringify({ event: 'session_event_worker_metrics', ...metrics })}\n`)
 })
+const sessionArchiveWorker = createSessionArchiveWorker(pool, {
+  onError: () => process.stderr.write('Session transcript archive generation failed; the job will retry or become unavailable after bounded attempts.\n'),
+  onMetrics: (archived, expired) => {
+    if (archived > 0 || expired > 0) {
+      process.stdout.write(`${JSON.stringify({ event: 'session_archive_worker_metrics', archived, expired })}\n`)
+    }
+  }
+})
 const identityVerificationWorker = createSessionIdentityVerificationWorker(
   pool,
   createRedisPatientStateStore(redis),
@@ -90,7 +99,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 try {
   await Promise.all([
     worker.run(abort.signal), expiryWorker.run(abort.signal), scenarioConversationCleanupWorker.run(abort.signal),
-    identityVerificationWorker.run(abort.signal)
+    identityVerificationWorker.run(abort.signal), sessionArchiveWorker.run(abort.signal)
   ])
 } finally {
   clearInterval(processResourceMetricsTimer)

@@ -1,0 +1,54 @@
+Diagnostic Category,Test Name,Standard Adult Reference Range,Normal Pregnancy Target Range,Primary Clinical Purpose
+Electrolytes & Acid-Base,Sodium (Na⁺),135 – 145 mEq/L,135 – 145 mEq/L,Governs extracellular fluid levels and nerve signaling.
+Electrolytes & Acid-Base,Potassium (K⁺),3.5 – 5.1 mEq/L,3.5 – 5.1 mEq/L,Essential for skeletal and cardiac muscle contraction.
+Electrolytes & Acid-Base,Chloride (Cl⁻),98 – 107 mEq/L,98 – 107 mEq/L,Works with sodium to preserve blood pressure and fluid distribution.
+Electrolytes & Acid-Base,Carbon Dioxide (CO₂ / HCO₃⁻),22 – 29 mEq/L,18 – 26 mEq/L,Acts as a chemical buffer to maintain strict blood pH.
+Renal (Kidney) Function,Blood Urea Nitrogen (BUN),7 – 20 mg/dL,5 – 12 mg/dL,Measures waste products from routine protein breakdown.
+Renal (Kidney) Function,Creatinine,0.50 – 1.10 mg/dL,0.40 – 0.80 mg/dL,Evaluates muscle tissue breakdown and general kidney clearance.
+Renal (Kidney) Function,BUN/Creatinine Ratio,10:1 – 20:1,10:1 – 20:1,Differentiates between physical tissue damage and dehydration.
+Renal (Kidney) Function,Uric Acid,2.5 – 6.0 mg/dL,"Drops early, then rises",Evaluates purine breakdown; spikes signal preeclampsia.
+Hepatic (Liver) Function,Alanine Aminotransferase (ALT),4 – 36 U/L,4 – 36 U/L,Liver enzyme that rises rapidly during cellular tissue injury.
+Hepatic (Liver) Function,Aspartate Aminotransferase (AST),8 – 33 U/L,8 – 33 U/L,"Tracks active cell destruction in liver, heart, and muscles."
+Hepatic (Liver) Function,Alkaline Phosphatase (ALP),30 – 120 U/L,Can double or triple,"Identifies biliary blockage, bone disease, or placental growth."
+Hepatic (Liver) Function,Gamma-Glutamyl Transferase (GGT),5 – 40 U/L,5 – 40 U/L,Sensitive marker for bile duct irritation or toxicity.
+Hepatic (Liver) Function,Total Bilirubin,0.2 – 1.2 mg/dL,0.2 – 1.2 mg/dL,Evaluates waste pigment from recycled red blood cells.
+Hepatic (Liver) Function,Total Protein,6.4 – 8.3 g/dL,6.0 – 7.0 g/dL,Measures the overall sum of protein floating in serum.
+Hepatic (Liver) Function,Albumin,3.5 – 5.0 g/dL,3.0 – 4.2 g/dL,Holds fluid inside blood vessels to prevent tissue swelling.
+Hepatic (Liver) Function,Globulin,2.3 – 3.4 g/dL,2.3 – 3.4 g/dL,Measures circulating immune system proteins (antibodies).
+Pancreatic Exocrine,Amylase,30 – 110 U/L,30 – 110 U/L,Enzyme tasked with digesting complex carbohydrates.
+Pancreatic Exocrine,Lipase,0 – 160 U/L,0 – 160 U/L,Specific enzyme tracking localized pancreas inflammation.
+Metabolic & Minerals,Fasting Glucose,70 – 99 mg/dL,< 95 mg/dL,Measures baseline sugar energy levels in the bloodstream.
+Metabolic & Minerals,Calcium,8.6 – 10.2 mg/dL,Drops slightly,"Crucial for cell signals, bone health, and blood clotting."
+Metabolic & Minerals,Phosphorus,2.5 – 4.5 mg/dL,2.5 – 4.5 mg/dL,Partners with calcium to regulate cellular energy storage.
+Metabolic & Minerals,Magnesium,1.5 – 2.5 mg/dL,1.5 – 2.5 mg/dL,Controls electrical enzyme signaling and muscle movements.
+Cardiovascular & Lipids,Total Cholesterol,< 200 mg/dL,Rises to 250–300+,Building blocks for cellular membranes and vital hormones.
+Cardiovascular & Lipids,"HDL (""Good"") Cholesterol",> 50 mg/dL,> 50 mg/dL,Transports cholesterol away from arteries back to the liver.
+Cardiovascular & Lipids,"LDL (""Bad"") Cholesterol",< 100 mg/dL,Variable,Tracks circulating particles linked to arterial plaque buildup.
+Cardiovascular & Lipids,Triglycerides,< 150 mg/dL,Can double or triple,Primary fat storage particle used for systemic energy.
+Cardiovascular & Lipids,hs-CRP (Inflammation),< 1.0 mg/L,< 1.0 mg/L,Measures systemic inflammation to predict cardiac vessel risk.
+Cardiovascular & Lipids,High-Sensitivity Troponin,< 14 ng/L,< 14 ng/L,Premier emergency marker to rule out acute heart damage.
+Hematology (CBC),White Blood Cells (WBC),4.5 – 11.0 x10³/µL,5.6 – 14.9 x10³/µL,Monitors the body's acute immune responses and screens for infections.
+Hematology (CBC),Red Blood Cells (RBC),3.80 – 5.10 x10⁶/µL,3.20 – 4.50 x10⁶/µL,Evaluates the concentration of oxygen-carrying red blood cells.
+Hematology (CBC),Hemoglobin,11.7 – 15.5 g/dL,11.0 – 14.0 g/dL,Directly measures oxygen-binding proteins to screen for maternal anemia.
+Hematology (CBC),Hematocrit,35.0% – 45.0%,28.0% – 40.0%,Represents the packed cell volume percentage of red blood cells.
+Hematology (CBC),Platelets,140 – 400 x10³/µL,100 – 330 x10³/µL,Assesses natural blood-clotting capability to prevent hemorrhaging.
+Blood TYPE Compatibility,ABO Group,"Type A, B, AB, or O","Type A, B, AB, or O",Identifies the basic biological blood type group of the individual.
+Blood TYPE Compatibility,Rh Factor Type,Positive or Negative,Rh-Positive,"If Rh-Negative, identifies the risk for maternal-fetal blood group conflict."
+Blood TYPE Compatibility,RBC Antibody Screen,Negative,Negative,Checks for irregular immune antibodies that could attack fetal red blood cells.
+Infectious Serology,Rubella Antibody (IgG),Negative (Non-Immune),Positive (Immune),Confirms existing vaccine-induced or natural protective immunity to German Measles.
+Infectious Serology,Hep B Surface Ag (HBsAg),Negative (Non-Reactive),Negative (Non-Reactive),Screens for active maternal Hepatitis B infection to protect newborns at delivery.
+Infectious Serology,Syphilis Serology (RPR),Negative (Non-Reactive),Negative (Non-Reactive),Screens for active syphilis infection to prevent severe congenital defects.
+Infectious Serology,HIV-1 / HIV-2 Screen,Negative (Non-Reactive),Negative (Non-Reactive),Identifies HIV status to allow early antiviral therapy to prevent vertical transmission.
+Urinalysis (UA),Urine Protein,Negative to Trace,1+ to 4+ Protein,Key screening marker for preeclampsia or severe renal stress.
+Urinalysis (UA),Urine Glucose,Negative,Positive (Glucosuria),"Detects renal threshold spillover, indicating gestational diabetes."
+Urinalysis (UA),Leukocyte Esterase & Nitrites,Negative,Positive,Rapid screen for asymptomatic or acute Urinary Tract Infections (UTIs).
+Urinalysis (UA),Urine Culture & Sensitivity,No Growth,">100,000 CFU/mL",Identifies the exact bacterial strain to guide safe antibiotic selection.
+Urinalysis (UA),Urine hCG,Negative (Unless pregnant),Positive,Qualitatively detects human chorionic gonadotropin to verify pregnancy.
+Cytology & Swabs,Liquid-Based Pap Smear,Negative for Malignancy,"ASCUS, LSIL, HSIL",Screens cervical cells for precancerous changes or carcinoma.
+Cytology & Swabs,High-Risk HPV Co-test,Negative,Positive,"Detects high-risk oncogenic viral strains (e.g., HPV 16 and 18)."
+Cytology & Swabs,Vaginal Wet Mount (Prep),Normal Lactobacilli,"Clue cells, hyphae, trichomonads","Diagnoses Bacterial Vaginosis (BV), yeast infections, or parasites."
+Cytology & Swabs,Chlamydia & Gonorrhea NAAT,Negative,Positive,"Molecular screening for common, often asymptomatic STIs."
+Cytology & Swabs,Group B Strep (GBS) Culture,Negative (at 36-37 wks),Positive,Dictates the need for IV antibiotics during labor to protect the newborn.
+Fetal Screens,Cell-Free DNA (NIPT),Low Risk,High Risk,"Analyzes fetal DNA in maternal blood for Trisomies (13, 18, 21)."
+Fetal Screens,Fetal Fibronectin (fFN),Negative,Positive,"Evaluates the immediate, short-term risk of preterm delivery."
+Fetal Screens,Nitrazine & Ferning Test,Negative (pH 4.5–6.0),Positive (pH > 7.0 / Fern),Confirms Premature Rupture of Membranes (PROM) (broken water).

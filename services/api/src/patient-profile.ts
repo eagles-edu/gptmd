@@ -1,4 +1,5 @@
 import OpenAI from 'openai'
+import type { ProviderTokenReservation } from './provider-token-reservations.ts'
 import { readFileSync } from 'node:fs'
 import { zodTextFormat } from 'openai/helpers/zod'
 import { z } from 'zod'
@@ -8,7 +9,8 @@ import type { ProviderUsageSample } from './session-contracts.ts'
 import type { PatientVariantPresentationSettings } from './patient-variant-settings.ts'
 import {
   EDUCATOR_CATALOG_PROMPT_JSON,
-  EDUCATOR_CATALOG_SCENARIO_SOURCE
+  educatorCatalogScenarioSource,
+  educatorScenarioRecordPromptJson
 } from './educator-input-catalog.ts'
 
 export const PAIN_EPISODE_FIELDS = [
@@ -335,8 +337,14 @@ const patientProfileCatalogJson = readFileSync(
 )
 
 // Bump the prompt or policy version when their corresponding behavior changes.
-export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v14'
-export const PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v13'
+export const PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v15'
+export const PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION = 'patient-scenario-prompt-v14'
+export const SUPPORTED_PATIENT_SCENARIO_PROMPT_VERSIONS = [
+  PATIENT_SCENARIO_PROMPT_VERSION,
+  PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION,
+  'patient-scenario-prompt-v13'
+] as const
+export const PATIENT_SCENARIO_MAX_OUTPUT_TOKENS = 8_192
 export const PATIENT_SCENARIO_POLICY_VERSION = 'patient-scenario-policy-v3'
 export const PATIENT_SCENARIO_SCHEMA_VERSION = 8 as const
 
@@ -370,8 +378,9 @@ export interface GeneratedPatientScenario {
   profile: PatientScenarioProfile
   presentationSettings?: PatientVariantPresentationSettings
   usage: ProviderUsageSample | null
+  addonTokensUsed?: boolean
   abandonedConversationIds: string[]
-  sourceContext?: typeof EDUCATOR_CATALOG_SCENARIO_SOURCE
+  sourceContext?: ReturnType<typeof educatorCatalogScenarioSource>
 }
 
 export class PatientScenarioValidationError extends Error {
@@ -702,18 +711,19 @@ export async function generatePatientScenario(
     scenarioSeed: string
     recordTiming?: ResponsesTimingRecorder
     recordProviderUsage?: (usage: ProviderUsageSample) => Promise<void>
+    reserveProviderTokens?: (inputTokens: number, outputTokenCap: number) => Promise<ProviderTokenReservation>
     recordAbandonedConversationIds?: (conversationIds: string[]) => Promise<void>
   }
 ): Promise<GeneratedPatientScenario> {
   const promptVersion = options.promptVersion ?? PATIENT_SCENARIO_PROMPT_VERSION
   const policyVersion = options.policyVersion ?? PATIENT_SCENARIO_POLICY_VERSION
   if (
-    ![PATIENT_SCENARIO_PROMPT_VERSION, PREVIOUS_PATIENT_SCENARIO_PROMPT_VERSION].includes(promptVersion) ||
+    !SUPPORTED_PATIENT_SCENARIO_PROMPT_VERSIONS.includes(promptVersion as typeof SUPPORTED_PATIENT_SCENARIO_PROMPT_VERSIONS[number]) ||
     policyVersion !== PATIENT_SCENARIO_POLICY_VERSION
   ) throw new Error('The pinned patient scenario prompt or policy version is unavailable.')
   const usesEducatorCatalog = promptVersion === PATIENT_SCENARIO_PROMPT_VERSION
   const scenarioInstructions = usesEducatorCatalog
-    ? `${setupInstructions} Use the approved OBGYN educator-input reference as the primary factual reference for catalog-covered conditions and as augmentation for the complete fictional simulation. Create an original patient with a newly varied history, identity, presentation, and persona on every session; do not copy catalog prose or treat a condition entry as a patient template. Do not sample catalog conditions uniformly or claim incidence-weighted selection: no incidence dataset is supplied yet. Choose a coherent condition naturally; use only source-supported catalog facts for its symptoms, causes, diagnostic approach, and treatment context, and do not invent test results or patient-specific treatment advice. The catalog is educator input, not a clinical guideline or answer key.`
+    ? `${setupInstructions} Use the approved OBGYN educator-input reference as the primary factual reference for catalog-covered conditions and as augmentation for the complete fictional simulation. A server-selected primary case focus is included with modeled overall encounter-relevance values; use that focus for this scenario. The weights are normalized only to select one simulation focus and are not population incidence, prevalence, individual risk, or diagnostic certainty. Create an original patient with a newly varied history, identity, presentation, and persona on every session; do not copy catalog prose or treat a condition entry as a patient template. For routine-care service focuses, generate a coherent preventive, screening, contraception, preconception, prenatal, or postpartum visit rather than inventing a disease diagnosis. Use source-supported facts for symptoms, causes, diagnostic approach, and treatment context. Diagnostic examples are illustrative educational mock-report language, not order recommendations, universal thresholds, or patient-specific advice. Include supported test results only when internally consistent; do not invent unsupported results. The catalog is educator input, not a clinical guideline or answer key.`
     : setupInstructions
 
   const asOf = options.asOf ?? new Date()
@@ -725,6 +735,7 @@ export async function generatePatientScenario(
     ? Math.min(Math.max(Math.trunc(requestedAttempts), 1), 2)
     : 2
   const abandonedConversationIds: string[] = []
+  let addonTokensUsed = false
   const rememberAbandonedConversation = async (conversationId: string): Promise<void> => {
     if (abandonedConversationIds.includes(conversationId)) return
     abandonedConversationIds.push(conversationId)
@@ -749,10 +760,11 @@ export async function generatePatientScenario(
     }
     let response: OpenAI.Responses.Response
     let durationMs: number
+    let tokenReservation: ProviderTokenReservation | undefined
     try {
       const startedAt = performance.now()
       let firstTokenReported = false
-      const stream = client.responses.stream({
+      const request = {
         model,
         conversation: conversation.id,
         prompt_cache_options: { mode: 'explicit', ttl: '30m' },
@@ -770,6 +782,9 @@ export async function generatePatientScenario(
                 type: 'input_text' as const,
                 text: `Approved OBGYN educator-input reference (compact source-attributed JSON):\n${EDUCATOR_CATALOG_PROMPT_JSON}`,
                 prompt_cache_breakpoint: { mode: 'explicit' as const }
+              }, {
+                type: 'input_text' as const,
+                text: `Seed-selected primary case focus and its diagnostic reference (JSON):\n${educatorScenarioRecordPromptJson(options.scenarioSeed)}`
               }] : [])
             ]
           },
@@ -780,8 +795,22 @@ export async function generatePatientScenario(
         ],
         text: {
           format: zodTextFormat(PatientScenarioProfileSchema, 'patient_scenario_profile')
-        }
+        },
+        max_output_tokens: PATIENT_SCENARIO_MAX_OUTPUT_TOKENS
+      } satisfies Parameters<typeof client.responses.stream>[0]
+      const inputTokenCount = await client.responses.inputTokens.count({
+        model: request.model,
+        conversation: request.conversation,
+        input: request.input,
+        text: request.text
       })
+      if (!Number.isSafeInteger(inputTokenCount.input_tokens) || inputTokenCount.input_tokens < 0) {
+        throw new Error('Provider input token count is invalid')
+      }
+      tokenReservation = await options.reserveProviderTokens?.(
+        inputTokenCount.input_tokens, PATIENT_SCENARIO_MAX_OUTPUT_TOKENS
+      )
+      const stream = client.responses.stream(request, { maxRetries: 0 })
       const reportFirstToken = () => {
         if (firstTokenReported) return
         firstTokenReported = true
@@ -793,6 +822,7 @@ export async function generatePatientScenario(
       response = await stream.finalResponse()
       durationMs = Math.max(0, Math.round(performance.now() - startedAt))
     } catch {
+      await tokenReservation?.hold().catch(() => undefined)
       await discardConversation(conversation.id)
       throw new PatientScenarioProviderError([...abandonedConversationIds])
     }
@@ -820,6 +850,8 @@ export async function generatePatientScenario(
         estimatedCostUsd: cost?.estimatedCostUsd ?? null
       }
     })() : null
+    if (usage) addonTokensUsed ||= await tokenReservation?.settle(usage.responseId, usage.totalTokens) ?? false
+    else await tokenReservation?.hold()
     if (usage) await options.recordProviderUsage?.(usage)
 
     let profile: PatientScenarioProfile | null = null
@@ -845,8 +877,9 @@ export async function generatePatientScenario(
         responseId: response.id,
         profile,
         usage,
+        addonTokensUsed,
         abandonedConversationIds,
-        ...(usesEducatorCatalog ? { sourceContext: EDUCATOR_CATALOG_SCENARIO_SOURCE } : {})
+        ...(usesEducatorCatalog ? { sourceContext: educatorCatalogScenarioSource(options.scenarioSeed) } : {})
       }
     }
 

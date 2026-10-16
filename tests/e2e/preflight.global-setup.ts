@@ -48,5 +48,7 @@ export async function startMockSupabase(
 }
 
 export default async function setupPreflightAuth(): Promise<() => Promise<void>> {
-  return startMockSupabase()
+  const supabasePort = Number(process.env.GPTMD_PREFLIGHT_SUPABASE_PORT ?? '3003')
+  const appPort = process.env.GPTMD_PREFLIGHT_HTTPS_PORT ?? '3002'
+  return startMockSupabase(supabasePort, `https://localhost:${appPort}`)
 }

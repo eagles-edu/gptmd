@@ -2,6 +2,7 @@ import { defineConfig, devices } from '@playwright/test'
 
 const mobileViewerHttpsPort = process.env.PLAYWRIGHT_MOBILEVIEWER_HTTPS_PORT ?? '3014'
 const mobileViewerAppPort = process.env.PLAYWRIGHT_MOBILEVIEWER_APP_PORT ?? '3015'
+const mobileViewerSupabasePort = process.env.PLAYWRIGHT_MOBILEVIEWER_SUPABASE_PORT ?? '3005'
 
 export default defineConfig({
   globalSetup: './tests/e2e/mobileviewer.global-setup.ts',
@@ -37,7 +38,7 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: `env -u NO_COLOR NUXT_PUBLIC_SUPABASE_URL=https://localhost:3005 NUXT_PUBLIC_SUPABASE_KEY=test-publishable-key node scripts/playwright-https-server.mjs ${mobileViewerHttpsPort} ${mobileViewerAppPort}`,
+    command: `env -u NO_COLOR NUXT_PUBLIC_SUPABASE_URL=https://localhost:${mobileViewerSupabasePort} NUXT_PUBLIC_SUPABASE_KEY=test-publishable-key node scripts/playwright-https-server.mjs ${mobileViewerHttpsPort} ${mobileViewerAppPort}`,
     reuseExistingServer: false,
     ignoreHTTPSErrors: true,
     url: `https://localhost:${mobileViewerHttpsPort}`

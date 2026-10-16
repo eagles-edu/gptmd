@@ -135,7 +135,8 @@ export const PatientScenarioSetupResponseSchema = z.object({
     profile: z.literal(true),
     redis: z.literal(true),
     conversation: z.literal(true)
-  }).strict()
+  }).strict(),
+  addonSpendNotice: z.boolean().default(false)
 }).strict()
 
 /** Durable accepted learner/patient exchange, with related facts and actions. */
@@ -288,6 +289,7 @@ const EncounterRestoreSnapshotSchema = z.object({
   createdAt: UtcTimestampSchema,
   updatedAt: UtcTimestampSchema,
   versions: SessionVersionPinsSchema,
+  addonSpendNotice: z.boolean().default(false),
   patient: LearnerPatientProfileSchema.nullable(),
   phase: EncounterPhaseSchema.nullable(),
   currentTurnSequence: z.number().int().nonnegative(),

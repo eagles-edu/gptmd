@@ -8,7 +8,7 @@
   --app-surface-patient: #eaf6f1;
   --app-text: #203b52;
   --app-text-strong: #153650;
-  --app-text-muted: #506579;
+  --app-text-muted: #405266;
   --app-text-subtle: #667a8b;
   --app-border: #dbe6ed;
   --app-border-soft: #e4edf2;
@@ -21,6 +21,20 @@
   --app-warning-soft: #fff1ce;
   --app-error: #c2413a;
   --app-error-soft: #ffe2df;
+  --app-control-border: #757575;
+  --app-reference-border: #757575;
+  --app-reference-category-1: #d9e8c1;
+  --app-reference-category-2: #f6dce3;
+  --app-reference-category-3: #dbe3f5;
+  --app-reference-category-4: #f1dfd3;
+  --app-reference-category-5: #dbe6d5;
+  --app-reference-category-6: #f3dde5;
+  --app-reference-category-7: #cee8e8;
+  --app-reference-category-8: #f4dce1;
+  --app-reference-category-9: #cfe8e4;
+  --app-reference-category-10: #e8e3be;
+  --app-reference-category-11: #f1dfd3;
+  --app-reference-category-12: #dbe6d5;
   font-family: "OpenSans-normal", system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif;
   background: var(--app-background);
   color: var(--app-text);
@@ -52,6 +66,20 @@
   --app-warning-soft: #453719;
   --app-error: #f18b83;
   --app-error-soft: #482a2a;
+  --app-control-border: #aab9c7;
+  --app-reference-border: #aab9c7;
+  --app-reference-category-1: #30332a;
+  --app-reference-category-2: #363032;
+  --app-reference-category-3: #303236;
+  --app-reference-category-4: #35312e;
+  --app-reference-category-5: #30332f;
+  --app-reference-category-6: #353132;
+  --app-reference-category-7: #2d3333;
+  --app-reference-category-8: #363032;
+  --app-reference-category-9: #2e3332;
+  --app-reference-category-10: #33322a;
+  --app-reference-category-11: #35312e;
+  --app-reference-category-12: #30332f;
 }
 
 h1, h2, h3, h4, h5, h6 { font-family: "Montserrat-normal", 'Segoe UI', Verdana, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, 'Open Sans', 'Helvetica Neue', sans-serif; }
@@ -70,6 +98,70 @@ body { background: var(--app-background); color: var(--app-text); margin: 0; min
 .content-page strong { color: var(--app-text); }
 .content-page .eyebrow { color: var(--app-accent); font-size: 0.77rem; font-weight: 750; letter-spacing: 0.09em; margin: 0; text-transform: uppercase; }
 
+.reference-sheet { color: var(--app-text); margin: 0 auto; max-width: 96rem; padding: clamp(1rem, 4vw, 3rem); width: 100%; }
+.reference-sheet .page-header { margin-bottom: 1.5rem; }
+.reference-sheet .eyebrow { color: var(--app-text-strong); font-size: 0.875rem; font-weight: 700; letter-spacing: 0.08em; margin: 0 0 0.35rem; text-transform: uppercase; }
+.reference-sheet h1 { color: var(--app-text-strong); font-size: clamp(1.75rem, 4vw, 2.6rem); line-height: 1.15; margin: 0; }
+.reference-sheet .intro { color: var(--app-text); margin: 0.75rem 0 0; max-width: 60rem; }
+.reference-sheet .reference-section-heading { color: var(--app-text-strong); font-size: 1.5rem; line-height: 1.25; margin: 1.5rem 0 0; }
+.reference-session { display: grid; gap: 1rem; }
+.reference-patient-field { color: var(--app-text-strong); display: grid; font-weight: 700; gap: 0.35rem; max-width: 36rem; }
+.reference-patient-field input { background: var(--app-surface); border: 2px solid var(--app-control-border); border-radius: 0.4rem; color: var(--app-text); font: inherit; min-height: 2.75rem; padding: 0.65rem 0.75rem; }
+.reference-patient-field input::placeholder { color: var(--app-text); opacity: 1; }
+.reference-patient-field input:focus-visible,
+.reference-checkbox:focus-visible,
+.reference-table-scroll:focus-visible { outline: 3px solid var(--app-accent); outline-offset: 3px; }
+.reference-progress { align-items: baseline; background: var(--app-surface-muted); border-left: 0.35rem solid var(--app-accent); border-radius: 0.35rem; color: var(--app-text); display: flex; flex-wrap: wrap; gap: 0.5rem 1rem; padding: 0.8rem 1rem; }
+.reference-progress strong { color: var(--app-text-strong); }
+.reference-table-scroll { background: var(--app-surface); border: 0.74pt solid var(--app-reference-border); border-radius: 0.75rem; max-width: 100%; overflow: auto; overscroll-behavior-x: contain; }
+.reference-table { border-collapse: collapse; color: var(--app-text); min-width: 72rem; table-layout: fixed; width: 100%; }
+.reference-table th,
+.reference-table td { border-bottom: 0.74pt solid var(--app-reference-border); border-right: 0.74pt solid var(--app-reference-border); overflow-wrap: anywhere; padding: 0.75rem 0.85rem; text-align: left; vertical-align: top; }
+.reference-table th:first-child,
+.reference-table td:first-child { width: 4.5rem; }
+.reference-table th:nth-child(2), .reference-table td:nth-child(2) { width: 14%; }
+.reference-table th:nth-child(3), .reference-table td:nth-child(3) { width: 15%; }
+.reference-table th:nth-child(4), .reference-table td:nth-child(4) { width: 14%; }
+.reference-table th:nth-child(5), .reference-table td:nth-child(5) { width: 14%; }
+.reference-table th:nth-child(6), .reference-table td:nth-child(6) { width: 24%; }
+.reference-table th:nth-child(7), .reference-table td:nth-child(7) { width: 8%; }
+.reference-table th:nth-child(8), .reference-table td:nth-child(8) { width: 5%; }
+.reference-table thead th { background: var(--app-surface-muted); color: var(--app-text-strong); font-size: 1rem; font-weight: 700; line-height: 1.35; position: sticky; top: 0; z-index: 1; }
+.reference-table tbody tr:nth-child(odd) td:not(.category-cell) { background: color-mix(in srgb, var(--reference-section-color) 35%, var(--app-surface)); }
+.reference-table tbody tr:nth-child(even) td:not(.category-cell) { background: color-mix(in srgb, var(--reference-section-color) 55%, var(--app-surface)); }
+.reference-table .category-cell { font-weight: 700; }
+.reference-table .cell-ce1 { --reference-section-color: var(--app-reference-category-1); }
+.reference-table .cell-ce2 { --reference-section-color: var(--app-reference-category-2); }
+.reference-table .cell-ce3 { --reference-section-color: var(--app-reference-category-3); }
+.reference-table .cell-ce4 { --reference-section-color: var(--app-reference-category-4); }
+.reference-table .cell-ce5 { --reference-section-color: var(--app-reference-category-5); }
+.reference-table .cell-ce6 { --reference-section-color: var(--app-reference-category-6); }
+.reference-table .cell-ce7 { --reference-section-color: var(--app-reference-category-7); }
+.reference-table .cell-ce8 { --reference-section-color: var(--app-reference-category-8); }
+.reference-table .cell-ce9 { --reference-section-color: var(--app-reference-category-9); }
+.reference-table .cell-ce10 { --reference-section-color: var(--app-reference-category-10); }
+.reference-table .cell-ce11 { --reference-section-color: var(--app-reference-category-11); }
+.reference-table .cell-ce12 { --reference-section-color: var(--app-reference-category-12); }
+.reference-table .category-cell { background: var(--reference-section-color, var(--app-surface-muted)); }
+.reference-table .reference-selection-cell { padding: 0.25rem; text-align: center; vertical-align: middle; }
+.reference-checkbox { accent-color: var(--app-accent); block-size: 2.75rem; cursor: pointer; inline-size: 2.75rem; margin: 0; }
+.reference-table tr > :last-child { border-right: 0; }
+.reference-table tbody tr:last-child td { border-bottom: 0; }
+.visually-hidden { clip-path: inset(50%); height: 1px; overflow: hidden; position: absolute; white-space: nowrap; width: 1px; }
+
 @media (max-width: 700px) {
   .content-page { border-radius: 0.75rem; margin: 1rem; }
+}
+
+@media (max-width: 40rem) {
+  .reference-sheet { padding: 1rem; }
+  .reference-table th,
+  .reference-table td { font-size: 1rem; padding: 0.65rem 0.75rem; }
+}
+
+@media print {
+  .reference-sheet { max-width: none; padding: 0; }
+  .reference-table-scroll { border: 0; border-radius: 0; overflow: visible; }
+  .reference-table { min-width: 0; font-size: 8pt; }
+  .reference-table thead th { position: static; }
 }

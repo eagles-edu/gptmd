@@ -73,15 +73,63 @@
       {{ membershipMessage }}
     </v-alert>
 
-    <v-alert class="connection-note" type="info" variant="tonal">
-      Live account reporting is not connected yet. These sections will show data after the account reporting service is configured.
-    </v-alert>
-
     <div class="account-grid">
       <section class="status-card" aria-labelledby="usage-title">
         <div class="card-heading"><span aria-hidden="true">◷</span><h2 id="usage-title">Usage</h2></div>
-        <p class="status-label">Not available</p>
-        <p>Session and response usage will appear here.</p>
+        <template v-if="selectedRole === 'learner'">
+          <p v-if="usageState === 'loading'" class="status-label">Loading usage…</p>
+          <template v-else-if="learnerUsage">
+            <p class="status-label">{{ formatTokenCount(learnerUsage.usage.totalTokens) }} provider tokens this UTC month</p>
+            <p>{{ learnerUsage.usage.responseCount }} recorded provider responses</p>
+            <p class="usage-period">Usage period: {{ learnerUsage.periodStart.slice(0, 10) }} to {{ learnerUsage.periodEnd.slice(0, 10) }}.</p>
+          </template>
+          <template v-else>
+            <p class="status-label">{{ usageState === 'error' ? 'Usage unavailable' : 'Usage not loaded' }}</p>
+            <p>{{ usageMessage || 'Choose a learner workspace to view personal usage.' }}</p>
+            <button v-if="selectedTenantId" type="button" class="retry-button" @click="loadUsage">Refresh usage</button>
+          </template>
+        </template>
+        <p v-else-if="selectedRole === 'customer_admin'">Organization and group usage is shown in the workspace budget controls.</p>
+        <p v-else>Personal usage is available in a learner workspace.</p>
+      </section>
+      <section v-if="selectedRole === 'learner'" class="status-card token-buckets" aria-labelledby="token-buckets-title">
+        <div class="card-heading"><span aria-hidden="true">◫</span><h2 id="token-buckets-title">Token balances</h2></div>
+        <p v-if="bucketState === 'loading'">Loading balances…</p>
+        <p v-else-if="bucketState === 'error'" role="status">Balances are unavailable. <button type="button" class="retry-button" @click="loadTokenBuckets">Retry</button></p>
+        <p v-else-if="tokenBuckets.length === 0">No active token grants are configured for this account and workspace. Purchases remain unavailable until payment confirmation is connected.</p>
+        <ul v-else class="bucket-list">
+          <li v-for="(bucket, index) in tokenBuckets" :key="`${bucket.accountScope}-${bucket.bucketKind}-${bucket.groupCode || 'personal'}-${bucket.expiresAt}-${index}`">
+            <div class="bucket-heading">
+              <strong>{{ bucketLabel(bucket) }}</strong>
+              <span>{{ formatTokenCount(bucket.remainingTokens) }} remaining</span>
+            </div>
+            <progress :value="bucketUsed(bucket)" :max="Number(bucket.grantedTokens)" :aria-label="`${bucketLabel(bucket)} usage`" />
+            <p>{{ formatTokenCount(bucket.usedTokens) }} used of {{ formatTokenCount(bucket.grantedTokens) }} tokens<template v-if="Number(bucket.reservedTokens) > 0"> · {{ formatTokenCount(bucket.reservedTokens) }} reserved</template></p>
+            <p v-if="bucket.renewalAt" class="usage-period">Renews {{ formatArchiveDate(bucket.renewalAt) }} · unused included tokens expire at renewal.</p>
+            <p class="usage-period">Expires {{ formatArchiveDate(bucket.expiresAt) }} · {{ bucket.daysRemaining }} days left.</p>
+          </li>
+        </ul>
+      </section>
+      <section v-if="selectedRole === 'learner'" class="status-card usage-ledger" aria-labelledby="usage-ledger-title">
+        <div class="card-heading"><span aria-hidden="true">≡</span><h2 id="usage-ledger-title">Usage ledger</h2></div>
+        <p v-if="ledgerState === 'loading'">Loading recent provider usage…</p>
+        <p v-else-if="ledgerState === 'error'" role="status">Usage history is unavailable. <button type="button" class="retry-button" @click="loadUsageLedger">Retry</button></p>
+        <p v-else-if="usageLedger.length === 0">No provider usage has been recorded for this workspace member.</p>
+        <div v-else class="table-wrap">
+          <table class="usage-table">
+            <thead><tr><th scope="col">Date</th><th scope="col">Session</th><th scope="col">Activity</th><th scope="col">Provider</th><th scope="col">Tokens</th></tr></thead>
+            <tbody>
+              <tr v-for="entry in usageLedger" :key="`${entry.sessionId}-${entry.occurredAt}-${entry.operation}`">
+                <td><time :datetime="entry.occurredAt">{{ formatArchiveDate(entry.occurredAt) }}</time></td>
+                <td>{{ entry.sessionId.slice(0, 8) }}</td>
+                <td>{{ entry.operation === 'scenario_generation' ? 'Scenario setup' : 'Patient response' }}</td>
+                <td>{{ entry.provider }}</td>
+                <td>{{ formatTokenCount(entry.totalTokens) }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="usage-period">Latest 100 recorded provider calls. Included and add-on balances are separate; current balances and expiry dates require the entitlement ledger.</p>
       </section>
       <section class="status-card" aria-labelledby="metrics-title">
         <div class="card-heading"><span aria-hidden="true">↗</span><h2 id="metrics-title">Metrics</h2></div>
@@ -90,8 +138,36 @@
       </section>
       <section class="status-card" aria-labelledby="downloads-title">
         <div class="card-heading"><span aria-hidden="true">↓</span><h2 id="downloads-title">Downloads</h2></div>
-        <p class="status-label">Not available</p>
-        <p>Eligible encounter archives will appear here when downloads are connected.</p>
+        <template v-if="selectedRole === 'learner'">
+          <p v-if="archiveMessage" class="membership-status" role="status">{{ archiveMessage }}</p>
+          <p v-if="archiveState === 'loading'" class="status-label">Loading archives…</p>
+          <p v-else-if="archiveState === 'error'" class="status-label">Archives unavailable</p>
+          <p v-else-if="archives.length === 0">No completed encounter transcripts are available.</p>
+          <ul v-else class="archive-list" aria-label="Encounter transcript archives">
+            <li v-for="archive in archives" :key="archive.archiveId">
+              <div class="archive-details">
+                <strong>{{ archiveLabel(archive) }}</strong>
+                <span>{{ archiveStatusLabel(archive.status) }}</span>
+                <time v-if="archive.downloadExpiresAt" :datetime="archive.downloadExpiresAt">
+                  Expires {{ formatArchiveDate(archive.downloadExpiresAt) }}
+                </time>
+              </div>
+              <button
+                v-if="archive.status === 'available'"
+                type="button"
+                class="retry-button"
+                :disabled="downloadingArchiveId === archive.sessionId"
+                @click="downloadArchive(archive)"
+              >
+                {{ downloadingArchiveId === archive.sessionId ? 'Preparing…' : 'Download transcript' }}
+              </button>
+            </li>
+          </ul>
+          <button v-if="archiveState !== 'loading'" type="button" class="retry-button" @click="loadArchives">
+            Refresh archives
+          </button>
+        </template>
+        <p v-else class="membership-status">Transcript archives are available to learners in their selected workspace.</p>
       </section>
       <section class="status-card payment-card" aria-labelledby="payment-title">
         <div class="card-heading"><span aria-hidden="true">$</span><h2 id="payment-title">Payment gateway</h2></div>
@@ -130,6 +206,38 @@
       </section>
     </div>
 
+    <section v-if="user" class="token-store" aria-labelledby="token-store-title">
+      <div class="section-heading">
+        <div>
+          <p class="eyebrow">TEAECL token plans</p>
+          <h2 id="token-store-title">Plans and add-ons</h2>
+        </div>
+        <button type="button" class="retry-button" :disabled="storeState === 'loading'" @click="loadStorefront">
+          Refresh offers
+        </button>
+      </div>
+      <p class="membership-status">Checkout is unavailable until payment confirmation is configured. Viewing an offer does not grant token credit.</p>
+      <p v-if="storeState === 'loading'" class="status-label">Loading offers…</p>
+      <p v-else-if="storeState === 'error'" class="status-label" role="alert">Token offers are unavailable. Try refreshing.</p>
+      <p v-else-if="storefrontProducts.length === 0" class="status-label">No published offers are available.</p>
+      <div v-else class="table-wrap">
+        <table class="store-table">
+          <thead><tr><th scope="col">Offer</th><th scope="col">Included tokens</th><th scope="col">Price</th><th scope="col">Availability</th></tr></thead>
+          <tbody>
+            <tr v-for="product in storefrontProducts" :key="product.code">
+              <th scope="row">
+                <span>{{ productName(product) }}</span>
+                <small v-if="product.description">{{ product.description }}</small>
+              </th>
+              <td>{{ formatTokenCount(String(product.tokens)) }}</td>
+              <td>{{ formatProductPrice(product) }}</td>
+              <td>Checkout unavailable</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
     <p class="privacy-note">Account and encounter details are not saved in browser storage.</p>
   </section>
 </template>
@@ -161,6 +269,68 @@ const roleLabel = (role: string | undefined): string => {
 const selectedRoleLabel = computed(() => roleLabel(selectedRole.value))
 const membershipMessage = ref('')
 const membershipState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+interface SessionArchive {
+  archiveId: string
+  sessionId: string
+  updatedAt: string
+  status: 'pending' | 'building' | 'available' | 'failed' | 'expired'
+  artifactId: string | null
+  downloadExpiresAt: string | null
+  errorCode: string | null
+}
+interface LearnerUsage {
+  periodStart: string
+  periodEnd: string
+  usage: { totalTokens: string; responseCount: number }
+}
+interface UsageLedgerEntry {
+  occurredAt: string
+  sessionId: string
+  provider: string
+  operation: 'scenario_generation' | 'patient_turn'
+  totalTokens: string
+}
+interface TokenBucket {
+  accountScope: 'consumer' | 'organization'
+  bucketKind: 'included' | 'addon'
+  groupCode: string | null
+  grantedTokens: string
+  usedTokens: string
+  reservedTokens: string
+  remainingTokens: string
+  renewalAt: string | null
+  expiresAt: string
+  daysRemaining: number
+}
+interface StoreProduct {
+  code: string
+  name?: string
+  description?: string
+  kind: 'monthly_tier' | 'token_addon'
+  tokens: number
+  priceMinor: number | null
+  currency: string | null
+}
+interface ConsumerStorefront {
+  revision: number
+  currency: string | null
+  products: StoreProduct[]
+  checkoutEnabled: false
+}
+const learnerUsage = ref<LearnerUsage | null>(null)
+const usageState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const usageMessage = ref('')
+const usageLedger = ref<UsageLedgerEntry[]>([])
+const ledgerState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const tokenBuckets = ref<TokenBucket[]>([])
+const bucketState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const storefront = ref<ConsumerStorefront | null>(null)
+const storeState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const storefrontProducts = computed(() => storefront.value?.products ?? [])
+const archives = ref<SessionArchive[]>([])
+const archiveState = ref<'idle' | 'loading' | 'ready' | 'error'>('idle')
+const archiveMessage = ref('')
+const downloadingArchiveId = ref<string | null>(null)
 type EntitlementLimitKey = 'monthlySessionQuota' | 'monthlySessionQuotaPerUser' | 'monthlyResponseQuota' |
   'monthlyResponseQuotaPerUser' | 'responseQuotaPerSession' | 'maxActiveSessions' | 'monthlyAudioTranscriptionSessionQuota'
 interface EntitlementPolicy {
@@ -210,9 +380,195 @@ async function loadMemberships(): Promise<void> {
     }
     membershipState.value = 'ready'
     await loadEntitlements()
+    await loadArchives()
+    await loadUsage()
+    await loadUsageLedger()
+    await loadTokenBuckets()
   } catch {
     membershipMessage.value = 'GPTpatient could not load your workspace access. Try again later.'
     membershipState.value = 'error'
+  }
+}
+
+async function loadArchives(): Promise<void> {
+  if (selectedRole.value !== 'learner' || !selectedTenantId.value) {
+    archives.value = []
+    archiveState.value = 'idle'
+    archiveMessage.value = ''
+    return
+  }
+  archiveState.value = 'loading'
+  archiveMessage.value = ''
+  try {
+    const config = useRuntimeConfig()
+    const result = await $fetch<{ archives: SessionArchive[] }>(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/account/archives`,
+      { headers: await useGptmdAuth().accessHeaders() }
+    )
+    archives.value = result.archives
+    archiveState.value = 'ready'
+  } catch {
+    archiveState.value = 'error'
+    archiveMessage.value = 'Transcript archives could not be loaded. Try refreshing.'
+  }
+}
+
+async function loadUsage(): Promise<void> {
+  if (selectedRole.value !== 'learner' || !selectedTenantId.value) {
+    learnerUsage.value = null
+    usageState.value = 'idle'
+    usageMessage.value = ''
+    return
+  }
+  learnerUsage.value = null
+  usageState.value = 'loading'
+  usageMessage.value = ''
+  try {
+    const config = useRuntimeConfig()
+    learnerUsage.value = await $fetch<LearnerUsage>(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/account/usage`,
+      { headers: await useGptmdAuth().accessHeaders() }
+    )
+    usageState.value = 'ready'
+  } catch {
+    usageState.value = 'error'
+    usageMessage.value = 'Personal token usage could not be loaded. Try refreshing.'
+  }
+}
+
+async function loadUsageLedger(): Promise<void> {
+  if (selectedRole.value !== 'learner' || !selectedTenantId.value) {
+    usageLedger.value = []
+    ledgerState.value = 'idle'
+    return
+  }
+  ledgerState.value = 'loading'
+  try {
+    const config = useRuntimeConfig()
+    const result = await $fetch<{ entries: UsageLedgerEntry[] }>(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/account/usage-ledger`,
+      { headers: await useGptmdAuth().accessHeaders() }
+    )
+    usageLedger.value = result.entries
+    ledgerState.value = 'ready'
+  } catch {
+    usageLedger.value = []
+    ledgerState.value = 'error'
+  }
+}
+
+async function loadTokenBuckets(): Promise<void> {
+  if (selectedRole.value !== 'learner' || !selectedTenantId.value) {
+    tokenBuckets.value = []
+    bucketState.value = 'idle'
+    return
+  }
+  bucketState.value = 'loading'
+  try {
+    const config = useRuntimeConfig()
+    const result = await $fetch<{ buckets: TokenBucket[] }>(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/account/token-buckets`,
+      { headers: await useGptmdAuth().accessHeaders() }
+    )
+    tokenBuckets.value = result.buckets
+    bucketState.value = 'ready'
+  } catch {
+    tokenBuckets.value = []
+    bucketState.value = 'error'
+  }
+}
+
+function bucketLabel(bucket: TokenBucket): string {
+  if (bucket.bucketKind === 'addon') {
+    return bucket.accountScope === 'organization'
+      ? `Organization add-on${bucket.groupCode ? ` · ${bucket.groupCode}` : ''}`
+      : 'Personal add-on tokens'
+  }
+  return bucket.accountScope === 'organization'
+    ? `Organization monthly allowance${bucket.groupCode ? ` · ${bucket.groupCode}` : ''}`
+    : 'Monthly included allowance'
+}
+
+function bucketUsed(bucket: TokenBucket): number {
+  return Math.min(Number(bucket.grantedTokens), Number(bucket.usedTokens) + Number(bucket.reservedTokens))
+}
+
+function formatTokenCount(value: string): string {
+  return Number(value).toLocaleString()
+}
+
+async function loadStorefront(): Promise<void> {
+  if (!user.value) return
+  storeState.value = 'loading'
+  try {
+    const config = useRuntimeConfig()
+    const result = await $fetch<{ storefront: ConsumerStorefront }>(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/store/consumer-tokens`,
+      { headers: await useGptmdAuth().accessHeaders(false) }
+    )
+    storefront.value = result.storefront
+    storeState.value = 'ready'
+  } catch {
+    storefront.value = null
+    storeState.value = 'error'
+  }
+}
+
+function productName(product: StoreProduct): string {
+  return product.name || product.code.charAt(0).toUpperCase() + product.code.slice(1)
+}
+
+function formatProductPrice(product: StoreProduct): string {
+  if (product.priceMinor == null || !product.currency) return 'Price not set'
+  const fractionDigits = new Intl.NumberFormat(undefined, {
+    style: 'currency', currency: product.currency
+  }).resolvedOptions().maximumFractionDigits ?? 2
+  const amount = product.priceMinor / (10 ** fractionDigits)
+  return new Intl.NumberFormat(undefined, {
+    style: 'currency', currency: product.currency
+  }).format(amount)
+}
+
+function archiveLabel(archive: SessionArchive): string {
+  return `Encounter ${archive.sessionId.slice(0, 8)}`
+}
+
+function archiveStatusLabel(status: SessionArchive['status']): string {
+  return status === 'pending' ? 'Queued'
+    : status === 'building' ? 'Preparing'
+      : status === 'available' ? 'Ready to download'
+        : status === 'expired' ? 'Expired' : 'Unavailable'
+}
+
+function formatArchiveDate(value: string): string {
+  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(value))
+}
+
+async function downloadArchive(archive: SessionArchive): Promise<void> {
+  downloadingArchiveId.value = archive.sessionId
+  archiveMessage.value = ''
+  try {
+    const config = useRuntimeConfig()
+    const result = await fetch(
+      `${String(config.public.apiBase).replace(/\/$/, '')}/api/sessions/${encodeURIComponent(archive.sessionId)}/archive/download`,
+      { headers: await useGptmdAuth().accessHeaders() }
+    )
+    if (!result.ok) throw new Error('download_unavailable')
+    const blob = await result.blob()
+    const filename = result.headers.get('content-disposition')?.match(/filename="([A-Za-z0-9._-]+)"/)?.[1]
+      ?? `gptmd-transcript-${archive.sessionId.slice(0, 8)}.txt`
+    const objectUrl = URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = objectUrl
+    link.download = filename
+    link.click()
+    window.setTimeout(() => URL.revokeObjectURL(objectUrl), 1_000)
+    archiveMessage.value = 'Transcript download started.'
+  } catch {
+    archiveMessage.value = 'Transcript could not be downloaded. Refresh the archive list and try again.'
+    await loadArchives()
+  } finally {
+    downloadingArchiveId.value = null
   }
 }
 
@@ -267,8 +623,15 @@ async function saveEntitlements(): Promise<void> {
   }
 }
 
-onMounted(loadMemberships)
+onMounted(() => {
+  void loadMemberships()
+  void loadStorefront()
+})
 watch(selectedTenantId, () => { void loadEntitlements() })
+watch(selectedTenantId, () => { void loadArchives() })
+watch(selectedTenantId, () => { void loadUsage() })
+watch(selectedTenantId, () => { void loadUsageLedger() })
+watch(selectedTenantId, () => { void loadTokenBuckets() })
 </script>
 
 <style scoped>
@@ -438,12 +801,106 @@ h1 {
   margin-top: 1.25rem;
 }
 
+.token-store {
+  border-top: 1px solid rgb(31 74 77 / 18%);
+  margin-top: 2rem;
+  padding-top: 1.5rem;
+}
+
+.store-table {
+  border-collapse: collapse;
+  margin-top: 1rem;
+  min-width: 38rem;
+  text-align: left;
+  width: 100%;
+}
+
+.store-table th,
+.store-table td {
+  border-bottom: 1px solid rgb(31 74 77 / 16%);
+  padding: 0.8rem 0.65rem;
+  vertical-align: top;
+}
+
+.store-table th[scope="row"] span,
+.store-table th[scope="row"] small {
+  display: block;
+}
+
+.store-table th[scope="row"] small {
+  color: var(--app-muted-text, #59696a);
+  font-size: 0.85rem;
+  font-weight: 400;
+  margin-top: 0.2rem;
+  max-width: 34rem;
+  overflow-wrap: anywhere;
+}
+
 .status-card {
   background: var(--app-surface, #fff);
   border: 1px solid rgb(31 74 77 / 14%);
   border-radius: 1rem;
   min-height: 10rem;
   padding: 1.4rem;
+}
+
+.usage-ledger {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.token-buckets {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+
+.bucket-list {
+  display: grid;
+  gap: 0 1.5rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  list-style: none;
+  margin: 1rem 0 0;
+  padding: 0;
+}
+
+.bucket-list li {
+  border-top: 1px solid rgb(31 74 77 / 16%);
+  min-width: 0;
+  padding: 1rem 0;
+}
+
+.bucket-heading {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 1rem;
+  justify-content: space-between;
+}
+
+.bucket-list progress {
+  accent-color: #277b71;
+  display: block;
+  height: 0.7rem;
+  margin: 0.8rem 0 0.4rem;
+  width: 100%;
+}
+
+.bucket-list p {
+  margin: 0.35rem 0;
+}
+
+.usage-table {
+  border-collapse: collapse;
+  min-width: 38rem;
+  text-align: left;
+  width: 100%;
+}
+
+.usage-table th,
+.usage-table td {
+  border-bottom: 1px solid rgb(31 74 77 / 16%);
+  padding: 0.65rem;
+  vertical-align: top;
 }
 
 .card-heading {
@@ -482,6 +939,41 @@ h2 {
   margin-bottom: -0.35rem;
 }
 
+.archive-list {
+  list-style: none;
+  margin: 1rem 0;
+  padding: 0;
+}
+
+.archive-list li {
+  align-items: center;
+  border-top: 1px solid rgb(31 74 77 / 16%);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.85rem;
+  justify-content: space-between;
+  min-width: 0;
+  padding: 0.75rem 0;
+}
+
+.archive-details {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.archive-details strong,
+.archive-details span,
+.archive-details time {
+  overflow-wrap: anywhere;
+}
+
+.archive-details span,
+.archive-details time {
+  color: var(--app-muted-text, #59696a);
+  font-size: 0.85rem;
+}
+
 .action-link {
   color: #176d70;
   font-weight: 700;
@@ -505,6 +997,10 @@ h2 {
 
 @media (width <= 680px) {
   .account-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .bucket-list {
     grid-template-columns: 1fr;
   }
 

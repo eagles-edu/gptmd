@@ -6,6 +6,22 @@
     :data-tts-started-at="ttsStartedAt"
     :data-tts-ended-at="ttsEndedAt"
   >
+    <v-dialog v-model="addonSpendNoticeOpen" persistent max-width="34rem" aria-labelledby="addon-spend-notice-title">
+      <v-card rounded="xl">
+        <v-card-text>
+          <p class="eyebrow">Token balance</p>
+          <h2 id="addon-spend-notice-title">Add-on tokens are now in use</h2>
+          <p>Your included token allowance for this period has been used. This visit is continuing with your available add-on tokens, which expire 365 days after they are granted.</p>
+          <v-alert v-if="addonSpendNoticeError" class="api-error" type="warning" variant="tonal" role="alert">
+            {{ addonSpendNoticeError }}
+          </v-alert>
+          <div class="assessment-actions">
+            <v-btn color="primary" :loading="addonSpendNoticePending" :disabled="addonSpendNoticePending" @click="acknowledgeAddonSpendNotice">Got it</v-btn>
+          </div>
+        </v-card-text>
+      </v-card>
+    </v-dialog>
+
     <v-dialog v-model="restorePromptOpen" persistent max-width="36rem" aria-labelledby="restore-encounter-title">
       <v-card rounded="xl">
         <v-card-text>
@@ -56,6 +72,7 @@
           <div class="readiness-details">
             <p v-if="interactionMode === 'audio'"><strong>Voice data flow:</strong> your microphone audio goes to OpenAI Realtime for transcription only. GPTpatient sends the finalized words to the patient model; its text reply is read aloud by your browser. Patient reply audio is not sent to OpenAI. GPTpatient does not record or store raw microphone audio. OpenAI processes your audio under the account’s API terms and data controls.</p>
             <p v-else><strong>Typed transcript:</strong> type each question and read the patient's written reply. No microphone access or audio processing is used. You can choose voice conversation before continuing.</p>
+            <p><strong>Active-time estimate:</strong> during an active visit, GPTpatient records a 30-second pulse only while this page is visible and there has been recent interaction. This estimate appears in workspace-admin reports; it is not continuous monitoring or CEU evidence.</p>
             <p><strong>Browser storage:</strong> local storage is not a secure session vault and has no permission prompt. GPTpatient does not save account or encounter data there. Any browser request for persistent storage would be separate; this app makes no such request.</p>
           </div>
 
@@ -380,6 +397,8 @@ type PendingLocalUtterance = {
 }
 type InteractionMode = 'transcript' | 'audio'
 const api = usePatientApi()
+let engagementPulseTimer: ReturnType<typeof setInterval> | undefined
+let lastActiveInteractionAt = 0
 const { memberships, selectedTenantId } = useGptmdAuth()
 const audioTranscriptionAvailable = computed(() => Boolean(
   memberships.value.find((membership) => membership.tenantId === selectedTenantId.value)?.audioTranscriptionAvailable
@@ -388,6 +407,10 @@ const sessionId = ref<string | null>(null)
 const sessionCreatedAt = ref<string | null>(null)
 const recoverableEncounter = ref<CurrentEncounterResult['encounter']>(null)
 const restorePromptOpen = ref(false)
+const addonSpendNoticeOpen = ref(false)
+const addonSpendNoticeDue = ref(false)
+const addonSpendNoticePending = ref(false)
+const addonSpendNoticeError = ref('')
 const profile = ref<PatientProfile | null>(null)
 const backendReady = ref(false)
 const imageReady = ref(false)
@@ -1094,14 +1117,34 @@ function repeatLastReply(statusText = 'Repeating the last reply.'): void {
 }
 
 onBeforeUnmount(() => {
+  if (engagementPulseTimer) clearInterval(engagementPulseTimer)
+  document.removeEventListener('pointerdown', markEncounterInteraction)
+  document.removeEventListener('keydown', markEncounterInteraction)
+  document.removeEventListener('touchstart', markEncounterInteraction)
+  document.removeEventListener('visibilitychange', markEncounterInteraction)
   void flushPendingLocalUtterances()
   void flushAssessmentDraft()
   stopVoiceConversation(false)
 })
 
 onMounted(() => {
+  document.addEventListener('pointerdown', markEncounterInteraction, { passive: true })
+  document.addEventListener('keydown', markEncounterInteraction)
+  document.addEventListener('touchstart', markEncounterInteraction, { passive: true })
+  document.addEventListener('visibilitychange', markEncounterInteraction)
   void beginSession()
 })
+
+function markEncounterInteraction(): void {
+  lastActiveInteractionAt = Date.now()
+}
+
+function recordEngagementPulse(): void {
+  const id = sessionId.value
+  if (!id || !roomEntered.value || document.visibilityState !== 'visible' ||
+      Date.now() - lastActiveInteractionAt > 120_000) return
+  void api.recordEngagementPulse(id, crypto.randomUUID()).catch(() => undefined)
+}
 
 async function beginSession(): Promise<void> {
   if (pending.value) return
@@ -1198,6 +1241,7 @@ function resetEncounterForNewVisit(): void {
 
 async function preparePatientSession(id: string): Promise<void> {
   const setup = await api.setupSession(id)
+  if (setup.addonSpendNotice) addonSpendNoticeDue.value = true
   backendReady.value = setup.readiness.profile && setup.readiness.redis && setup.readiness.conversation
   if (!backendReady.value) throw new Error('Patient setup is incomplete. Retry setup before entering the room.')
   profile.value = setup.patient
@@ -1216,6 +1260,7 @@ async function resumeCurrentEncounter(): Promise<void> {
   status.value = 'creating'
   errorMessage.value = ''
   try {
+    if (encounter.addonSpendNotice) addonSpendNoticeDue.value = true
     sessionId.value = encounter.sessionId
     sessionCreatedAt.value = encounter.createdAt
     backendReady.value = false
@@ -1289,6 +1334,20 @@ async function resumeCurrentEncounter(): Promise<void> {
   }
 }
 
+async function acknowledgeAddonSpendNotice(): Promise<void> {
+  if (!sessionId.value || addonSpendNoticePending.value) return
+  addonSpendNoticePending.value = true
+  addonSpendNoticeError.value = ''
+  try {
+    await api.acknowledgeAddonSpendNotice(sessionId.value)
+    addonSpendNoticeOpen.value = false
+  } catch {
+    addonSpendNoticeError.value = 'The notice could not be saved. Please try again.'
+  } finally {
+    addonSpendNoticePending.value = false
+  }
+}
+
 async function retryReadiness(): Promise<void> {
   if (pending.value) return
   if (!profile.value) {
@@ -1344,6 +1403,14 @@ function enterRoom(): void {
   patientPanel.value = 'chart'
   roomEntered.value = true
   status.value = 'active'
+  lastActiveInteractionAt = Date.now()
+  if (!engagementPulseTimer) {
+    engagementPulseTimer = setInterval(recordEngagementPulse, 30_000)
+  }
+  if (addonSpendNoticeDue.value) {
+    addonSpendNoticeDue.value = false
+    addonSpendNoticeOpen.value = true
+  }
   if (interactionMode.value === 'audio') toggleVoiceConversation()
 }
 
@@ -1412,6 +1479,7 @@ async function submitQuestion(
     const result = await api.sendTurn(
       sessionId.value, turn.turnId, text, turn.modality
     )
+    if (result.addonSpendNotice) addonSpendNoticeOpen.value = true
     retryableTurn.value = null
     lastPatientReply.value = result.text
     appendTranscriptMessage({

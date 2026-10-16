@@ -5,6 +5,7 @@ export interface TenantMembership {
   sessionsEnabled: boolean
   responsesEnabled: boolean
   audioTranscriptionAvailable: boolean
+  branding?: { displayName: string; logoPath: string }
 }
 type TenantMembershipResponse = { memberships: TenantMembership[] }
 
@@ -16,7 +17,10 @@ function parseTenantMemberships(value: unknown): TenantMembership[] {
       ['learner', 'instructor', 'customer_admin'].includes(membership.role) &&
       typeof membership.sessionsEnabled === 'boolean' &&
       typeof membership.responsesEnabled === 'boolean' &&
-      typeof membership.audioTranscriptionAvailable === 'boolean')) {
+      typeof membership.audioTranscriptionAvailable === 'boolean' &&
+      (membership.branding === undefined || (membership.branding &&
+        typeof membership.branding.displayName === 'string' && membership.branding.displayName.length > 0 &&
+        typeof membership.branding.logoPath === 'string' && /^\/assets\/images\/[a-z0-9-]+\.svg$/i.test(membership.branding.logoPath))))) {
     throw new Error('The account service returned an invalid workspace membership list.')
   }
   return (value as TenantMembershipResponse).memberships
