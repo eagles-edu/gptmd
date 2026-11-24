@@ -7,6 +7,15 @@ if [[ ! -s "$NVM_DIR/nvm.sh" ]]; then
   exit 1
 fi
 
+
+
+
+
+
+
+
+
+
 # Noninteractive task shells do not load ~/.bashrc, so initialize nvm here.
 source "$NVM_DIR/nvm.sh"
 

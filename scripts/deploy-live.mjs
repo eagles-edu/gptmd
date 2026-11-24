@@ -95,7 +95,10 @@ const expected = [
 ]
 for (const path of expected) await access(path)
 
-await run('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], { cwd: apiStage })
+await run('npm', ['ci', '--omit=dev', '--no-audit', '--no-fund'], {
+  cwd: apiStage,
+  timeout: 600_000
+})
 const secretFiles = await assertNoSecrets(stageRoot)
 if (secretFiles.length) {
   throw new Error(`Refusing release with secret-looking files: ${secretFiles.map((path) => path.slice(stageRoot.length + 1)).join(', ')}`)

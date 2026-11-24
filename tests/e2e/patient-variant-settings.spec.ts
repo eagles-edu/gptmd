@@ -22,6 +22,7 @@ function makeAuthCookie(): string {
 }
 
 test('system admin can edit and save draft settings for all ten variants', async ({ page, baseURL }) => {
+  test.setTimeout(60_000)
   const variantKeys = [
     '1019-average', '1019-heavy', '2029-average', '2029-heavy', '3039-average',
     '3039-heavy', '4049-average', '4049-heavy', '5059-average', '5059-heavy'
@@ -65,8 +66,14 @@ test('system admin can edit and save draft settings for all ten variants', async
   await page.goto('/system-admin/patient-variants')
   await expect(page.getByRole('heading', { name: 'Patient variant settings' })).toBeVisible()
   await page.getByLabel('Workspace').selectOption('instructor-tenant')
-  for (const key of variantKeys) await expect(page.getByRole('heading', { name: key })).toBeVisible()
+  await expect(page.locator('.variant-heading h2')).toHaveText(variantKeys, { timeout: 30_000 })
+  await expect(page.locator('.status-message')).toContainText('Revision 0 · draft')
+  const saveResponse = page.waitForResponse((response) =>
+    response.url().includes('/api/system-admin/tenants/instructor-tenant/patient-variant-settings') &&
+    response.request().method() === 'PUT'
+  )
   await page.getByRole('button', { name: 'Save draft' }).click()
+  expect((await saveResponse).status()).toBe(200)
   await expect(page.locator('.status-message')).toContainText('Revision 1 · draft')
 
   expect(selectedTenant).toBe('instructor-tenant')

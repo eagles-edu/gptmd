@@ -924,3 +924,99 @@ callback or broaden the CRS exclusion for that separate gate.
 **Future utility:** Keep live retention gates open until an authorized signed-in learner performs an opted-in session and the artifact, ownership, download event, and exact expiry cleanup are checked on the target runtime.
 
 **Project impact:** Observed: disposable integration evidence now covers the current text archive lifecycle, and the API has regression coverage for the patient-audio consent/storage boundary. Expected: prevents unconsented generated patient audio from entering a session archive. No live learner audio was recorded.
+
+## 2026-10-17 - Verify consented two-sided audio archive end to end
+
+**Beginning - trigger and context:** The phase-2 archive verifier still exercised only text downloads, leaving the newly implemented consented ZIP path without an end-to-end check across Express, PostgreSQL, the worker, and authenticated download.
+
+**Middle - decisions and work:** Extended `scripts/verify-phase2-session-history.mjs` to assert that learner audio upload is denied before consent, record explicit two-sided consent through Express, upload deterministic synthetic learner bytes through the authenticated route, and store synthetic patient MP3 against the accepted turn in disposable PostgreSQL. The verifier now unpacks the worker-produced ZIP and validates the learner-safe transcript, manifest, speaker paths/content types/chunk counts, exact audio bytes, private response headers, transferred ZIP byte count, and terminal+72-hour metadata. Patient synthesis is intentionally not invoked, so this checks archive/storage wiring without a provider request or speech quota.
+
+**End - outcome and verification:** `npm run verify:phase2` passed against its disposable PostgreSQL database and a loopback-only Redis Stack on port 16379 with `appendfsync=everysec`. Its captured structured result is `/tmp/gptmd-phase2-two-sided-audio-20261017-final.log`; the verifier dropped its database and the Redis container was stopped and removed. The final `npm run check` passed with 463 unit tests, 63 desktop browser tests, 44 preflight cases, 10 mobile-viewer cases, and one viewer-tool test, plus lint, types, API, schema, diagram, and warning-free build checks. The active mirror was not changed. Real audio quality, live learner consent/upload/download, and live 72-hour expiry/cleanup remain unverified; keep `b03`-`b05`, `b07`-`b09`, and `v09` open.
+
+**Future utility:** Reuse the isolated verifier for the private archive contract while reserving real-browser and live-retention checks for explicitly authorized, consented learner sessions.
+
+**Project impact:** Observed: the isolated test proves the current two-sided archive path preserves both exact synthetic recordings and records exact ZIP transfer bytes after a PostgreSQL artifact-write retry. It does not establish live user recording, playback quality, or retention cleanup.
+
+## 2026-10-17 - Sync verified GPTMD release to the OBGYN mirror
+
+**Beginning - trigger and context:** The user requested that the verified GPTMD work be synchronized to the live OBGYN mirror after the archive-verifier and deploy-timeout changes had passed local checks.
+
+**Middle - decisions and work:** Ran the guarded `npm run deploy:live` workflow, which reruns OAuth and browser preflights, syncs allowlisted artifacts, applies only unapplied migrations, installs API runtime dependencies with the new bounded timeout, atomically switches the release symlink, restarts the three GPTMD services, and checks readiness. Kept Google OAuth sign-in and live audio/archive claims separate from route-start and infrastructure checks.
+
+**End - outcome and verification:** Deployment activated release `2026-10-17T102331611Z`. A fresh `npm run check` passed with 463 unit tests, 63 desktop browser tests, 44 encounter-preflight cases, 10 mobile-viewer cases, and one viewer-tool test, plus lint, type, API, schema, diagram, and warning-free production-build checks. Post-deploy verification confirmed all three services active, API dependencies ready, public home HTTP 200, and successful `npm run verify:live-oauth` and `npm run verify:live-browser`. The release-tree scan found no ownership mismatches, group/other-writable paths, environment files, PEM files, or key files. Automated OAuth checks verify the start redirect only; no completed Google sign-in, learner audio session, archive download, or live retention cleanup was established.
+
+**Future utility:** Use the release identifier and deployment evidence in `docs/live-test-deployment.md` as the current mirror baseline; retain the explicit external-identity and live archive gates.
+
+**Project impact:** Observed: the current source artifacts are active on the OBGYN mirror and the guarded post-deploy checks pass. User sign-in and live learner archive behavior remain unverified.
+
+## 2026-10-17 - Add scenario-setup provider failover and sync to mirror
+
+**Beginning - trigger and context:** The selected Claude Haiku 5.5 fallback already covered patient turns, but scenario creation still depended on OpenAI. The goal was to extend the same availability-only failover boundary to setup, preserve one provider identity for the whole encounter, verify it against disposable data, and synchronize the result to the OBGYN mirror.
+
+**Middle - decisions and work:** Added a shared canonical scenario prompt builder used by OpenAI and Anthropic, including the current educator catalog, JSON schema, version pins, and scenario seed. OpenAI setup Conversation failures are classified separately from token-budget exhaustion and invalid output; only availability failures invoke the Anthropic adapter. Added migration 045 to pin `openai` or `anthropic` in the immutable scenario/session identity and allow a null OpenAI Conversation reference for Anthropic sessions. The first turn uses the pinned setup provider, and usage remains provider-attributed. Extended regression coverage for fallback boundaries, identity mismatch, nullable Anthropic identity, migration ordering, and native token reservation/settlement. Updated the phase verifier to exercise Anthropic setup persistence and its first turn directly through the real session store, avoiding a second synthetic provider-budget charge.
+
+**End - outcome and verification:** Focused unit tests passed. The captured `npm run verify:phase2` result is `/tmp/gptmd-phase2-anthropic-provider-pin-20261017.log`; migration 045 applied in its disposable PostgreSQL database, Redis used an isolated loopback container with `appendfsync=everysec`, provider identity and first-turn pinning verified, and the disposable Redis container was removed. `npm run check` passed with 471 unit tests, 63 desktop browser tests, 44 preflight cases, 10 mobile-viewer cases, and one viewer-tool case, with lint, type, API, schema, diagram, and production-build gates passing. `npm run deploy:live` applied migration 045 and activated `2026-10-17T104943689Z`; all three services are active, API readiness and public home returned HTTP 200, and fresh OAuth/browser probes passed. No live OpenAI outage or learner session was induced, and no clinical prompt was sent to Anthropic.
+
+**Future utility:** Keep the live failure/recovery, privacy/operational review, clinical-quality evaluation, and signed-in learner checks open. A direct upstream smoke and deterministic local fallback tests do not establish production outage recovery.
+
+**Project impact:** Observed: scenario setup and patient turns now share the selected provider identity, and the mirror includes the migration and adapters. Local disposable persistence, provider usage attribution, and browser/deployment health passed; real live failover behavior remains unverified.
+
+## 2026-10-17 - Separate OAuth app audience from VinMed admin membership
+
+**Beginning - trigger and context:** The user reported the Google OAuth User type as External and questioned the apparent discrepancy with the VinMed account. The project needs to distinguish Google's app audience, Supabase Auth identity creation, invitation claim, and GPTMD customer-admin authorization.
+
+**Middle - decisions and work:** Clarified in the SOP and modernization checklist that External is the OAuth application's audience; it is not an individual account classification or GPTMD role. A personal Gmail address can be an External test account, but the audience setting itself neither creates an Auth identity nor activates an invited tenant role. Read the Chrome profile catalog without inspecting cookies or storage; only onlineadmin and scsstx profiles are present, with no saved Ayeya profile, so no alternate sign-in flow or TinyFish context was started. Queried the separate Supabase Auth database and the live GPTMD tenant database read-only.
+
+**End - outcome and verification:** The Auth query returned zero active users for `ayeyamsam@gmail.com`. The live VinMed invitation remains pending for `customer_admin`, has no accepted subject or active customer-admin membership, and the tenant's session/Responses entitlements remain disabled. The External audience was reported by the user but was not independently inspected in Google Cloud Console; if `org_internal` still recurs, verify that the live Supabase Google client ID and saved External audience belong to the same Cloud project. `git diff --check` passed; no database, OAuth, or tenant setting was changed.
+
+**Future utility:** Keep Google audience, Auth identity, verified-email invitation claim, GPTMD membership, and tenant capability state as separate verification gates. Do not restart a completed sign-in in another profile or treat an OAuth redirect as account provisioning.
+
+**Project impact:** Observed: the supposed discrepancy is a layer distinction, and the exact current live state is still pending invitation with no Auth identity. The VinMed admin workspace is not active; activation requires the invited account's completed OAuth callback and claim flow.
+
+## 2026-10-17 - Publish the English history-taking prompt library
+
+**Beginning - trigger and context:** The approved English interview and examination corpus was ready to support clinician communication practice, but `/history-taking` was only an overview page and had no searchable prompt catalog.
+
+**Middle - decisions and work:** Added a deterministic Markdown parser that extracts quoted patient-facing prompts with section paths, practice-type labels, stable IDs, source SHA-256, and explicit `not_recorded` reference-audio metadata. Added a generated JSON catalog, a consistency command included in `npm run check`, a searchable and type-filtered public prompt library, and regression/browser tests. The UI does not imply recordings or collect learner recordings or scores.
+
+**End - outcome and verification:** `npm run check` passed with 473 unit tests, 66 desktop browser tests, 44 preflight tests, 10 mobile-viewer cases, and one viewer-tool case. Release `2026-10-17T112926302Z` is active on the OBGYN mirror. Live Chromium returned HTTP 200 for `/history-taking`, rendered 510 prompts, filtered a known prompt to one result, and had no page errors. Release owner/mode, service, readiness, OAuth, and browser-route checks passed. Reference audio, learner recordings, side-by-side comparison, and periodic AI scoring remain unimplemented; no speaking-practice checklist node is complete from this work.
+
+**Future utility:** Build the educator-approved reference recording and consented learner attempt workflow as separate work, then verify comparison and any periodic AI scoring without conflating catalog availability with audio functionality.
+
+**Project impact:** Observed: the OBGYN mirror exposes a deterministic, searchable catalog of 510 educator-corpus English prompts. Audio-based practice, recording, comparison feedback, and AI evaluation are not yet available.
+
+## 2026-10-17 - Reverify and sync GPTMD to the OBGYN mirror
+
+**Beginning - trigger and context:** The user explicitly requested that the current GPTMD work be synchronized to the OBGYN mirror. The checkout contained a large preserved dirty worktree, so deployment needed to pass the repository's full gate and use the guarded allowlisted release procedure.
+
+**Middle - decisions and work:** Read the persistence and deployment procedures, inspected the existing worktree without staging or committing, and ran `npm run check`. After it passed, ran `npm run deploy:live`; the script reran origin/public OAuth and browser preflights, synchronized the staged web/API artifacts, applied any pending migrations, atomically activated the release, restarted the web/API/worker services, and checked loopback readiness. Then ran the OAuth and browser verifiers and a real Chromium interaction against the live prompt catalog. Audited release ownership, write modes, and secret-looking filenames.
+
+**End - outcome and verification:** `npm run check` passed with 473 unit tests, 66 desktop browser tests, 44 encounter-preflight tests, 10 mobile-viewer tests, and one viewer-tool test, along with lint, type, catalog, API, schema, diagram, and warning-free production-build checks. Release `2026-10-17T114228182Z` is active. Origin/public OAuth checks and Chromium home/OAuth checks passed. The live `/history-taking` route returned HTTP 200, displayed 510/510 prompts, filtered a known prompt to 1/510, and produced zero browser console/page errors. All three services are active as `eaglesvn:eaglesvn`; `/readyz` reports Redis, PostgreSQL, OpenAI, and auth ready. The release scan found no owner/group mismatches, group/other-writable paths, or environment/PEM/key files. No changes were staged or committed. OAuth start does not prove a completed sign-in; live learner audio, 72-hour archive retention, and real provider-outage recovery remain unverified.
+
+**Future utility:** Use release `2026-10-17T114228182Z` as the current mirror baseline and preserve the remaining signed-in learner, audio/archive, and provider-recovery gates.
+
+**Project impact:** Observed: the verified local code is active on the OBGYN mirror and the route-level live catalog check passes. No completed OAuth callback or live learner session was established.
+
+## 2026-10-17 - Capture Realtime verification and sync current work
+
+**Beginning - trigger and context:** The modernization pass needed an unambiguous billable live voice result and the user requested that the current work be synchronized to the OBGYN mirror. The first verifier attempt could not safely use the populated shared Redis instance, so no shared database was flushed or reused.
+
+**Middle - decisions and work:** Added a validated loopback-only Redis URL override for live verification and seeded a synthetic private token grant only in the verifier's disposable PostgreSQL database. Added focused tests for the override and grant fixture, and documented the safe procedure in the SOP. Ran the full `npm run check`, then captured `npm run verify:live-realtime-transcription` against disposable loopback Redis and temporary PostgreSQL. The provider-backed setup returned HTTP 503 during learner-safe readiness validation, before Realtime call creation or patient-turn acceptance; cleanup recorded zero provider Conversation and audio-call failures. The disposable database and Redis instance were removed. Kept checklist `i07` open and did not describe this as successful voice verification.
+
+**End - outcome and verification:** The full check passed with 481 unit tests, 66 desktop browser tests, 44 encounter-preflight tests, 10 mobile-viewer tests, and one viewer-tool test, along with lint, type, catalog, API, schema, diagram, and production-build checks. Guarded `npm run deploy:live` activated release `2026-10-17T120730561Z`. Fresh OAuth and Chromium browser checks passed. All three services are active; API `/readyz` and public home returned HTTP 200. The active release has zero owner/group mismatches, group/other-writable paths, or environment/PEM/key files. The microphone capture device remains unavailable, and successful live Realtime transcription is still unverified. No changes were staged or committed.
+
+**Future utility:** Diagnose the provider setup HTTP 503 from sanitized server/provider diagnostics and retry only after identifying a concrete corrective action. Keep live STT and physical microphone proof as separate `i07` gates.
+
+**Project impact:** Observed: the current verified source release, including migration 045, is active on the OBGYN mirror with healthy services and passing OAuth/browser probes. The isolated live voice attempt failed at setup and did not establish Realtime transcription.
+
+## 2026-10-17 - Repair conversation token counting and sync the mirror
+
+**Beginning - trigger and context:** The user asked to continue GPTMD modernization and synchronize the current work to the OBGYN mirror. The previous captured Realtime verifier had stopped during setup, while local source changes included a token-counting adjustment intended to avoid locking an active Responses Conversation.
+
+**Middle - decisions and work:** Reviewed the preserved dirty checkout and project procedures. Changed the conversation input-token counter to list prior provider conversation items and send them statelessly to the token-count endpoint, preserving context without attaching the active Conversation. Added focused regression coverage and adjusted the Firefox patient-variant browser assertion to wait for the complete ordered ten-profile dataset and loaded revision. Ran the full project check and captured a live synthetic-audio verification against isolated temporary PostgreSQL and disposable loopback Redis. The live request reached OpenAI Realtime call creation but received plain-text HTTP 500 from Cloudflare (Ray `a4bf77ec49128607-HKG`); GPTMD returned HTTP 503. No call ID, transcript, usage event, or patient turn was created; cleanup deleted one provider Conversation with zero audio-call cleanup failures. Verified current official transcription documentation and the aggregate OpenAI status page, then ran the guarded mirror deploy and fresh OAuth/browser checks. Audited the active release tree and service state. No photos were generated; no changes were staged or committed.
+
+**End - outcome and verification:** `npm run check` passed with 487 unit tests, 66 desktop browser tests, 44 encounter-preflight tests, 10 mobile-viewer tests, and one viewer-tool test; lint, type, catalog, API, schema, diagram, and warning-free production build checks passed. Release `2026-10-17T125848659Z` is active on the OBGYN mirror. Post-deploy origin/public OAuth and Chromium browser checks passed; all three services are active, loopback web, `/readyz`, and public home returned HTTP 200, and readiness reports Redis/PostgreSQL/OpenAI/auth configured. The 9,292-path release has no ownership/mode violations or secret-looking files. Live Realtime transcription and physical microphone capture remain unverified; checklist `i07` stays open. The temporary Redis test container is being removed after verification.
+
+**Future utility:** Keep the Conversation lock regression covered and use the captured Cloudflare Ray to ask OpenAI support for request-level investigation if Realtime call creation continues to return generic 500 responses. Do not treat provider status-page health or successful mirror deployment as evidence of live transcription.
+
+**Project impact:** Observed: the conversation lock is avoided in source tests and a fully checked release is active on the mirror; this specific live Realtime attempt did not establish audio transcription.

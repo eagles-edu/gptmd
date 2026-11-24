@@ -9,9 +9,63 @@ import {
   PATIENT_PROFILE_FIELDS
 } from '../../services/api/src/patient-profile.ts'
 import { createMockResponsesStream } from './helpers/openai-response-stream.ts'
+import { ProviderTokenBudgetExceeded } from '../../services/api/src/provider-token-reservations.ts'
 import { TEST_PATIENT_PHYSICAL_EXAM_FINDINGS, TEST_PATIENT_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
 
 describe('patient setup Conversation isolation', () => {
+  it('classifies OpenAI Conversation availability failures for setup fallback without misclassifying auth errors', async () => {
+    const unavailable = Object.assign(new Error('connection failed'), { name: 'APIConnectionError' })
+    const unavailableClient = {
+      conversations: { create: vi.fn().mockRejectedValue(unavailable) }
+    } as unknown as OpenAI
+    await expect(generatePatientScenario(unavailableClient, 'gpt-6-luna', {
+      scenarioSeed: 'u'.repeat(43)
+    })).rejects.toMatchObject({
+      name: PatientScenarioProviderError.name,
+      availabilityFailure: true,
+      conversationIds: []
+    })
+
+    const unauthorized = Object.assign(new Error('private upstream message'), {
+      status: 401,
+      code: 'invalid_api_key',
+      type: 'authentication_error'
+    })
+    const unauthorizedClient = {
+      conversations: { create: vi.fn().mockRejectedValue(unauthorized) }
+    } as unknown as OpenAI
+    await expect(generatePatientScenario(unauthorizedClient, 'gpt-6-luna', {
+      scenarioSeed: 'a'.repeat(43)
+    })).rejects.toMatchObject({
+      availabilityFailure: false,
+      providerFailure: {
+        name: 'Error',
+        status: 401,
+        code: 'invalid_api_key',
+        type: 'authentication_error',
+        stage: 'conversation_create'
+      }
+    })
+  })
+
+  it('keeps token-budget exhaustion distinct from provider availability and removes the unused Conversation', async () => {
+    const deleteConversation = vi.fn()
+    const client = {
+      conversations: {
+        create: vi.fn().mockResolvedValue({ id: 'conv-budget-denied' }),
+        delete: deleteConversation,
+        items: { list: vi.fn(async function* () {}), delete: vi.fn() }
+      },
+      responses: { inputTokens: { count: vi.fn().mockResolvedValue({ input_tokens: 12 }) } }
+    } as unknown as OpenAI
+
+    await expect(generatePatientScenario(client, 'gpt-6-luna', {
+      scenarioSeed: 'b'.repeat(43),
+      reserveProviderTokens: vi.fn().mockRejectedValue(new ProviderTokenBudgetExceeded())
+    })).rejects.toBeInstanceOf(ProviderTokenBudgetExceeded)
+    expect(deleteConversation).toHaveBeenCalledWith('conv-budget-denied')
+  })
+
   it('deletes every setup item and verifies that hidden setup context is gone', async () => {
     const remaining = [{ id: 'setup-input' }, { id: 'setup-answer-key' }]
     const deleted: string[] = []
@@ -111,6 +165,7 @@ describe('patient setup Conversation isolation', () => {
   it('clears setup input and answer-key output before returning the validated scenario', async () => {
     const history = [{ id: 'setup-input' }, { id: 'setup-answer-key' }]
     const deleted: string[] = []
+    let conversationListCalls = 0
     const profile = {
       fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
       reasonForVisit: 'Pelvic pain', diagnosis: 'Endometriosis', painHistoryStatus: 'absent', painEpisodes: [], history: [],
@@ -132,7 +187,9 @@ describe('patient setup Conversation isolation', () => {
         create: vi.fn().mockResolvedValue({ id: 'conv-1' }),
         items: {
           list: vi.fn(async function* (_conversationId: string, query: { limit: number }) {
-            for (const item of history.slice(0, query.limit)) yield item
+            conversationListCalls += 1
+            const items = conversationListCalls === 1 ? [] : history
+            for (const item of items.slice(0, query.limit)) yield item
           }),
           delete: vi.fn(async (itemId: string) => {
             deleted.push(itemId)
@@ -167,9 +224,10 @@ describe('patient setup Conversation isolation', () => {
       >
       text?: { format?: unknown }
     }
-    expect(inputTokenCount).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'gpt-6-luna', conversation: 'conv-1', input: request.input, text: request.text
-    }))
+    expect(inputTokenCount).toHaveBeenCalledWith({
+      model: 'gpt-6-luna', input: request.input, text: request.text
+    }, { maxRetries: 0 })
+    expect(inputTokenCount.mock.calls[0]?.[0]).not.toHaveProperty('conversation')
     expect(request.max_output_tokens).toBe(8_192)
     expect(streamFactory.mock.calls[0]?.[1]).toEqual({ maxRetries: 0 })
     const canonicalCatalog = readFileSync(

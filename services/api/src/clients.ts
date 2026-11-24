@@ -1,8 +1,10 @@
 import OpenAI from 'openai'
 import { Pool } from 'pg'
 import { AnthropicMessagesClient } from './anthropic-messages.ts'
+import { generateAnthropicPatientScenario } from './anthropic-patient-scenario.ts'
 import { generateAnthropicPatientTurn } from './anthropic-patient-turn.ts'
 import { isOpenAiAvailabilityError } from './provider-availability.ts'
+import { generateScenarioWithFailover } from './scenario-provider-failover.ts'
 import { createClient } from 'redis'
 import type { ApiDependencies, PostgresProbe, RedisProbe } from './app.js'
 import type { SetupQueueLimits } from './bounded-setup-queue.ts'
@@ -301,28 +303,43 @@ export function createServiceClients(
         ? (input) => providerTokenReservations.reserve(input)
         : null,
       generatePatientScenario: openaiClient
-        ? (versions, asOf, scenarioSeed, recordTiming, recordProviderUsage, reserveProviderTokens) => generatePatientScenario(
-            openaiClient,
-            versions.modelVersion,
-            {
-              asOf,
-              promptVersion: versions.promptVersion,
-              policyVersion: versions.policyVersion,
-              scenarioSeed,
-              recordTiming,
-              recordProviderUsage,
-              reserveProviderTokens,
-              recordAbandonedConversationIds: async (conversationIds) => {
-                if (!postgresPool) throw new Error('Patient setup Conversation cleanup storage is unavailable')
-                await postgresPool.query(
-                  `INSERT INTO app_patient_scenario_conversation_cleanup (provider_conversation_id)
-                   SELECT unnest($1::text[])
-                   ON CONFLICT (provider_conversation_id) DO NOTHING`,
-                  [conversationIds]
-                )
-              }
-            }
-          )
+        ? (versions, asOf, scenarioSeed, recordTiming, recordProviderUsage, reserveProviderTokens) =>
+            generateScenarioWithFailover(
+              () => generatePatientScenario(openaiClient, versions.modelVersion, {
+                asOf,
+                promptVersion: versions.promptVersion,
+                policyVersion: versions.policyVersion,
+                scenarioSeed,
+                recordTiming,
+                recordProviderUsage,
+                reserveProviderTokens,
+                recordAbandonedConversationIds: async (conversationIds) => {
+                  if (!postgresPool) throw new Error('Patient setup Conversation cleanup storage is unavailable')
+                  await postgresPool.query(
+                    `INSERT INTO app_patient_scenario_conversation_cleanup (provider_conversation_id)
+                     SELECT unnest($1::text[])
+                     ON CONFLICT (provider_conversation_id) DO NOTHING`,
+                    [conversationIds]
+                  )
+                }
+              }),
+              anthropicClient
+                ? async (availabilityError) => {
+                    const generated = await generateAnthropicPatientScenario(
+                      anthropicClient,
+                      versions,
+                      asOf,
+                      scenarioSeed,
+                      recordProviderUsage,
+                      reserveProviderTokens
+                    )
+                    return {
+                      ...generated,
+                      abandonedConversationIds: [...availabilityError.conversationIds]
+                    }
+                  }
+                : undefined
+            )
         : null,
       generatePatientTurn: openaiClient
         ? async (context, recordTiming, reserveProviderTokens) => {

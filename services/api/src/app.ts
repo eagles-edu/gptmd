@@ -113,6 +113,7 @@ export interface ApiDependencies {
     responseId: string
     output: unknown
     providerUsage: ProviderUsageSample | null
+    provider?: 'openai' | 'anthropic'
   }>) | null
   reserveProviderTokens: ((input: {
     tenantId: string

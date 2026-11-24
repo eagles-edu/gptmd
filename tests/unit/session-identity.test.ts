@@ -30,6 +30,7 @@ const binding: SessionIdentityBinding = {
   subjectId: 'learner-a',
   patientProfileId,
   providerConversationId: 'conv_private',
+  provider: 'openai',
   scenarioFingerprint,
   schemaVersion: 8
 }
@@ -40,6 +41,7 @@ function liveState(overrides: Partial<LivePatientState> = {}): LivePatientState 
     patientProfileId,
     profile,
     conversationId: 'conv_private',
+    provider: 'openai',
     profileDigest: scenarioFingerprint,
     schemaVersion: 8,
     state: {} as LivePatientState['state'],
@@ -70,9 +72,23 @@ describe('session identity binding', () => {
       liveState({ conversationId: 'conv_other' }),
       liveState({ profile: { ...profile, reasonForVisit: 'Abdominal pain' } }),
       liveState({ profileDigest: 'a'.repeat(64) }),
-      liveState({ schemaVersion: 7 as 8 })
+      liveState({ schemaVersion: 7 as 8 }),
+      liveState({ provider: 'anthropic', conversationId: null })
     ]) {
       expect(verifySessionIdentityBinding(binding, altered)).toBe('mismatch')
     }
+  })
+
+  it('verifies an Anthropic scenario identity without an OpenAI Conversation', () => {
+    const anthropicBinding: SessionIdentityBinding = {
+      ...binding,
+      providerConversationId: null,
+      provider: 'anthropic'
+    }
+
+    expect(verifySessionIdentityBinding(
+      anthropicBinding,
+      liveState({ provider: 'anthropic', conversationId: null })
+    )).toBe('verified')
   })
 })

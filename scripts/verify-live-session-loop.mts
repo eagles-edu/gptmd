@@ -11,6 +11,12 @@ import { deletePatientSetupConversation } from '../services/api/src/patient-prof
 import { createRedisPatientStateStore } from '../services/api/src/patient-state-store.ts'
 import { createSessionEventWorker } from '../services/api/src/session-event-worker.ts'
 import { cleanupLiveVerificationConversations } from '../services/api/src/live-verification-conversation-cleanup.ts'
+import {
+  resolveLiveSessionLoopRedisUrl,
+  seedLiveSessionLoopTokenGrant,
+  summarizeLiveProviderFailure,
+  summarizeLiveSetupFailure
+} from './live-session-loop-config.mjs'
 
 async function captureLiveTranscription(
   page: Page,
@@ -150,16 +156,17 @@ const { Pool } = require('pg') as typeof import('pg')
 const { createClient } = require('redis') as typeof import('redis')
 const OpenAI = (require('openai') as typeof import('openai')).default
 const env = parseEnv(await readFile(new URL('../.env', import.meta.url), 'utf8'))
-if (!env.DATABASE_URL || !env.REDIS_URL || !env.OPENAI_API_KEY) {
-  throw new Error('DATABASE_URL, REDIS_URL, and OPENAI_API_KEY must be configured in .env.')
+if (!env.DATABASE_URL || !env.OPENAI_API_KEY) {
+  throw new Error('DATABASE_URL and OPENAI_API_KEY must be configured in .env.')
 }
 
 const databaseUrl = new URL(env.DATABASE_URL)
-const redisUrl = new URL(env.REDIS_URL)
 const localHosts = new Set(['localhost', '127.0.0.1', '::1'])
-if (!localHosts.has(databaseUrl.hostname) || !localHosts.has(redisUrl.hostname)) {
-  throw new Error('Live session verification only runs against loopback PostgreSQL and Redis URLs.')
+const databaseHostname = databaseUrl.hostname.toLowerCase().replace(/^\[|\]$/g, '')
+if (!localHosts.has(databaseHostname)) {
+  throw new Error('Live session verification only runs against loopback PostgreSQL URLs.')
 }
+const redisUrl = resolveLiveSessionLoopRedisUrl(env.REDIS_URL, process.env.GPTMD_LIVE_VERIFY_REDIS_URL)
 
 const temporaryDatabase = `gptmd_live_setup_${randomBytes(6).toString('hex')}`
 const adminPool = new Pool({ connectionString: databaseUrl.toString(), max: 1 })
@@ -273,6 +280,17 @@ try {
   if (!serviceClients.dependencies.openaiConfigured || !serviceClients.dependencies.sessionStore) {
     throw new Error('The real OpenAI provider or PostgreSQL/Redis session store is not configured.')
   }
+  const generatePatientScenario = serviceClients.dependencies.generatePatientScenario
+  if (generatePatientScenario) {
+    serviceClients.dependencies.generatePatientScenario = async (...args) => {
+      try {
+        return await generatePatientScenario(...args)
+      } catch (error) {
+        verificationSummary.scenarioProviderFailure = summarizeLiveProviderFailure(error)
+        throw error
+      }
+    }
+  }
   const createTranscriptionCall = serviceClients.dependencies.createTranscriptionCall
   if (createTranscriptionCall) {
     serviceClients.dependencies.createTranscriptionCall = async (sdpOffer) => {
@@ -315,6 +333,13 @@ try {
      VALUES ($1, $2, 'active', 'learner')`,
     [tenantId, subjectId]
   )
+  await seedLiveSessionLoopTokenGrant(
+    (sql, values) => testPool!.query(sql, values),
+    subjectId,
+    `live-verify-addon-${randomBytes(6).toString('hex')}`,
+    new Date()
+  )
+  verificationSummary.temporaryTokenAllowanceSeeded = true
 
   currentStep = 'start the real Express API'
   apiServer = createApiApp(serviceClients.dependencies).listen(0, '127.0.0.1')
@@ -340,12 +365,19 @@ try {
   const setup = await setupResponse.json() as {
     sessionId?: string
     status?: string
+    error?: string
     patient?: Record<string, unknown>
     readiness?: { profile?: boolean; redis?: boolean; conversation?: boolean }
   }
   if (setupResponse.status !== 200 || setup.status !== 'ready' || setup.sessionId !== sessionId ||
       setup.readiness?.profile !== true || setup.readiness.redis !== true ||
       setup.readiness.conversation !== true || !setup.patient || Object.hasOwn(setup.patient, 'diagnosis')) {
+    verificationSummary.setupFailureDiagnostic = summarizeLiveSetupFailure(
+      setupResponse.status,
+      setup,
+      setupResponse.headers.get('retry-after'),
+      setupResponse.headers.get('server-timing')
+    )
     throw new Error(`Live API setup failed learner-safe readiness validation (HTTP ${setupResponse.status}).`)
   }
   const binding = await testPool.query<{ provider_conversation_id: string; scenario_fingerprint: string }>(

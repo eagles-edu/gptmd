@@ -41,6 +41,13 @@ const context: PatientTurnGenerationContext = {
 }
 const acceptedAt = '2026-10-03T03:04:05.000Z'
 
+function makeClient(responses: object): OpenAI {
+  return {
+    conversations: { items: { list: vi.fn(async function* () {}) } },
+    responses
+  } as unknown as OpenAI
+}
+
 describe('patient turn generation and validation', () => {
   it('omits diagnosis from the turn projection and uses the session Conversation', async () => {
     const { streamFactory, inputTokenCount } = createMockResponsesStream({
@@ -53,7 +60,7 @@ describe('patient turn generation and validation', () => {
         patientResponse: 'In my lower abdomen.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory } } as unknown as OpenAI
+    const client = makeClient({ inputTokens: { count: inputTokenCount }, stream: streamFactory })
     const timings: Array<{ stage: string; elapsedMs: number }> = []
     const reservation = { settle: vi.fn().mockResolvedValue(undefined), hold: vi.fn().mockResolvedValue(undefined) }
     const reserveProviderTokens = vi.fn().mockResolvedValue(reservation)
@@ -78,9 +85,10 @@ describe('patient turn generation and validation', () => {
     const request = streamFactory.mock.calls[0]?.[0] as {
       conversation?: string; input?: Array<{ content?: unknown }>; text?: unknown; max_output_tokens?: number
     }
-    expect(inputTokenCount).toHaveBeenCalledWith(expect.objectContaining({
-      model: 'gpt-6-luna', conversation: 'conv_private', input: request.input, text: request.text
-    }))
+    expect(inputTokenCount).toHaveBeenCalledWith({
+      model: 'gpt-6-luna', input: request.input, text: request.text
+    }, { maxRetries: 0 })
+    expect(inputTokenCount.mock.calls[0]?.[0]).not.toHaveProperty('conversation')
     expect(request.max_output_tokens).toBe(1_024)
     expect(streamFactory.mock.calls[0]?.[1]).toEqual({ maxRetries: 0 })
     expect(reserveProviderTokens).toHaveBeenCalledWith(100, 1_024)
@@ -162,7 +170,7 @@ describe('patient turn generation and validation', () => {
         patientResponse: 'Good morning.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory } } as unknown as OpenAI
+    const client = makeClient({ inputTokens: { count: inputTokenCount }, stream: streamFactory })
 
     await generatePatientTurn(client, 'gpt-6-luna', { ...context, learnerMessage: 'Good morning.' })
 
@@ -204,7 +212,7 @@ describe('patient turn generation and validation', () => {
         patientResponse: 'It feels like cramps.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory } } as unknown as OpenAI
+    const client = makeClient({ inputTokens: { count: inputTokenCount }, stream: streamFactory })
 
     const isPainEpisodeField = PAIN_EPISODE_FIELDS.includes(field as (typeof PAIN_EPISODE_FIELDS)[number])
     const fieldContext: PatientTurnGenerationContext = {
@@ -241,7 +249,7 @@ describe('patient turn generation and validation', () => {
         patientResponse: 'I’m not sure.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory } } as unknown as OpenAI
+    const client = makeClient({ inputTokens: { count: inputTokenCount }, stream: streamFactory })
 
     await generatePatientTurn(client, 'gpt-6-luna', {
       ...context,
@@ -278,7 +286,7 @@ describe('patient turn generation and validation', () => {
         historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    const client = { responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory } } as unknown as OpenAI
+    const client = makeClient({ inputTokens: { count: inputTokenCount }, stream: streamFactory })
 
     await generatePatientTurn(client, 'gpt-6-luna', onsetContext)
 
@@ -366,7 +374,7 @@ describe('patient turn generation and validation', () => {
         disclosedHistoryFields: ['miscellaneousDetailsNos']
       }
     })
-    const client = { responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory } } as unknown as OpenAI
+    const client = makeClient({ inputTokens: { count: inputTokenCount }, stream: streamFactory })
     await generatePatientTurn(client, 'gpt-6-luna', expansionContext)
     const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const input = JSON.parse(String(request?.input?.[1]?.content)) as {
@@ -523,7 +531,7 @@ describe('patient turn generation and validation', () => {
         historyCoverage: ['patientConcern'], disclosedHistoryFields: ['patientConcern']
       }
     })
-    const client = { responses: { inputTokens: { count: inputTokenCount }, stream: streamFactory } } as unknown as OpenAI
+    const client = makeClient({ inputTokens: { count: inputTokenCount }, stream: streamFactory })
 
     await generatePatientTurn(client, 'gpt-6-luna', concernContext)
     const request = streamFactory.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
@@ -547,7 +555,7 @@ describe('patient turn generation and validation', () => {
         patientResponse: 'Hello.', proposedFacts: [], historyCoverage: [], disclosedHistoryFields: []
       }
     })
-    await generatePatientTurn({ responses: { inputTokens: { count: greetingInputTokenCount }, stream: greetingStream } } as unknown as OpenAI,
+    await generatePatientTurn(makeClient({ inputTokens: { count: greetingInputTokenCount }, stream: greetingStream }),
       'gpt-6-luna', { ...concernContext, learnerMessage: 'Hello.' })
     const greetingRequest = greetingStream.mock.calls[0]?.[0] as { input?: Array<{ content?: unknown }> }
     const greetingInput = JSON.parse(String(greetingRequest.input?.[1]?.content)) as {

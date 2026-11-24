@@ -477,6 +477,15 @@ Supabase Auth identity, and GPTMD tenant authorization. Google documents that
 this error occurs when a request comes from outside the Cloud project's parent
 organization.
 
+**User type: External** describes the OAuth application's audience, not the
+Google account's type and not its GPTMD role. It is expected when allowing a
+personal Gmail test account. It does not create a Supabase Auth identity, claim
+a tenant invitation, or grant `customer_admin`; those require a completed
+OAuth callback followed by the verified-email invitation claim. If Google
+still returns `org_internal` after External is saved, verify the exact Cloud
+project and OAuth client ID used by the live Supabase Auth configuration
+before changing another setting.
+
 For the named personal Gmail test client, use Google Auth Platform > Audience:
 set **User type** to **External**, keep **Publishing status** at **Testing**,
 and add the exact account under **Test users**. Do not publish the app or add
@@ -629,6 +638,29 @@ their plan renewal; corporate included grants expire no later than 45 days
 after renewal; add-on grants expire within 365 days. The learner Account is
 read-only and may show only grants for the authenticated subject and selected
 workspace. Empty balances are expected until a trusted issuer exists.
+
+## Run billable Realtime voice verification safely
+
+`npm run verify:live-realtime-transcription` sends one generated synthetic
+speech sample through OpenAI Realtime plus a billable setup and patient turn.
+It requires explicit task authorization, uses a temporary PostgreSQL database,
+and selects an empty non-default Redis database. If the configured shared
+Redis has no empty database, do not flush or reuse a populated database. Start
+a disposable loopback-only Redis Stack on a free local port and pass its URL
+without changing `.env`:
+
+```bash
+GPTMD_LIVE_VERIFY_REDIS_URL=redis://127.0.0.1:<port>/0 npm run verify:live-realtime-transcription
+```
+
+The verifier selects an empty database inside that dedicated instance, drops
+its temporary PostgreSQL database, and clears only that selected disposable
+Redis database. Stop and remove the disposable Redis instance after the run.
+The override is validated to `redis://` or `rediss://` loopback hosts only.
+Never use production storage, learner recordings, or clinical text for this
+synthetic provider check. Record provider response status/request diagnostics
+without secrets, SDP, or transcript/audio content; successful synthetic
+transcription still does not prove physical microphone behavior.
 
 ## Make git:update wait for NVM and pause on the editable commit message
 

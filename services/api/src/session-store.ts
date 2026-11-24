@@ -274,7 +274,8 @@ type ScenarioRow = {
   profile_json: unknown
   presentation_settings_json: unknown | null
   presentation_settings_digest: string | null
-  provider_conversation_id: string
+  provider_conversation_id: string | null
+  scenario_provider: 'openai' | 'anthropic'
 }
 
 function parsePresentationSettings(
@@ -328,21 +329,22 @@ async function persistSessionIdentityBinding(
 ): Promise<void> {
   const saved = await client.query(
     `INSERT INTO session_identity_binding (
-       session_id, tenant_id, subject_id, patient_profile_id, provider_conversation_id,
+       session_id, tenant_id, subject_id, patient_profile_id, provider_conversation_id, scenario_provider,
        scenario_fingerprint, schema_version
-     ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+     ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      ON CONFLICT (session_id) DO UPDATE
        SET last_verification_status = session_identity_binding.last_verification_status
        WHERE session_identity_binding.tenant_id = EXCLUDED.tenant_id
          AND session_identity_binding.subject_id = EXCLUDED.subject_id
          AND session_identity_binding.patient_profile_id = EXCLUDED.patient_profile_id
          AND session_identity_binding.provider_conversation_id = EXCLUDED.provider_conversation_id
+         AND session_identity_binding.scenario_provider = EXCLUDED.scenario_provider
          AND session_identity_binding.scenario_fingerprint = EXCLUDED.scenario_fingerprint
          AND session_identity_binding.schema_version = EXCLUDED.schema_version
      RETURNING session_id`,
     [
       binding.sessionId, binding.tenantId, binding.subjectId, binding.patientProfileId,
-      binding.providerConversationId, binding.scenarioFingerprint, binding.schemaVersion
+      binding.providerConversationId, binding.provider, binding.scenarioFingerprint, binding.schemaVersion
     ]
   )
   if (saved.rowCount !== 1) {
@@ -837,7 +839,8 @@ export function createPostgresSessionStore(
 
         const saved = await client.query<ScenarioRow>(
           `SELECT scenario_id, created_at, profile_digest, profile_json,
-                  presentation_settings_json, presentation_settings_digest, provider_conversation_id
+                  presentation_settings_json, presentation_settings_digest, provider_conversation_id,
+                  scenario_provider
            FROM patient_scenarios WHERE session_id = $1`,
           [sessionId]
         )
@@ -870,6 +873,7 @@ export function createPostgresSessionStore(
             subjectId: principal.subjectId,
             patientProfileId: scenario.scenarioId,
             providerConversationId: savedRow.provider_conversation_id,
+            provider: savedRow.scenario_provider,
             scenarioFingerprint: fingerprintScenario(scenario.profile),
             schemaVersion: scenario.schemaVersion
           }))
@@ -887,6 +891,7 @@ export function createPostgresSessionStore(
             profile: scenario.profile,
             setupProjection: derivePatientSetup(scenario.profile, presentationSettings),
             conversationId: savedRow.provider_conversation_id,
+            provider: savedRow.scenario_provider,
             profileDigest: scenario.profileDigest,
             schemaVersion: scenario.schemaVersion
           })
@@ -942,8 +947,12 @@ export function createPostgresSessionStore(
         if (!isPatientScenarioConsistent(profile, session.created_at)) {
           throw new Error('Generated patient profile failed session-time consistency validation')
         }
-        if (typeof generated.conversationId !== 'string' || !generated.conversationId.trim()) {
-          throw new Error('Generated patient scenario has no provider Conversation ID')
+        if (generated.provider === 'openai' &&
+            (typeof generated.conversationId !== 'string' || !generated.conversationId.trim())) {
+          throw new Error('OpenAI-generated patient scenario has no Conversation ID')
+        }
+        if (generated.provider === 'anthropic' && generated.conversationId !== null) {
+          throw new Error('Anthropic patient scenario must not claim an OpenAI Conversation ID')
         }
         const scenario = ImmutablePatientScenarioSchema.parse({
           scenarioId: patientProfileId,
@@ -957,9 +966,9 @@ export function createPostgresSessionStore(
           `INSERT INTO patient_scenarios (
              scenario_id, session_id, schema_version, created_at, profile_digest,
              profile_json, presentation_settings_json, presentation_settings_digest,
-             provider_conversation_id, prompt_version, model_version, policy_version,
+             provider_conversation_id, scenario_provider, prompt_version, model_version, policy_version,
              source_context_json
-           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
+           ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`,
           [
             scenario.scenarioId,
             sessionId,
@@ -970,6 +979,7 @@ export function createPostgresSessionStore(
             presentationSettings,
             digestPresentationSettings(presentationSettings),
             generated.conversationId,
+            generated.provider,
             versions.promptVersion,
             versions.modelVersion,
             versions.policyVersion,
@@ -982,6 +992,7 @@ export function createPostgresSessionStore(
           subjectId: principal.subjectId,
           patientProfileId: scenario.scenarioId,
           providerConversationId: generated.conversationId,
+          provider: generated.provider,
           scenarioFingerprint: fingerprintScenario(scenario.profile),
           schemaVersion: scenario.schemaVersion
         }))
@@ -999,6 +1010,7 @@ export function createPostgresSessionStore(
           profile: scenario.profile,
           setupProjection: derivePatientSetup(scenario.profile, presentationSettings),
           conversationId: generated.conversationId,
+          provider: generated.provider,
           profileDigest: scenario.profileDigest,
           schemaVersion: scenario.schemaVersion
         })
@@ -1093,7 +1105,7 @@ export function createPostgresSessionStore(
           acceptedTurns: current.acceptedTurns,
           phase: current.state.phase,
           learnerMessage,
-          provider: current.acceptedTurns.at(-1)?.provider ?? 'openai'
+          provider: current.acceptedTurns.at(-1)?.provider ?? current.provider
         }
 
         let acceptedContent: AcceptedPatientTurnContent | undefined
@@ -1783,12 +1795,13 @@ export function createPostgresSessionStore(
           tenant_id: string
           subject_id: string
           patient_profile_id: string
-          provider_conversation_id: string
+          provider_conversation_id: string | null
+          scenario_provider: 'openai' | 'anthropic'
           scenario_fingerprint: string
           schema_version: number
         }>(
           `SELECT session_id, tenant_id, subject_id, patient_profile_id,
-                  provider_conversation_id, scenario_fingerprint, schema_version
+                  provider_conversation_id, scenario_provider, scenario_fingerprint, schema_version
            FROM session_identity_binding
            WHERE session_id = $1 AND tenant_id = $2 AND subject_id = $3`,
           [sessionId, principal.tenantId, principal.subjectId]
@@ -1801,6 +1814,7 @@ export function createPostgresSessionStore(
           subjectId: identityRow.subject_id,
           patientProfileId: identityRow.patient_profile_id,
           providerConversationId: identityRow.provider_conversation_id,
+          provider: identityRow.scenario_provider,
           scenarioFingerprint: identityRow.scenario_fingerprint,
           schemaVersion: identityRow.schema_version
         })
@@ -1833,10 +1847,12 @@ export function createPostgresSessionStore(
         presentation_settings_json: unknown | null
         presentation_settings_digest: string | null
         provider_conversation_id: string | null
+        scenario_provider: 'openai' | 'anthropic'
       }>(
         `SELECT s.session_id, s.patient_profile_id, s.status, s.created_at, s.updated_at,
                 s.schema_version, p.profile_digest, p.profile_json,
-                p.presentation_settings_json, p.presentation_settings_digest, p.provider_conversation_id
+                p.presentation_settings_json, p.presentation_settings_digest, p.provider_conversation_id,
+                p.scenario_provider
          FROM app_sessions s
          JOIN tenant_entitlements e ON e.tenant_id = s.tenant_id AND e.sessions_enabled = true
          LEFT JOIN patient_scenarios p ON p.session_id = s.session_id
@@ -1844,8 +1860,9 @@ export function createPostgresSessionStore(
         [sessionId, principal.tenantId, principal.subjectId]
       )
       const session = selected.rows[0]
-      if (!session || !session.patient_profile_id || !session.profile_json ||
-          !session.profile_digest || !session.provider_conversation_id) return
+      if (!session || !session.patient_profile_id || !session.profile_json || !session.profile_digest ||
+          (session.scenario_provider === 'openai' && !session.provider_conversation_id) ||
+          (session.scenario_provider === 'anthropic' && session.provider_conversation_id !== null)) return
       if (session.schema_version !== PATIENT_SCENARIO_SCHEMA_VERSION) {
         throw new Error(`Stored patient scenario schema version ${session.schema_version} is unsupported`)
       }
@@ -1906,6 +1923,7 @@ export function createPostgresSessionStore(
         profile,
         setupProjection: derivePatientSetup(profile, presentationSettings),
         conversationId: session.provider_conversation_id,
+        provider: session.scenario_provider,
         profileDigest,
         schemaVersion: session.schema_version,
         state,

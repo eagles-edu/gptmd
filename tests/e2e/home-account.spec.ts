@@ -243,10 +243,11 @@ test('signed-in account workspace context carries through the home into Begin Vi
     status: 200,
     contentType: 'application/json',
     body: JSON.stringify({ memberships: [
-      { tenantId: 'tenant-one', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true },
-      { tenantId: 'tenant-two', role: 'customer_admin', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true },
+      { tenantId: 'gptmd-learner-test-scsstx', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true },
+      { tenantId: 'tenant-two', role: 'customer_admin', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: true,
+        branding: { displayName: 'VinMed Hospital', logoPath: '/assets/images/vinmed-logo.svg' } },
       { tenantId: 'tenant-three', role: 'learner', sessionsEnabled: true, responsesEnabled: false, audioTranscriptionAvailable: false },
-      { tenantId: 'tenant-four', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: false }
+      { tenantId: '550e8400-e29b-41d4-a716-446655440000', role: 'learner', sessionsEnabled: true, responsesEnabled: true, audioTranscriptionAvailable: false }
     ] })
   }))
   await page.route('**/api/account/archives', async (route) => route.fulfill({
@@ -370,8 +371,8 @@ test('signed-in account workspace context carries through the home into Begin Vi
   expect(await accountWorkspace.locator('option').evaluateAll((options) =>
     options.map((option) => option.textContent?.trim())
   )).toEqual([
-    'Choose a workspace', 'Workspace 1 (Learner)', 'Workspace 2 (Customer administrator)',
-    'Workspace 3 (Learner)', 'Workspace 4 (Learner)'
+    'Choose a workspace', 'GPTMD Learner Test Scsstx (Learner)', 'VinMed Hospital (Customer administrator)',
+    'Tenant Three (Learner)', 'Workspace 4 (Learner)'
   ])
   await accountWorkspace.selectOption('tenant-two')
   await expect(page.getByText('Your role in this workspace: Customer administrator. Visit setup is available to learners only.')).toBeVisible()
@@ -392,7 +393,7 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await page.getByLabel('Practice workspace').selectOption('tenant-three')
   await expect(page.locator('.welcome-panel').getByRole('button', { name: 'Visit access unavailable' })).toBeDisabled()
   await expect(page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' })).toHaveCount(0)
-  await page.getByLabel('Practice workspace').selectOption('tenant-one')
+  await page.getByLabel('Practice workspace').selectOption('gptmd-learner-test-scsstx')
   await expect(page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' })).toBeEnabled()
   await expect(mainNavigation.getByRole('link', { name: 'Begin Visit' })).toBeVisible()
   await page.screenshot({ path: '/tmp/gptmd-signed-in-home-desktop.png', fullPage: false })
@@ -413,11 +414,11 @@ test('signed-in account workspace context carries through the home into Begin Vi
   await expect(page.getByRole('button', { name: 'Enter Room' })).toBeEnabled()
   await page.getByRole('button', { name: 'Enter Room' }).click()
   await expect(page.locator('.status-row [role="status"]')).toContainText(/green light.*your turn/i)
-  expect(sessionTenantId).toBe('tenant-one')
+  expect(sessionTenantId).toBe('gptmd-learner-test-scsstx')
 
   await page.setViewportSize({ width: 1440, height: 900 })
   await page.getByRole('navigation', { name: 'Main navigation' }).getByRole('link', { name: 'Home' }).click()
-  await page.getByLabel('Practice workspace').selectOption('tenant-four')
+  await page.getByLabel('Practice workspace').selectOption('550e8400-e29b-41d4-a716-446655440000')
   await page.locator('.welcome-panel').getByRole('link', { name: 'Begin Visit' }).click()
   const transcriptOnlyPreflight = page.getByRole('dialog', { name: 'Before you begin' })
   await expect(transcriptOnlyPreflight.locator('input[name="interaction-mode"][value="transcript"]')).toBeChecked()
@@ -662,7 +663,7 @@ test('customer administrator can change workspace entitlements with bounded cont
     options.map((option) => option.textContent?.trim())
   )).toEqual([
     'Choose a workspace',
-    'Workspace 1 (Customer administrator)', 'Workspace 2 (Learner)'
+    'GPTMD Entitlement Test Scsstx (Customer administrator)', 'GPTMD Learner Test Scsstx (Learner)'
   ])
   await expect(accountWorkspace.locator('option').first()).toBeDisabled()
   expect(await accountWorkspace.locator('option').first().evaluate((option) =>

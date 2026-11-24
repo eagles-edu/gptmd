@@ -11,7 +11,8 @@ type IdentityRow = {
   tenant_id: string
   subject_id: string
   patient_profile_id: string
-  provider_conversation_id: string
+  provider_conversation_id: string | null
+  scenario_provider: 'openai' | 'anthropic'
   scenario_fingerprint: string
   schema_version: number
 }
@@ -49,7 +50,7 @@ export function createSessionIdentityVerificationWorker(
     async verifyOnce() {
       const selected = await pool.query<IdentityRow>(
         `SELECT i.session_id, i.tenant_id, i.subject_id, i.patient_profile_id,
-                i.provider_conversation_id, i.scenario_fingerprint, i.schema_version
+                i.provider_conversation_id, i.scenario_provider, i.scenario_fingerprint, i.schema_version
          FROM session_identity_binding i
          JOIN app_sessions s ON s.session_id = i.session_id
            AND s.tenant_id = i.tenant_id AND s.subject_id = i.subject_id
@@ -72,6 +73,7 @@ export function createSessionIdentityVerificationWorker(
           subjectId: row.subject_id,
           patientProfileId: row.patient_profile_id,
           providerConversationId: row.provider_conversation_id,
+          provider: row.scenario_provider,
           scenarioFingerprint: row.scenario_fingerprint,
           schemaVersion: row.schema_version
         })

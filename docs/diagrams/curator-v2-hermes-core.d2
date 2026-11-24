@@ -1,0 +1,223 @@
+direction: down
+title: "Proposed · Curator V2 / Hermes Core — bounded ownership and evidence lifecycle"
+
+classes: {
+  proposed: {
+    style: {
+      fill: "#EAF0FF"
+      stroke: "#4867B2"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  hermes: {
+    style: {
+      fill: "#FFE4E4"
+      stroke: "#7352B8"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  curator: {
+    style: {
+      fill: "#E7F7F4"
+      stroke: "#168273"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  plugin: {
+    style: {
+      fill: "#E8F3FF"
+      stroke: "#2476B8"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  repository: {
+    style: {
+      fill: "#F3F5F7"
+      stroke: "#68737D"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  durable: {
+    shape: cylinder
+    style: {
+      fill: "#E7F8EB"
+      stroke: "#237A43"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  ephemeral: {
+    shape: document
+    style: {
+      fill: "#FFF2DB"
+      stroke: "#B56A00"
+      stroke-width: 2
+      stroke-dash: 5
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  human: {
+    shape: diamond
+    style: {
+      fill: "#FFF6C7"
+      stroke: "#A77900"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+  status: {
+    shape: hexagon
+    style: {
+      fill: "#FCE9EF"
+      stroke: "#A83D61"
+      stroke-width: 2
+      font-color: "#111111"
+      font-size: 21
+    }
+  }
+}
+
+user: User / reviewer {
+  shape: person
+  class: human
+}
+
+hermes: "Hermes Core Account boundary\nPROPOSED — host and session operations; no project knowledge writes" {
+  class: hermes
+  direction: down
+
+  profiles: "Profile registry\nidentity · permissions · project bindings" {class: hermes}
+  runtime: "Codex app-server runtime\nsessions · task lifecycle" {class: hermes}
+  router: "Global event router\nnormalizes bounded lifecycle events" {class: hermes}
+  gateway: "Managed MCP gateway\nrouting · authentication · process supervision" {class: hermes}
+
+  steward: "Host Steward\nindependent host-disk concern; never curates project knowledge" {
+    class: hermes
+    style.fill: "#FFE0B2"
+    direction: right
+    inventory: "Filesystem + service inventory" {class: hermes}
+    growth: "Growth attribution + policy evaluation" {class: hermes}
+    proposal: "Cleanup proposal queue" {class: hermes}
+    approval: "Human approval required" {class: human}
+    execute: "Managed cleanup executor" {class: hermes}
+    verify: "Free-space + service-health verifier" {class: hermes}
+    receipts: "Host cleanup receipts" {class: durable}
+
+    inventory -> growth: measured usage
+    growth -> proposal: attributable candidates
+    proposal -> approval: proposed deletion only
+    approval -> execute: explicit approval
+    execute -> verify: managed action
+    verify -> receipts: result + evidence
+  }
+
+  profiles -> runtime: selected profile
+  runtime -> router: task lifecycle events
+  router -> gateway: normalized event / call
+}
+
+curator: "CuratorMD Global Backend boundary\nPROPOSED — cross-project goal, fact, SDE and purge coordination" {
+  class: curator
+  direction: down
+
+  registry: "Project registry\nproject IDs · plugin bindings · policy identity" {class: curator}
+  ingress: "Project event ingress" {class: curator}
+  normalize: "Event normalizer\nintent · change · verification · open gate · completion" {class: curator}
+  goal: "Goal engine\ncreates / transitions goal records" {class: curator}
+  criteria: "Success-criteria evaluator" {class: curator}
+  evidence: "Evidence gate\nclaims are distinct from proof" {class: curator}
+  facts: "Global fact ledger\ncompact, deduplicated typed facts" {class: durable}
+  significance: "Significance assessor\nordinary update vs candidate SDE" {class: curator}
+  review: "Human review + confirmation" {class: human}
+  compiler: "Bullet-record compiler\nshort facts, not paragraph synthesis" {class: curator}
+  receipt: "Audit receipt generator\nsource IDs · hashes · decision · purge result" {class: durable}
+  purge: "Purge coordinator\nretries + purge-pending tracking" {class: curator}
+  learning: "Human-guided learning\nlabels and quality signals only" {class: curator}
+  ops: "Global operations state\nhealth · metrics · errors" {class: status}
+
+  registry -> ingress: scoped identity + policy
+  ingress -> normalize: bounded project event
+  normalize -> goal -> criteria -> evidence -> facts
+  facts -> significance: deduplicated evidence-backed facts
+  significance -> compiler: ordinary goal fact
+  significance -> review: candidate SDE
+  review -> compiler: approved selected facts
+  review -> learning: human label / QA signal
+  compiler -> receipt: committed bullet record
+  receipt -> purge: purge instruction + receipt
+  goal -> ops: lifecycle state
+  purge -> ops: purge / retry state
+  learning -> ops: quality metrics
+}
+
+plugin: "Per-project CuratorMD Plugin boundary\nPROPOSED — repository-scoped adapter; no global canonical store" {
+  class: plugin
+  direction: down
+
+  config: "Repository-specific Curator config\nscope · persistence targets · checklist bindings · policy" {class: plugin}
+  api: "Project plugin API / MCP tools" {class: plugin}
+  mapper: "Goal + checklist mapper" {class: plugin}
+  reader: "Read-only repository evidence adapter" {class: plugin}
+  checklist: "Checklist / task-list adapter" {class: plugin}
+  verification: "Verification adapter\nchecks · probes · browser evidence" {class: plugin}
+  staging: "Ephemeral local staging\nbounded; never canonical" {class: ephemeral}
+  persist: "Canonical persistence adapter" {class: plugin}
+  truth: "Project truth status\nactive · complete · open · blocked · deferred · purge-pending" {class: status}
+
+  config -> api: local scope + policy
+  api -> mapper: scoped task command
+  mapper -> checklist: linked checklist item
+  mapper -> reader: evidence references
+  reader -> verification: candidate evidence
+  verification -> staging: bounded temporary references
+  mapper -> persist: approved compact record only
+  persist -> truth: project state
+}
+
+repo: "Repository boundary\nPROPOSED — project-owned files and explicit canonical knowledge" {
+  class: repository
+  direction: down
+  source: "Application source + configuration" {class: repository}
+  tasks: "Checklist + task documents" {class: repository}
+  canonical: "Canonical project Markdown\nfacts · decisions · procedures · lessons" {class: durable}
+  temporary: "Ignored temporary project state\nraw chats · imports · cues · scratch · source artifacts" {class: ephemeral}
+}
+
+user -> hermes.runtime: request · checklist choice · acceptance decision
+hermes.router -> curator.ingress: scoped project event
+hermes.gateway -> plugin.api: call project plugin
+plugin.config -> curator.registry: project identity + policy
+plugin.mapper -> curator.ingress: goal context + references
+plugin.staging -> curator.ingress: bounded evidence references only
+curator.compiler -> plugin.persist: approved compact bullet record
+curator.receipt -> plugin.persist: decision + purge receipt
+curator.purge -> plugin.staging: delete transient artifacts
+curator.purge -> plugin.truth: purge state / retry
+plugin.reader -> repo.source: read-only evidence
+plugin.checklist -> repo.tasks: checklist source
+plugin.persist -> repo.canonical: canonical write
+plugin.staging -> repo.temporary: temporary only {style.stroke-dash: 5}
+hermes.steward -> repo.source: host observation only {style.stroke-dash: 5}
+hermes.steward -> curator: "no project-knowledge write" {style.stroke-dash: 5}
+
+legend: "Legend" {
+  direction: right
+  proposed_item: "Blue / purple / teal: proposed bounded component" {class: proposed}
+  durable_item: "Green cylinder: canonical durable record" {class: durable}
+  ephemeral_item: "Orange dashed document: transient; must purge after receipt" {class: ephemeral}
+  human_item: "Yellow diamond: human decision / approval gate" {class: human}
+  status_item: "Pink hexagon: truthful lifecycle / health state" {class: status}
+}
