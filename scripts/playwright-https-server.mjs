@@ -21,6 +21,36 @@ const upstream = spawn(process.execPath, ['.output/server/index.mjs'], {
   stdio: 'inherit'
 })
 
+function respondToTestAuth(request, response) {
+  if (request.url?.split('?')[0] !== '/auth/v1/user') return false
+
+  const token = /^Bearer ([^.]+\.[^.]+\.[^.]+)$/.exec(request.headers.authorization ?? '')?.[1]
+  let claims
+  try {
+    claims = token ? JSON.parse(Buffer.from(token.split('.')[1], 'base64url').toString('utf8')) : null
+  } catch {
+    claims = null
+  }
+
+  if (!claims || typeof claims.sub !== 'string' || typeof claims.email !== 'string') {
+    response.writeHead(401, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ message: 'test session required', status: 401 }))
+    return true
+  }
+
+  response.writeHead(200, { 'content-type': 'application/json' })
+  response.end(JSON.stringify({
+    id: claims.sub,
+    aud: claims.aud ?? 'authenticated',
+    role: claims.role ?? 'authenticated',
+    email: claims.email,
+    app_metadata: { provider: 'google', providers: ['google'] },
+    user_metadata: { full_name: 'Test User' },
+    created_at: '2026-01-01T00:00:00.000Z'
+  }))
+  return true
+}
+
 function waitForUpstream() {
   return new Promise((resolve, reject) => {
     const startedAt = Date.now()
@@ -47,6 +77,8 @@ function waitForUpstream() {
 
 await waitForUpstream()
 const server = createHttpsServer({ key: readFileSync(key), cert: readFileSync(cert) }, (request, response) => {
+  if (respondToTestAuth(request, response)) return
+
   const proxy = httpRequest({
     host: '127.0.0.1',
     port: upstreamPort,
