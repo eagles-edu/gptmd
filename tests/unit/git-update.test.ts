@@ -23,7 +23,8 @@ describe('git update commit message', () => {
 
     await new Promise((resolve) => setImmediate(resolve))
     expect(resolved).toBe(false)
-    expect(rendered).toContain('Suggested commit message: gptMD-dev_0.0.0.17 ')
+    const visiblePrompt = rendered.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    expect(visiblePrompt).toContain('Suggested commit message: gptMD-dev_0.0.0.17 ')
     expect(rendered).not.toContain('Commit message (')
     expect(rendered).not.toContain('Edit this message')
 
