@@ -55,10 +55,12 @@ outside private development.
 PostgreSQL uses a dedicated `gptmd_live` database and `gptmd_live_app` role on
 the existing loopback-only PostgreSQL service. The API's private connection
 settings live in `/home/eaglesvn/.config/gptmd-live/api.env` with mode `0600`.
-As of release `2026-10-16T180135773Z`, all 43 SQL migration files in this
+As of release `2026-10-17T110725197Z`, all 44 SQL migration files in this
 checkout are recorded in `gptmd_schema_migrations`; there are no pending or
 ledger-only migration entries. Migrations 043 and 044 add the disabled-by-
-default system speech quota and consent-gated two-sided audio archive schema.
+default system speech quota and consent-gated two-sided audio archive schema;
+migration 045 binds scenario provider identity and permits a null OpenAI
+Conversation reference for Anthropic-generated scenarios.
 The API package declares every external source import as a production
 dependency; this is checked by `tests/unit/api-runtime-dependencies.test.ts` so
 the isolated production install used by deployment cannot rely on hoisted
@@ -689,22 +691,27 @@ The full-gate, deploy, and post-deploy verification logs are in `/tmp` under
 `gptmd-verify-oauth-20261016-1431.log`, and
 `gptmd-verify-browser-20261016-1431.log` respectively.
 
-**2026-10-17 Anthropic failover credential smoke:** The active mirror release
-`2026-10-16T180135773Z` contains the Anthropic patient-turn adapter and
-`claude-haiku-5-5` model ID. The guarded `npm run configure:live-anthropic`
-command installed the existing local credential into the private API
-environment, preserved owner `eaglesvn:eaglesvn` and mode 0600, restarted the
-API, and passed `/readyz`; no key material was printed. The three GPTMD
-application services report active. A direct non-PHI Messages request using
-the canonical lowercase model ID returned HTTP 200 with 17 input and 5 output
-tokens. An uppercase model identifier returned 404 and was not used by the
-application. This confirms the credential and upstream model are reachable,
-not that a real session falls back when OpenAI fails. No live learner signed
-in, and no clinical text was sent. VinMed's admin invitation remains pending
-and AI session/Responses entitlements remain disabled. The full check exited 0
-immediately before configuration: 456 unit tests, 63 desktop E2E cases, 44
-preflight cases, 10 mobile-viewer cases, one viewer-tool case, plus lint, type,
-API, schema, diagram, and production-build checks.
+**2026-10-17 Anthropic scenario failover deployment:** Release
+`2026-10-17T104943689Z` is active and migration 045 is applied. It adds an
+immutable provider pin to the saved scenario and session identity, preserving
+OpenAI as the historical default while allowing Anthropic scenarios to have no
+OpenAI Conversation ID. The API now shares canonical scenario prompt
+construction across providers and invokes Haiku 5.5 setup only for
+availability-classified OpenAI failures; quota exhaustion, authentication,
+invalid requests, and profile-validation failures do not fail over. The guarded
+`npm run deploy:live` completed, all three GPTMD services are active, loopback
+`/readyz` reports Redis/PostgreSQL/OpenAI/auth ready, and the public home
+returns HTTP 200. Fresh `npm run verify:live-oauth` and
+`npm run verify:live-browser` passed. The disposable `npm run verify:phase2`
+captured successful migration and session/identity verification, including
+Anthropic scenario persistence, first-turn provider pinning, and provider usage
+attribution using an isolated loopback Redis and temporary PostgreSQL database;
+the disposable Redis was stopped and removed. `npm run check` passed with 471
+unit tests, 63 desktop browser tests, 44 preflight tests, 10 mobile-viewer
+tests, and one viewer-tool test. This does not simulate an OpenAI outage on the
+live service, establish clinical quality, or verify a signed-in learner flow.
+No live clinical text was sent. The private Anthropic credential remains
+outside repository files and release artifacts.
 
 **2026-10-17 incremental patient-speech playback:** `npm run check` passed with
 461 unit tests, 63 standard browser tests, 44 encounter-preflight cases, 10
@@ -736,3 +743,119 @@ live retention, two-sided audio uploads, and 72-hour cleanup remain unverified.
 The current full local check also passes with 462 unit tests, 63 desktop cases,
 44 preflight cases, 10 mobile cases, and one viewer-tool case. A route-level
 regression proves generated patient MP3 is stored only with recording consent.
+
+**2026-10-17 full mirror sync and deployment timeout repair:** The first
+guarded deploy passed its OAuth and browser preflights and copied the allowlisted
+web/API artifacts to staging, but `npm ci --omit=dev` exceeded the helper's
+120-second child-process timeout before producing output. The active release
+pointer stayed unchanged and no partial API `node_modules` were left behind.
+The API production install now has a bounded 10-minute timeout, covered by a
+deployment regression test. `npm run check` passed with 463 unit tests, 63
+desktop browser cases, 44 preflight cases, 10 mobile-viewer cases, and one
+viewer-tool case, along with lint, type, API, schema, diagram, and warning-free
+build checks. The retry activated release `2026-10-17T094848199Z`; all three
+services are active, `/readyz` reports Redis/PostgreSQL/auth ready, the public
+home returns HTTP 200, and post-deploy OAuth plus browser-route checks pass.
+The release tree is owned by `eaglesvn:eaglesvn` with no group/other-writable
+paths or environment/key files. Google OAuth remains configured as External;
+the automated probes establish the start redirect only, not a completed
+Google sign-in.
+
+**2026-10-17 follow-up mirror sync:** After the two-sided archive verifier and
+deployment timeout regression passed the full `npm run check`,
+`npm run deploy:live` activated release `2026-10-17T102331611Z`. All three
+GPTMD services are active; API readiness reports Redis, PostgreSQL, OpenAI,
+and auth ready; the public home returns HTTP 200. Fresh
+`npm run verify:live-oauth` and `npm run verify:live-browser` both passed.
+The release tree is owned by `eaglesvn:eaglesvn` (0755 at the release root);
+scans found no group/other-writable paths, ownership mismatches, environment
+files, PEM files, or key files. These checks do not establish completed Google
+sign-in or live consented audio/archive behavior.
+
+**2026-10-17 modernization mirror sync:** After `npm run check` passed with 471
+unit tests, 63 desktop browser tests, 44 encounter-preflight tests, 10 mobile
+viewer cases, and one viewer-tool case, `npm run deploy:live` activated release
+`2026-10-17T110725197Z`. The deploy's origin/public OAuth and Chromium browser
+preflights passed. All three GPTMD services are active as `eaglesvn:eaglesvn`;
+loopback web, API `/readyz`, and public home each returned HTTP 200. The release
+tree is owned by `eaglesvn:eaglesvn` with zero owner/group mismatches, zero
+group/other-writable paths, and zero environment, PEM, or key files. Fresh
+post-deploy `npm run verify:live-oauth` and `npm run verify:live-browser` both
+passed. Google OAuth remains External; these probes verify the sign-in start
+redirect, not a completed account login or role-specific session.
+
+**2026-10-17 English prompt-library mirror sync:** The `/history-taking` page
+now serves the generated 510-prompt English communication catalog, grouped by
+source heading and filterable by prompt text and practice type. `npm run check`
+passed with 473 unit tests, 66 desktop browser tests, 44 preflight tests, 10
+mobile-viewer cases, and one viewer-tool case, including catalog consistency
+and cross-browser filtering coverage. `npm run deploy:live` activated release
+`2026-10-17T112926302Z`; the origin/public OAuth checks and Chromium browser
+check passed. A separate live Chromium verification returned HTTP 200 for
+`/history-taking`, rendered 510/510 prompts, filtered a known question to
+1/510, and recorded zero page errors. All three services are active; loopback
+web/API and public home return HTTP 200. Release ownership and file-mode scans
+found zero mismatches, group/other-writable paths, or environment/PEM/key files.
+The corpus contains no approved reference recordings; learner recording,
+side-by-side comparison, and AI scoring remain unimplemented.
+
+**2026-10-17 verified follow-up mirror sync:** A fresh `npm run check` passed
+with 473 unit tests, 66 desktop browser tests, 44 encounter-preflight cases,
+10 mobile-viewer cases, and one viewer-tool test, plus lint, type, catalog,
+API, schema, diagram, and warning-free production-build checks. The guarded
+`npm run deploy:live` activated release `2026-10-17T114228182Z`. Post-deploy
+`npm run verify:live-oauth` passed both origin and public authorization checks;
+`npm run verify:live-browser` passed real Chromium home and OAuth checks. A
+separate Chromium check of `/history-taking` returned HTTP 200, rendered
+510/510 prompts, filtered a known prompt to 1/510, and captured zero console or
+page errors. All three GPTMD services are active as `eaglesvn:eaglesvn`; API
+`/readyz` reported Redis, PostgreSQL, OpenAI, and auth ready. The release scan
+found no owner/group mismatches, group/other-writable paths, environment files,
+PEM files, or key files. This confirms the OAuth start redirect and live
+prompt-library route, not completed Google sign-in, live learner audio, archive
+retention, or provider-outage recovery.
+
+**2026-10-17 Realtime verification follow-up and mirror sync:** The full
+`npm run check` passed with 481 unit tests, 66 desktop browser tests, 44
+encounter-preflight cases, 10 mobile-viewer cases, and one viewer-tool case.
+The live Realtime verifier was run against a disposable loopback Redis Stack
+and temporary PostgreSQL database with a synthetic token grant. Its captured
+result stopped at learner-safe setup with HTTP 503 before opening a Realtime
+audio call or accepting a patient turn; provider Conversation and audio-call
+cleanup failures were both zero. The temporary database and Redis instance
+were removed. This is not successful live voice verification.
+
+The guarded `npm run deploy:live` then activated release
+`2026-10-17T120730561Z`. Deploy preflights and fresh
+`npm run verify:live-oauth` plus `npm run verify:live-browser` passed. All
+three services are active; API `/readyz` and the public homepage return HTTP
+200. The current release resolves to that release ID and its owner/group is
+`eaglesvn:eaglesvn`; scans found zero owner mismatches, group/other-writable
+paths, or environment/PEM/key files. The update includes migration 045 and the
+scenario-provider pinning/failover code. Physical microphone capture and
+successful live-provider transcription remain unverified; see checklist
+`i07`.
+
+**2026-10-17 full verification and mirror sync:** The full `npm run check`
+passed with 487 unit tests, 66 desktop browser tests, 44 encounter-preflight
+cases, 10 mobile-viewer tests, and one viewer-tool test, in addition to lint,
+type checks, catalog validation, API/schema/diagram checks, and the
+warning-free production build. The captured `npm run
+verify:live-realtime-transcription` run progressed through authenticated setup,
+then OpenAI Realtime call creation returned plain-text HTTP 500 from Cloudflare
+(`cf-ray a4bf77ec49128607-HKG`); the authenticated GPTMD audio route returned
+HTTP 503. No audio call ID, transcript, provider-duration event, or patient
+turn was produced. One temporary provider Conversation was deleted and audio
+call cleanup failures were zero. The request uses the current documented
+`gpt-live-transcribe` transcription session configuration and WebRTC SDP
+handshake. This failure is not a successful live voice test; physical
+microphone capture also remains unverified.
+
+`npm run deploy:live` synchronized and activated release
+`2026-10-17T125848659Z`. Fresh `npm run verify:live-oauth` and
+`npm run verify:live-browser` passed. The web, API, and worker services are
+active as `eaglesvn:eaglesvn`; loopback web, API `/readyz`, and public home
+returned HTTP 200. The API reports Redis, PostgreSQL, OpenAI, and auth ready.
+The 9,292-path active release has zero ownership mismatches, zero
+group/other-writable paths, and no environment, PEM, or key files. The sync
+does not close checklist gate `i07` or establish completed Google OAuth.

@@ -33,6 +33,7 @@ import {
 const require = createRequire(new URL('../services/api/package.json', import.meta.url))
 const { Pool } = require('pg')
 const { createClient } = require('redis')
+const { unzipSync } = require('fflate')
 
 async function getFreePort() {
   const server = createNetServer()
@@ -470,31 +471,32 @@ try {
         ? 'verification-conversation'
         : `verification-conversation-${setupGeneration}`
       const usage = setupGeneration === 1
-        ? setupUsage
-        : { ...setupUsage, responseId: `${setupUsage.responseId}-${setupGeneration}` }
+        ? { provider: 'openai', ...setupUsage }
+        : { provider: 'openai', ...setupUsage, responseId: `${setupUsage.responseId}-${setupGeneration}` }
       const reservation = await reserveTokens?.(900, 8_192)
       const addonTokensUsed = await reservation?.settle(usage.responseId, usage.totalTokens) ?? false
       generatedScenarios.set(scenarioSeed, { conversationId, usage })
       return {
-        profile, conversationId, responseId: usage.responseId,
+        profile, conversationId, provider: 'openai', responseId: usage.responseId,
         usage, addonTokensUsed, abandonedConversationIds: []
       }
     },
     generatePatientTurn: async (context, _recordTiming, reserveTokens) => {
       if (context.versions.schemaVersion !== PATIENT_TURN_SCHEMA_VERSION ||
-          !context.conversationId.startsWith('verification-conversation') ||
+          !context.conversationId?.startsWith('verification-conversation') ||
           context.learnerMessage !== 'What is your biggest concern?') {
         throw new Error('The patient-turn route did not receive the pinned scenario Conversation and learner question')
       }
       const conversationTurnCount = (patientTurnGenerationCounts.get(context.conversationId) ?? 0) + 1
       patientTurnGenerationCounts.set(context.conversationId, conversationTurnCount)
       const usage = context.conversationId === 'verification-conversation'
-        ? patientTurnUsage
-        : { ...patientTurnUsage, responseId: `${patientTurnUsage.responseId}-${context.scenarioId}` }
+        ? { provider: 'openai', ...patientTurnUsage }
+        : { provider: 'openai', ...patientTurnUsage, responseId: `${patientTurnUsage.responseId}-${context.scenarioId}` }
       const reservation = await reserveTokens?.(120, 1_024)
       await reservation?.settle(usage.responseId, usage.totalTokens)
       return {
         responseId: usage.responseId,
+        provider: 'openai',
         output: {
           patientResponse: 'I am worried about what is causing the pain.',
           proposedFacts: [{ field: 'patientConcern', value: 'I am worried about what is causing the pain.' }],
@@ -574,25 +576,26 @@ try {
     throw new Error(`API setup did not return the learner-safe ready profile: ${JSON.stringify(setup)}`)
   }
   const scenarioRow = await testPool.query(
-    `SELECT scenario_id, profile_digest, provider_conversation_id, prompt_version,
+    `SELECT scenario_id, profile_digest, provider_conversation_id, scenario_provider, prompt_version,
             model_version, schema_version, policy_version
      FROM patient_scenarios WHERE session_id = $1`, [sessionId]
   )
   const liveSetup = await stateStore.read(sessionId)
   if (scenarioRow.rows.length !== 1 || scenarioRow.rows[0]?.scenario_id !== patientProfileId ||
       scenarioRow.rows[0]?.provider_conversation_id !== 'verification-conversation' ||
+      scenarioRow.rows[0]?.scenario_provider !== 'openai' ||
       scenarioRow.rows[0]?.prompt_version !== PATIENT_SCENARIO_PROMPT_VERSION ||
       scenarioRow.rows[0]?.model_version !== 'gpt-6-luna' ||
       scenarioRow.rows[0]?.schema_version !== PATIENT_SCENARIO_SCHEMA_VERSION ||
       scenarioRow.rows[0]?.policy_version !== PATIENT_SCENARIO_POLICY_VERSION ||
       liveSetup?.state.status !== 'ready' || liveSetup.patientProfileId !== patientProfileId ||
-      liveSetup.conversationId !== 'verification-conversation' ||
+      liveSetup.conversationId !== 'verification-conversation' || liveSetup.provider !== 'openai' ||
       liveSetup.profileDigest !== scenarioRow.rows[0]?.profile_digest ||
       liveSetup.setupProjection.fullName !== profile.fullName) {
     throw new Error('Scenario, Conversation ID, and learner setup projection did not persist across PostgreSQL and Redis')
   }
   const identityRows = await testPool.query(
-    `SELECT session_id, tenant_id, subject_id, patient_profile_id, provider_conversation_id,
+    `SELECT session_id, tenant_id, subject_id, patient_profile_id, provider_conversation_id, scenario_provider,
             scenario_fingerprint, schema_version
      FROM session_identity_binding WHERE session_id = $1`,
     [sessionId]
@@ -602,6 +605,7 @@ try {
       identity?.tenant_id !== tenantId || identity?.subject_id !== subjectId ||
       identity?.patient_profile_id !== patientProfileId ||
       identity?.provider_conversation_id !== 'verification-conversation' ||
+      identity?.scenario_provider !== 'openai' ||
       identity?.scenario_fingerprint !== scenarioRow.rows[0]?.profile_digest ||
       Number(identity?.schema_version) !== PATIENT_SCENARIO_SCHEMA_VERSION) {
     throw new Error('PostgreSQL did not persist the complete immutable session identity and scenario fingerprint')
@@ -763,6 +767,49 @@ try {
   if (!turn || live.acceptedTurns.length !== 1 || live.state.currentTurnSequence !== 1 ||
       turn.learnerMessage !== learnerMessage || turn.disclosedHistoryFields[0] !== 'patientConcern') {
     throw new Error('Authenticated API turn did not update Redis state and disclose the asked patient fact exactly once')
+  }
+
+  const learnerAudio = Buffer.from('phase2-synthetic-learner-audio-webm-v1')
+  const unconsentedAudioResponse = await fetch(`${apiBase}/api/sessions/${sessionId}/audio-recording/0/0`, {
+    method: 'PUT',
+    headers: { ...authHeaders, 'content-type': 'audio/webm' },
+    body: learnerAudio
+  })
+  if (unconsentedAudioResponse.status !== 403) {
+    throw new Error('The authenticated learner audio-upload route accepted bytes before explicit recording consent')
+  }
+  const recordingConsentResponse = await fetch(`${apiBase}/api/sessions/${sessionId}/audio-recording/consent`, {
+    method: 'POST',
+    headers: { ...authHeaders, 'content-type': 'application/json' },
+    body: JSON.stringify({ consentVersion: 'gptmd-two-sided-audio-v1' })
+  })
+  const recordingConsent = await recordingConsentResponse.json()
+  if (recordingConsentResponse.status !== 201 || recordingConsent.sessionId !== sessionId ||
+      recordingConsent.consented !== true) {
+    throw new Error('The authenticated learner could not grant explicit two-sided recording consent')
+  }
+  const learnerAudioResponse = await fetch(`${apiBase}/api/sessions/${sessionId}/audio-recording/0/0`, {
+    method: 'PUT',
+    headers: { ...authHeaders, 'content-type': 'audio/webm' },
+    body: learnerAudio
+  })
+  const learnerAudioResult = await learnerAudioResponse.json()
+  if (learnerAudioResponse.status !== 201 || learnerAudioResult.saved !== true ||
+      learnerAudioResult.duplicate !== false) {
+    throw new Error('The authenticated learner audio-upload route did not save its consented synthetic segment')
+  }
+  const patientAudio = Buffer.from('phase2-synthetic-patient-audio-mp3-v1')
+  const patientAudioResult = await sessionArchiveStore.saveAudioSegment(principal, {
+    sessionId,
+    speaker: 'patient',
+    recordingPart: 0,
+    sequence: turn.sequence,
+    turnId: turn.turnId,
+    contentType: 'audio/mpeg',
+    content: patientAudio
+  })
+  if (patientAudioResult !== 'saved') {
+    throw new Error('The consented synthetic patient audio segment was not stored for the accepted turn')
   }
 
   if (await worker.processOnce() !== 2) throw new Error('Event worker did not persist the accepted turn and disclosure events')
@@ -1104,14 +1151,40 @@ try {
   const archiveDownloadResponse = await fetch(`${apiBase}/api/sessions/${sessionId}/archive/download`, {
     headers: authHeaders
   })
-  const archivedTranscript = await archiveDownloadResponse.text()
+  const archivedZip = Buffer.from(await archiveDownloadResponse.arrayBuffer())
+  const archivedFiles = unzipSync(archivedZip)
+  const archivedTranscript = Buffer.from(archivedFiles['transcript.txt'] ?? []).toString('utf8')
+  const archiveManifestBytes = archivedFiles['manifest.json']
+  const learnerAudioPath = 'audio/learner-part-000.webm'
+  const patientAudioPath = `audio/patient-turn-${String(turn.sequence).padStart(5, '0')}.mp3`
+  const archivedLearnerAudio = archivedFiles[learnerAudioPath]
+  const archivedPatientAudio = archivedFiles[patientAudioPath]
+  let archiveManifest
+  try {
+    archiveManifest = JSON.parse(Buffer.from(archiveManifestBytes ?? []).toString('utf8'))
+  } catch {
+    throw new Error('The authenticated audio archive did not contain a valid JSON manifest')
+  }
+  const manifestRecordings = Array.isArray(archiveManifest?.recordings) ? archiveManifest.recordings : []
+  const learnerRecording = manifestRecordings.find((recording) =>
+    recording.speaker === 'learner' && recording.filename === learnerAudioPath
+  )
+  const patientRecording = manifestRecordings.find((recording) =>
+    recording.speaker === 'patient' && recording.filename === patientAudioPath
+  )
   if (archiveDownloadResponse.status !== 200 ||
       archiveDownloadResponse.headers.get('cache-control') !== 'no-store, private' ||
       archiveDownloadResponse.headers.get('x-content-type-options') !== 'nosniff' ||
-      !archiveDownloadResponse.headers.get('content-disposition')?.includes('.txt') ||
+      archiveDownloadResponse.headers.get('content-type') !== 'application/zip' ||
+      !archiveDownloadResponse.headers.get('content-disposition')?.includes('.zip') ||
       !archivedTranscript.includes('Learner: What is your biggest concern?') ||
-      !archivedTranscript.includes('Patient: I am worried about what is causing the pain.')) {
-    throw new Error('The authenticated archive route did not return the learner-safe transcript with private download headers')
+      !archivedTranscript.includes('Patient: I am worried about what is causing the pain.') ||
+      archiveManifest?.format !== 'gptmd-two-sided-audio-v1' ||
+      !learnerRecording || learnerRecording.contentType !== 'audio/webm' || learnerRecording.chunks !== 1 ||
+      !patientRecording || patientRecording.contentType !== 'audio/mpeg' || patientRecording.chunks !== 1 ||
+      !archivedLearnerAudio || Buffer.compare(Buffer.from(archivedLearnerAudio), learnerAudio) !== 0 ||
+      !archivedPatientAudio || Buffer.compare(Buffer.from(archivedPatientAudio), patientAudio) !== 0) {
+    throw new Error('The authenticated ZIP did not preserve the learner-safe transcript, manifest, and both audio recordings')
   }
   let completedEngagement
   for (let attempt = 0; attempt < 20; attempt += 1) {
@@ -1126,7 +1199,7 @@ try {
         completedEngagement.rows.filter((row) => row.result === result).length !== 1
       ) ||
       Number(completedEngagement.rows.find((row) => row.result === 'completed')?.bytes_downloaded) !==
-        Buffer.byteLength(archivedTranscript, 'utf8')) {
+        archivedZip.byteLength) {
     throw new Error('Pending denial, download authorization, and completed byte-count events were not all persisted')
   }
 
@@ -1393,6 +1466,105 @@ try {
     throw new Error('Cancellation did not persist one matching terminal outcome and archive job')
   }
 
+  const anthropicCreatedResponse = await fetch(`${apiBase}/api/sessions`, { method: 'POST', headers: authHeaders })
+  const anthropicCreated = await anthropicCreatedResponse.json()
+  if (anthropicCreatedResponse.status !== 201 || anthropicCreated.status !== 'initializing') {
+    throw new Error('Could not create the isolated scenario for Anthropic provider-pin verification')
+  }
+  const anthropicSetup = await sessionStore.setupScenario(
+    principal,
+    anthropicCreated.sessionId,
+    `verify-anthropic-${randomBytes(6).toString('hex')}`,
+    async (_versions, _asOf, _seed, recordProviderUsage) => {
+      const usage = {
+        provider: 'anthropic', responseId: `msg-scenario-${randomBytes(6).toString('hex')}`,
+        model: 'claude-haiku-5-5', serviceTier: null,
+        inputTokens: 900, cachedInputTokens: 0, cacheWriteTokens: 0,
+        outputTokens: 300, totalTokens: 1_200, durationMs: 3_420,
+        pricingVersion: 'anthropic-api-pricing-2026-10-17', estimatedCostUsd: '0.000240000000'
+      }
+      await recordProviderUsage(usage)
+      return {
+        profile, conversationId: null, provider: 'anthropic', responseId: usage.responseId,
+        usage, addonTokensUsed: false, abandonedConversationIds: []
+      }
+    }
+  )
+  const anthropicScenarioRow = await testPool.query(
+    `SELECT scenario_provider, provider_conversation_id FROM patient_scenarios WHERE session_id = $1`,
+    [anthropicCreated.sessionId]
+  )
+  const anthropicBinding = await testPool.query(
+    `SELECT scenario_provider, provider_conversation_id FROM session_identity_binding WHERE session_id = $1`,
+    [anthropicCreated.sessionId]
+  )
+  const anthropicLive = await stateStore.read(anthropicCreated.sessionId)
+  if (anthropicSetup.status !== 'ready' ||
+      anthropicScenarioRow.rows[0]?.scenario_provider !== 'anthropic' ||
+      anthropicScenarioRow.rows[0]?.provider_conversation_id !== null ||
+      anthropicBinding.rows[0]?.scenario_provider !== 'anthropic' ||
+      anthropicBinding.rows[0]?.provider_conversation_id !== null ||
+      anthropicLive?.provider !== 'anthropic' || anthropicLive.conversationId !== null) {
+    throw new Error(`Anthropic scenario provider pin mismatch: ${JSON.stringify({
+      setupState: anthropicSetup.status,
+      scenarioProvider: anthropicScenarioRow.rows[0]?.scenario_provider ?? null,
+      scenarioConversationIsNull: anthropicScenarioRow.rows[0]?.provider_conversation_id === null,
+      identityProvider: anthropicBinding.rows[0]?.scenario_provider ?? null,
+      identityConversationIsNull: anthropicBinding.rows[0]?.provider_conversation_id === null,
+      redisProvider: anthropicLive?.provider ?? null,
+      redisConversationIsNull: anthropicLive?.conversationId === null
+    })}`)
+  }
+  const anthropicTurnId = `turn-anthropic-${randomBytes(6).toString('hex')}`
+  const anthropicTurn = await sessionStore.submitPatientTurn(
+    principal,
+    anthropicCreated.sessionId,
+    anthropicTurnId,
+    'What is your biggest concern?',
+    async (context) => {
+      if (context.provider !== 'anthropic' || context.conversationId !== null) {
+        throw new Error('The first turn did not inherit its scenario provider pin')
+      }
+      const usage = {
+        provider: 'anthropic', responseId: `msg-turn-${randomBytes(6).toString('hex')}`,
+        model: 'claude-haiku-5-5', serviceTier: null,
+        inputTokens: 120, cachedInputTokens: 0, cacheWriteTokens: 0,
+        outputTokens: 30, totalTokens: 150, durationMs: 842,
+        pricingVersion: 'anthropic-api-pricing-2026-10-17', estimatedCostUsd: '0.000027000000'
+      }
+      return {
+        responseId: usage.responseId,
+        provider: 'anthropic',
+        providerUsage: usage,
+        output: {
+          patientResponse: 'I am worried about what is causing the pain.',
+          proposedFacts: [{ field: 'patientConcern', value: 'I am worried about what is causing the pain.' }],
+          historyCoverage: ['patientConcern'], disclosedHistoryFields: ['patientConcern'],
+          painHistoryCoverage: [], painDisclosures: [], proposedPainFacts: []
+        }
+      }
+    }
+  )
+  const anthropicLiveAfterTurn = await stateStore.read(anthropicCreated.sessionId)
+  if (anthropicTurn.status !== 'accepted' ||
+      anthropicTurn.patientResponse !== 'I am worried about what is causing the pain.' ||
+      anthropicLiveAfterTurn?.acceptedTurns[0]?.provider !== 'anthropic') {
+    throw new Error('The first turn of an Anthropic-generated scenario was not pinned to Anthropic')
+  }
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    if (await worker.processOnce() === 0) break
+  }
+  const anthropicUsageRows = await testPool.query(
+    `SELECT operation, provider FROM provider_usage WHERE session_id = $1 ORDER BY occurred_at, provider_response_id`,
+    [anthropicCreated.sessionId]
+  )
+  if (anthropicUsageRows.rows.length !== 2 ||
+      anthropicUsageRows.rows.some((row) => row.provider !== 'anthropic') ||
+      !anthropicUsageRows.rows.some((row) => row.operation === 'scenario_generation') ||
+      !anthropicUsageRows.rows.some((row) => row.operation === 'patient_turn')) {
+    throw new Error('Anthropic scenario and first-turn usage were not persisted with explicit provider attribution')
+  }
+
   process.stdout.write(JSON.stringify({
     isolatedRedisDatabase,
     redisAppendFsync: 'everysec',
@@ -1409,9 +1581,10 @@ try {
     turnFailureAudit: 'identifier-only failure metadata persisted through Redis and the PostgreSQL worker',
     assessmentOutcome: 'confirmed phase, unscored submission, and terminal events persisted in order',
     archiveJob: 'one pending archive job was committed with the terminal outcome and remained unique on event replay',
-    sessionArchive: 'real Express denied a premature download, the worker built a learner/patient-only 72-hour transcript, and the authenticated download persisted denial, authorization, and completion byte counts',
+    sessionArchive: 'real Express consent and learner-upload routes plus stored synthetic patient audio produced a two-sided ZIP with verified transcript, manifest, exact recording bytes, 72-hour expiry metadata, and download byte counts',
     terminalRedisExpiry: `terminal commit and PostgreSQL recovery both set session, patient, and retry keys to ${expectedRedisExpiry} (terminal event +20 minutes)`,
     browserCancellation: 'authenticated browser-created session cancellation persisted through Express, Redis, and PostgreSQL; repeat returned cancelled without duplicating terminal event or archive job',
+    scenarioProviderFailover: 'a disposable Anthropic-generated session persisted a nullable OpenAI conversation reference, passed PostgreSQL identity verification, pinned its first patient turn to Anthropic, and recorded both usage events with explicit provider labels',
     assessmentDraft: 'partial assessment fields survive owner-scoped restore; monotonically increasing revisions reject late stale saves',
     realtimeAudioUsage: 'migration 023 applied to the disposable database; provider-event duration stored once despite duplicate delivery and observer interruption persisted without storing transcript text',
     missingStateRecovery: 'rebuilt accepted patient fact, disclosure, assessment, and terminal event from PostgreSQL while preserving the immutable seeded profile',

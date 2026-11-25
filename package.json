@@ -48,12 +48,14 @@
     "test:e2e:mobileviewer-tool": "env -u NO_COLOR playwright test --config=playwright.mobileviewer-tool.config.ts",
     "test:e2e:iphone-webkit": "env -u NO_COLOR playwright test --config=playwright.preflight.config.ts --project=webkit-iphone-emulation-preflight tests/e2e/encounter-preflight.spec.ts",
     "test:e2e:opera": "env -u NO_COLOR playwright test --config=playwright.opera.config.ts && env -u NO_COLOR GPTMD_PLAYWRIGHT_OPERA=1 playwright test --config=playwright.preflight.config.ts --project=opera-preflight tests/e2e/encounter-preflight.spec.ts",
+    "training-prompts:build": "node scripts/generate-history-taking-prompts.mjs",
+    "training-prompts:check": "node scripts/generate-history-taking-prompts.mjs --check",
     "typecheck:font-assets": "tsc -p tsconfig.font-assets-test.json",
     "typecheck:nuxt-config": "tsc -p tsconfig.nuxt-config-test.json",
     "typecheck": "nuxt typecheck",
     "schemas:build": "npm --prefix services/api exec -- tsx -- scripts/generate-schemas.mjs",
     "schemas:check": "npm --prefix services/api exec -- tsx -- scripts/generate-schemas.mjs --check",
-    "check": "npm run lint && npm run lint:styles && npm run validate:html && npm run typecheck && npm run typecheck:font-assets && npm run typecheck:nuxt-config && npm run test && npm run api:build && npm run schemas:check && npm run diagrams:check && npm run build && npm run test:e2e:run",
+    "check": "npm run lint && npm run lint:styles && npm run validate:html && npm run typecheck && npm run typecheck:font-assets && npm run typecheck:nuxt-config && npm run training-prompts:check && npm run test && npm run api:build && npm run schemas:check && npm run diagrams:check && npm run build && npm run test:e2e:run",
     "validate:html": "html-validate \"app/**/*.vue\""
   },
   "dependencies": {

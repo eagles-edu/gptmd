@@ -92,6 +92,12 @@ describe('live deployment artifact whitelist', () => {
     expect(deployment.indexOf('await verifyLiveBrowserRoutes()'))
       .toBeLessThan(deployment.indexOf('for (const job of batchJobs)'))
   })
+
+  it('allows production API dependency installation enough time to finish', async () => {
+    const deployment = await readFile('scripts/deploy-live.mjs', 'utf8')
+
+    expect(deployment).toMatch(/await run\('npm', \['ci', '--omit=dev', '--no-audit', '--no-fund'\], \{\s*cwd: apiStage,\s*timeout: 600_000\s*\}\)/)
+  })
 })
 
 describe('live OAuth preflight', () => {

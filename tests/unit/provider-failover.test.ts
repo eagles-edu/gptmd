@@ -6,12 +6,94 @@ import {
 } from '../../services/api/src/anthropic-messages.ts'
 import { isOpenAiAvailabilityError } from '../../services/api/src/provider-availability.ts'
 import { generateAnthropicPatientTurn } from '../../services/api/src/anthropic-patient-turn.ts'
+import { generateAnthropicPatientScenario } from '../../services/api/src/anthropic-patient-scenario.ts'
+import { PatientScenarioProviderError } from '../../services/api/src/patient-profile.ts'
+import { generateScenarioWithFailover } from '../../services/api/src/scenario-provider-failover.ts'
+import { TEST_PATIENT_PHYSICAL_EXAM_FINDINGS, TEST_PATIENT_VITAL_SIGNS } from '../fixtures/patient-vital-signs.ts'
 
 function apiError(properties: { name?: string; status?: number; type?: string; code?: string }): Error {
   return Object.assign(new Error('provider error'), properties)
 }
 
 describe('provider failover boundaries', () => {
+  it('generates a catalog-grounded Anthropic scenario with canonical validation and actual token settlement', async () => {
+    const profile = {
+      fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
+      reasonForVisit: 'Pelvic pain', diagnosis: null, painHistoryStatus: 'absent', painEpisodes: [], history: [],
+      vitalSigns: TEST_PATIENT_VITAL_SIGNS,
+      physicalExamFindings: TEST_PATIENT_PHYSICAL_EXAM_FINDINGS,
+      currentPregnancyStatus: 'unknown', currentMenopausalStatus: 'unknown',
+      patientBeliefs: [], supportedExamFindings: [], supportedTestResults: [],
+      persona: {
+        mood: 'concerned', maturity: 'adult', verbosity: 'moderate',
+        educationLevel: 'college', willingnessToDisclose: 'gradual'
+      }
+    }
+    const fetcher = vi.fn<typeof fetch>()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ input_tokens: 5_100 })))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        id: 'msg_scenario_setup', model: 'claude-haiku-5-5', stop_reason: 'end_turn',
+        content: [{ type: 'text', text: JSON.stringify(profile) }],
+        usage: { input_tokens: 5_100, output_tokens: 620 }
+      })))
+    const client = new AnthropicMessagesClient('secret-test-key', fetcher)
+    const settle = vi.fn().mockResolvedValue(true)
+    const hold = vi.fn().mockResolvedValue(undefined)
+    const reserve = vi.fn().mockResolvedValue({ settle, hold })
+    const recordUsage = vi.fn().mockResolvedValue(undefined)
+    const versions = {
+      promptVersion: 'patient-scenario-prompt-v15', modelVersion: 'gpt-6-luna',
+      schemaVersion: 8, policyVersion: 'patient-scenario-policy-v3'
+    } as const
+
+    const generated = await generateAnthropicPatientScenario(
+      client, versions, new Date('2026-10-17T00:00:00.000Z'), 's'.repeat(43), recordUsage, reserve
+    )
+
+    expect(generated).toMatchObject({ provider: 'anthropic', conversationId: null, profile })
+    expect(generated.usage).toMatchObject({
+      provider: 'anthropic', responseId: 'msg_scenario_setup', model: 'claude-haiku-5-5',
+      inputTokens: 5_100, outputTokens: 620, totalTokens: 5_720
+    })
+    expect(reserve).toHaveBeenCalledWith(5_100, 8_192)
+    expect(settle).toHaveBeenCalledWith('msg_scenario_setup', 5_720)
+    expect(hold).not.toHaveBeenCalled()
+    expect(recordUsage).toHaveBeenCalledWith(generated.usage)
+    const countRequest = JSON.parse(String(fetcher.mock.calls[0]?.[1]?.body))
+    const generationRequest = JSON.parse(String(fetcher.mock.calls[1]?.[1]?.body))
+    expect(generationRequest.system).toContain('one fictional OB-GYN training patient')
+    expect(generationRequest.messages[0].content).toContain('Complete canonical patient-profile parameter catalog')
+    expect(generationRequest.messages[0].content).toContain('Approved OBGYN educator-input reference')
+    expect(generationRequest.messages[0].content).toContain('Seed-selected primary case focus')
+    expect(generationRequest.output_config.format.type).toBe('json_schema')
+    expect(countRequest).toEqual(expect.objectContaining({
+      model: 'claude-haiku-5-5', output_config: generationRequest.output_config
+    }))
+  })
+
+  it('falls back only for availability-classified scenario failures and preserves abandoned OpenAI IDs', async () => {
+    const primary = vi.fn().mockRejectedValue(new PatientScenarioProviderError(['conv-abandoned'], true))
+    const fallback = vi.fn().mockResolvedValue({
+      provider: 'anthropic', conversationId: null, responseId: 'msg-fallback', profile: {},
+      usage: null, abandonedConversationIds: []
+    })
+
+    await expect(generateScenarioWithFailover(primary, fallback)).resolves.toMatchObject({
+      provider: 'anthropic', abandonedConversationIds: ['conv-abandoned']
+    })
+    expect(fallback).toHaveBeenCalledOnce()
+    expect(fallback).toHaveBeenCalledWith(expect.objectContaining({ availabilityFailure: true }))
+  })
+
+  it.each([
+    new PatientScenarioProviderError([], false),
+    new Error('invalid scenario request')
+  ])('does not invoke scenario fallback for non-availability failure %s', async (error) => {
+    const fallback = vi.fn()
+    await expect(generateScenarioWithFailover(() => Promise.reject(error), fallback)).rejects.toBe(error)
+    expect(fallback).not.toHaveBeenCalled()
+  })
+
   it('generates a patient-safe structured turn, reserves and reconciles actual Anthropic usage', async () => {
     const output = {
       patientResponse: 'I have had the pain for a few days.',

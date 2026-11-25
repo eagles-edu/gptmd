@@ -15,7 +15,7 @@
       <select id="workspace-select" v-model="selectedTenantId">
         <option :value="null" disabled>Choose a workspace</option>
         <option v-for="(membership, index) in memberships" :key="membership.tenantId" :value="membership.tenantId">
-          Workspace {{ index + 1 }} ({{ roleLabel(membership.role) }})
+          {{ workspaceLabel(membership, index) }}
         </option>
       </select>
     </section>
@@ -265,6 +265,15 @@ const roleLabel = (role: string | undefined): string => {
   return role === 'customer_admin' ? 'Customer administrator'
     : role === 'instructor' ? 'Instructor'
       : role === 'learner' ? 'Learner' : ''
+}
+const workspaceLabel = (membership: { tenantId: string; branding?: { displayName: string }; role: string }, index: number): string => {
+  const fallbackName = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(membership.tenantId)
+    ? `Workspace ${index + 1}`
+    : membership.tenantId.split(/[^a-z0-9]+/i).filter(Boolean).map((word) =>
+      word.toLowerCase() === 'gptmd' ? 'GPTMD' : `${word.charAt(0).toUpperCase()}${word.slice(1)}`
+    ).join(' ') || `Workspace ${index + 1}`
+  const name = membership.branding?.displayName || fallbackName
+  return `${name} (${roleLabel(membership.role)})`
 }
 const selectedRoleLabel = computed(() => roleLabel(selectedRole.value))
 const membershipMessage = ref('')

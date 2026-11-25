@@ -9,7 +9,8 @@ const SessionIdentityCoreSchema = z.object({
   tenantId: z.string().min(1),
   subjectId: z.string().min(1),
   patientProfileId: z.string().regex(/^[A-Za-z0-9_-]{43}$/),
-  providerConversationId: z.string().min(1),
+  providerConversationId: z.string().min(1).nullable(),
+  provider: z.enum(['openai', 'anthropic']).default('openai'),
   scenarioFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
   schemaVersion: z.number().int().positive()
 }).strict()
@@ -41,12 +42,14 @@ export function verifySessionIdentityBinding(
     subjectId: binding.subjectId,
     patientProfileId: live.patientProfileId,
     providerConversationId: live.conversationId,
+    provider: live.provider,
     scenarioFingerprint: fingerprintScenario(live.profile),
     schemaVersion: live.schemaVersion
   })
   return observed.sessionId === binding.sessionId &&
     observed.patientProfileId === binding.patientProfileId &&
     observed.providerConversationId === binding.providerConversationId &&
+    observed.provider === binding.provider &&
     observed.scenarioFingerprint === binding.scenarioFingerprint &&
     observed.schemaVersion === binding.schemaVersion &&
     live.profileDigest === binding.scenarioFingerprint

@@ -17,6 +17,7 @@ const patientProfileId = 'p'.repeat(43)
 const createdAt = new Date('2026-10-01T00:00:00.000Z')
 const generated: GeneratedPatientScenario = {
   conversationId: 'conv_private',
+  provider: 'openai',
   responseId: 'resp_private',
   profile: {
     fullName: 'Ari Nguyen', dateOfBirth: '1990-01-01', bodyType: 'average',
@@ -755,7 +756,7 @@ describe('patient setup persistence coordination', () => {
     expect(scenarioInserts[0]?.[7]).toBe(
       createHash('sha256').update(canonicalJsonStringify(presentationSettings)).digest('hex')
     )
-    expect(scenarioInserts[0]?.[12]).toEqual(generated.sourceContext)
+    expect(scenarioInserts[0]?.[13]).toEqual(generated.sourceContext)
     expect(client.release).toHaveBeenCalledOnce()
   })
 

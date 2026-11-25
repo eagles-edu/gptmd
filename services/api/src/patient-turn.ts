@@ -6,6 +6,7 @@ import { z } from 'zod'
 import { canonicalJsonStringify } from './canonical-json.ts'
 import { reportResponsesTiming, type ResponsesTimingRecorder } from './response-timing.ts'
 import { estimateOpenAiResponseCost } from './provider-cost.ts'
+import { countConversationInputTokens } from './conversation-input-token-count.ts'
 import {
   PATIENT_PROFILE_RESPONSE_GUIDANCE,
   PATIENT_PROFILE_RESPONSE_POLICY
@@ -65,7 +66,7 @@ export type PatientTurnModelOutput = z.infer<typeof PatientTurnModelOutputSchema
 export type PatientTurnGenerationContext = {
   scenarioId: string
   profile: PatientScenarioProfile
-  conversationId: string
+  conversationId: string | null
   versions: SessionTurnVersionPins
   acceptedTurns: SessionTurn[]
   phase: EncounterPhase
@@ -250,6 +251,7 @@ export async function generatePatientTurn(
   recordTiming?: ResponsesTimingRecorder,
   reserveProviderTokens?: (inputTokens: number, outputTokenCap: number) => Promise<ProviderTokenReservation>
 ): Promise<{ responseId: string; output: unknown; providerUsage: ProviderUsageSample | null; provider: 'openai' }> {
+  if (!context.conversationId) throw new Error('OpenAI patient turn requires a Conversation ID')
   const matchedFields = new Set(matchHistoryCueFields(context.learnerMessage))
   const matchedPainFields = new Set(matchPainCueFields(context.learnerMessage))
   const scenarioFields = new Set(context.profile.history.map((entry) => entry.field))
@@ -339,9 +341,9 @@ export async function generatePatientTurn(
     text: { format: zodTextFormat(PatientTurnModelOutputSchema, 'patient_turn') },
     max_output_tokens: PATIENT_TURN_MAX_OUTPUT_TOKENS
   } satisfies Parameters<typeof client.responses.stream>[0]
-  const inputTokenCount = await client.responses.inputTokens.count({
+  const inputTokenCount = await countConversationInputTokens(client, {
     model: request.model,
-    conversation: request.conversation,
+    conversationId: request.conversation,
     input: request.input,
     text: request.text
   })

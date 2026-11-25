@@ -31,3 +31,8 @@ __pycache__/
 
 # CuratorMD temporary, redacted native-projection records
 .curatormd/
+# Curator V2 project-local ephemeral staging (project config is not ignored)
+.curatormd-v2/
+
+# Local Claude Code settings (may contain API keys)
+.claude/settings.local.json

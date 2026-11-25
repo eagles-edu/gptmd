@@ -36,7 +36,8 @@ export type ReadyPatientState = {
   openedAt: string
   profile: PatientScenarioProfile
   setupProjection: PatientSetupProjection
-  conversationId: string
+  conversationId: string | null
+  provider: 'openai' | 'anthropic'
   profileDigest: string
   schemaVersion: typeof PATIENT_SCENARIO_SCHEMA_VERSION
 }
@@ -89,7 +90,8 @@ const LivePatientStateSchema = z.object({
   openedAt: z.iso.datetime({ offset: true }),
   profile: PatientScenarioProfileSchema,
   setupProjection: PatientSetupProjectionSchema,
-  conversationId: z.string().min(1),
+  conversationId: z.string().min(1).nullable(),
+  provider: z.enum(['openai', 'anthropic']).default('openai'),
   profileDigest: z.string().regex(/^[a-f0-9]{64}$/),
   schemaVersion: z.literal(PATIENT_SCENARIO_SCHEMA_VERSION),
   state: SessionStateSchema,
