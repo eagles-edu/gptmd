@@ -4,6 +4,7 @@ import { chmodSync, mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:f
 import { tmpdir } from 'node:os'
 import { resolve } from 'node:path'
 import { PassThrough } from 'node:stream'
+import { stripVTControlCharacters } from 'node:util'
 import { promptForCommitMessage, validCommitMessage } from '../../scripts/git-update.js'
 
 const projectRoot = resolve(import.meta.dirname, '../..')
@@ -23,7 +24,7 @@ describe('git update commit message', () => {
 
     await new Promise((resolve) => setImmediate(resolve))
     expect(resolved).toBe(false)
-    const visiblePrompt = rendered.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, '')
+    const visiblePrompt = stripVTControlCharacters(rendered)
     expect(visiblePrompt).toContain('Suggested commit message: gptMD-dev_0.0.0.17 ')
     expect(rendered).not.toContain('Commit message (')
     expect(rendered).not.toContain('Edit this message')
