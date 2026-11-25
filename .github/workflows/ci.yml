@@ -25,3 +25,6 @@ jobs:
       - run: npm ci --prefix services/api
       - run: npx playwright install --with-deps chromium firefox webkit
       - run: npm run check
+        env:
+          NUXT_PUBLIC_SUPABASE_URL: https://localhost:3001
+          NUXT_PUBLIC_SUPABASE_KEY: test-publishable-key
