@@ -47,7 +47,7 @@ function nextVersion(commits) {
 }
 
 export function promptForCommitMessage(suggestedMessage, input = stdin, output = stdout) {
-  const prompt = createInterface({ input, output, terminal: true })
+  const prompt = createInterface({ input, output, terminal: Boolean(input.isTTY && output.isTTY) })
   prompt.setPrompt('Suggested commit message: ')
 
   return new Promise((resolve, reject) => {

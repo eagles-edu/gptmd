@@ -9,10 +9,10 @@ import {
 } from '../../services/api/src/session-archives.ts'
 
 const sessionId = 'a'.repeat(43)
-const claimedAt = new Date('2026-10-15T10:00:00.000Z')
+const claimedAt = new Date()
 const archiveSource = {
   tenant_id: 'tenant-a', subject_id: 'learner-a', outcome: 'completed',
-  occurred_at: new Date('2026-10-15T09:55:00.000Z')
+  occurred_at: new Date(Date.now() - 5 * 60 * 1000)
 }
 
 describe('session transcript archives', () => {
@@ -126,7 +126,8 @@ describe('session transcript archives', () => {
   })
 
   it('maps queued, ready, and elapsed archive rows to validated account statuses', () => {
-    const updatedAt = new Date('2026-10-15T10:00:00.000Z')
+    const updatedAt = new Date()
+    const expiresAt = new Date(updatedAt.getTime() + 72 * 60 * 60 * 1000)
     const base = {
       session_id: sessionId, status: 'pending' as const, artifact_id: null,
       download_expires_at: null, last_error_code: null, updated_at: updatedAt,
@@ -135,12 +136,12 @@ describe('session transcript archives', () => {
     expect(toArchiveStatus(base).status).toBe('pending')
     expect(toArchiveStatus({
       ...base, status: 'completed', artifact_id: 'artifact-1',
-      download_expires_at: new Date('2026-10-18T10:00:00.000Z'),
-      artifact_expires_at: new Date('2026-10-18T10:00:00.000Z')
+      download_expires_at: expiresAt,
+      artifact_expires_at: expiresAt
     }).status).toBe('available')
     expect(toArchiveStatus({
       ...base, status: 'completed', artifact_id: null,
-      download_expires_at: new Date('2026-10-18T10:00:00.000Z')
+      download_expires_at: expiresAt
     }).status).toBe('expired')
   })
 
@@ -158,7 +159,7 @@ describe('session transcript archives', () => {
     const artifactQuery = vi.fn(async (sql: string) => {
       if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [], rowCount: 0 }
       if (sql.includes('INSERT INTO session_archive_artifacts')) {
-        return { rows: [{ expires_at: new Date('2026-10-18T10:00:00.000Z') }], rowCount: 1 }
+        return { rows: [{ expires_at: new Date(archiveSource.occurred_at.getTime() + 72 * 60 * 60 * 1000) }], rowCount: 1 }
       }
       if (sql.includes("SET status = 'completed'")) return { rows: [], rowCount: 1 }
       throw new Error(`Unexpected artifact query: ${sql}`)
@@ -220,7 +221,7 @@ describe('session transcript archives', () => {
     const artifactQuery = vi.fn(async (sql: string) => {
       if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [], rowCount: 0 }
       if (sql.includes('INSERT INTO session_archive_artifacts')) {
-        return { rows: [{ expires_at: new Date('2026-10-18T10:00:00.000Z') }], rowCount: 1 }
+        return { rows: [{ expires_at: new Date(archiveSource.occurred_at.getTime() + 72 * 60 * 60 * 1000) }], rowCount: 1 }
       }
       if (sql.includes("SET status = 'completed'")) return { rows: [], rowCount: 1 }
       throw new Error(`Unexpected artifact query: ${sql}`)
